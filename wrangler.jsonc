@@ -1,5 +1,8 @@
 {
     "$schema": "node_modules/wrangler/config-schema.json",
     "name": "zenmind-blog",
-    "compatibility_date": "2025-09-06"
+    "compatibility_date": "2025-09-06",
+    "assets": {
+        "directory": "./dist"
+    }
 }
