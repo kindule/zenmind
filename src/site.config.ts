@@ -41,8 +41,8 @@ const config: SiteConfig = {
       url: '/posts',
     },
     {
-      name: 'Contact',
-      url: '/contact',
+      name: 'Products',
+      url: '/products',
     },
   ],
   // The theming configuration for the site.
