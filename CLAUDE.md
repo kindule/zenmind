@@ -17,7 +17,8 @@ npm run preview            # Preview production build locally
 npm run format             # Format code with Prettier
 
 # Deployment
-wrangler pages dev ./dist  # Test Cloudflare Pages deployment locally
+wrangler pages dev ./dist    # Test Cloudflare Pages deployment locally
+wrangler pages deploy ./dist # Deploy to Cloudflare Pages
 ```
 
 ## Architecture and Key Files
@@ -71,7 +72,7 @@ Located in `src/plugins/`, these extend Markdown processing:
 
 ### Deployment
 - Configured for Cloudflare Pages via wrangler.jsonc
-- Uses `pages_build_output_dir: "./dist"` for static site deployment
+- Use `wrangler pages deploy ./dist` to deploy (NOT `wrangler deploy`)
 - Build process: `npm run build` followed by `npm run postbuild` (generates search index)
 - Static site generation by default
 - Search index built automatically after main build process with Pagefind
