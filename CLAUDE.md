@@ -71,5 +71,7 @@ Located in `src/plugins/`, these extend Markdown processing:
 
 ### Deployment
 - Configured for Cloudflare Pages via wrangler.jsonc
+- Uses `pages_build_output_dir: "./dist"` for static site deployment
+- Build process: `npm run build` followed by `npm run postbuild` (generates search index)
 - Static site generation by default
-- Search index built automatically after main build process
+- Search index built automatically after main build process with Pagefind

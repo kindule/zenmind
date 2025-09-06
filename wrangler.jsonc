@@ -1,8 +1,6 @@
 {
     "$schema": "node_modules/wrangler/config-schema.json",
-    "name": "cms0-astro",
+    "name": "zenmind-blog",
     "compatibility_date": "2025-09-06",
-    "assets": {
-      "directory": "./dist",
-    }
+    "pages_build_output_dir": "./dist"
 }
