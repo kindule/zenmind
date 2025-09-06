@@ -1,8 +1,8 @@
-# Sample workflow for building and deploying an Astro site to Cloudflare Pages
+# Sample workflow for building an Astro site
 #
 # To get started with Astro see: https://docs.astro.build/en/getting-started/
 #
-name: Deploy Astro site to Cloudflare Pages
+name: Build Astro site
 
 on:
   # Runs on pushes targeting the default branch
@@ -16,10 +16,10 @@ on:
 permissions:
   contents: read
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+# Allow only one concurrent build, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these builds to complete.
 concurrency:
-  group: 'cloudflare-pages'
+  group: 'build'
   cancel-in-progress: false
 
 env:
@@ -27,8 +27,8 @@ env:
   # BUILD_PATH: subfolder
 
 jobs:
-  deploy:
-    name: Build and Deploy
+  build:
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -69,9 +69,3 @@ jobs:
         run: |
           ${{ steps.detect-package-manager.outputs.runner }} pagefind --site dist
         working-directory: ${{ env.BUILD_PATH }}
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=${{ secrets.CLOUDFLARE_PROJECT_NAME }}
