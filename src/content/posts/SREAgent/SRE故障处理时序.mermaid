@@ -1,0 +1,58 @@
+
+sequenceDiagram
+    autonumber
+    actor User as 用户
+    participant Monitor as 监控系统 (APM/RUM)
+    participant SRE as On-call SRE
+    participant Comm as 沟通渠道 (SAI)
+    participant Infra as 应用/基础设施 (App/CDN/DB)
+
+    %% --- Phase 1: 事件触发与响应 ---
+    Note over User, Infra: 用户感知页面加载缓慢
+    User->>Infra: 访问应用 A 的页面
+    Infra-->>User: 响应时间过长 (TTFB/LCP 升高)
+
+    Monitor->>SRE: **告警: P95 延迟超过阈值!**
+    SRE->>Comm: **创建 Incident #123**
+    SRE->>Comm: 宣布事件，建立 War Room，我是 IC
+
+    %% --- Phase 2: 影响分析与快照 ---
+    SRE->>Monitor: 查询仪表盘 (确认影响范围、功能、时间)
+    Monitor-->>SRE: 返回指标数据 (RUM, APM, CDN, DB)
+    SRE->>Comm: 在 Incident 中记录初步影响分析
+    Note right of SRE: “影响华东区电信用户，商品详情页为主”
+
+    %% --- Phase 3: 排查与定位 ---
+    loop 排查循环 (由表及里)
+        SRE->>Infra: 检查 CDN/前端指标
+        SRE->>Infra: 检查应用 APM Trace
+        Note over SRE, Infra: Trace 显示后端某接口耗时最长
+        SRE->>Infra: 检查该接口依赖的 DB/缓存
+        Note over SRE, Infra: **根因定位: 缓存命中率骤降，DB 压力大**
+    end
+
+    %% --- Phase 4 & 5: 处置与恢复 ---
+    SRE->>Comm: 通报根因并提出处置方案 (先止血，后修复)
+    
+    par "并行止血操作"
+        SRE->>Infra: **执行操作-1: 降级非核心功能**
+    and
+        SRE->>Infra: **执行操作-2: 紧急扩容应用实例**
+    and
+        SRE->>Infra: **执行操作-3: 临时回滚最近变更**
+    end
+    
+    Note over SRE, Infra: 等待系统状态稳定...
+    
+    SRE->>Monitor: **持续验证核心指标是否恢复**
+    Monitor-->>SRE: 指标恢复正常 (P95 延迟回落)
+    User->>Infra: 再次访问页面
+    Infra-->>User: 响应迅速
+
+    SRE->>Comm: **通告: 服务已恢复**
+
+    %% --- 后续 ---
+    Note over SRE, Comm: 事件解决后
+    SRE->>Comm: 安排 Post-mortem (RCA) 会议
+    SRE->>Comm: 指派 Action Items 以防止问题复发
+
