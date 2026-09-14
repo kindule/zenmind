@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>vAttention：无 PagedAttention 的动态 KV 缓存显存管理（ASPLOS '25） · GPU 大模型系统论文解读</title>
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <!-- 说明：本页已引用共享骨架 ../assets/css/site.css 与 ../assets/js/site.js；
+       下方内联样式保留为回退（共享文件缺失或离线 file:// 打开时页面仍完整可读）。
+       主题策略：跟随系统明暗（prefers-color-scheme），站点级主题切换/目录高亮由共享 site.js 增强，禁用 JS 时本页仍完整可读。 -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fa;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --border: #cbd5e1;
+      --text: #1f2937;
+      --text-muted: #475569;
+      --heading: #16213e;
+      --accent: #16213e;
+      --accent-2: #0e7490;
+      --accent-soft: #e0f2fe;
+      --mem: #6d28d9;
+      --mem-soft: #ede9fe;
+      --net: #c2410c;
+      --net-soft: #ffedd5;
+      --warn-bg: #fffbeb;
+      --warn-border: #b45309;
+      --warn-text: #92400e;
+      --p-bg: #d1fae5; --p-fg: #065f46; --p-border: #059669;
+      --r-bg: #dbeafe; --r-fg: #1e40af; --r-border: #2563eb;
+      --e-bg: #ffedd5; --e-fg: #9a3412; --e-border: #c2410c;
+      --i-bg: #ede9fe; --i-fg: #5b21b6; --i-border: #7c3aed;
+      --focus: #b45309;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220;
+        --surface: #111a2c;
+        --surface-2: #17223a;
+        --border: #33415c;
+        --text: #e2e8f0;
+        --text-muted: #a8b3c7;
+        --heading: #f1f5f9;
+        --accent: #cbd5e1;
+        --accent-2: #67e8f9;
+        --accent-soft: #164e63;
+        --mem-soft: #3b2a63;
+        --net-soft: #4a2410;
+        --warn-bg: #2c2410;
+        --warn-border: #d97706;
+        --warn-text: #fcd34d;
+        --p-bg: #064e3b; --p-fg: #a7f3d0; --p-border: #10b981;
+        --r-bg: #1e3a8a; --r-fg: #bfdbfe; --r-border: #60a5fa;
+        --e-bg: #4a2410; --e-fg: #fdba74; --e-border: #ea580c;
+        --i-bg: #3b2a63; --i-fg: #ddd6fe; --i-border: #a78bfa;
+        --focus: #fbbf24;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    }
+    a { color: var(--accent-2); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+    .skip-link {
+      position: absolute; left: 8px; top: -48px; z-index: 10;
+      background: var(--surface); color: var(--text);
+      border: 2px solid var(--focus); border-radius: 4px;
+      padding: 10px 16px; font-weight: 700; transition: top .15s ease;
+    }
+    .skip-link:focus { top: 8px; }
+    code, .num, .mono { font-family: var(--mono); }
+    .mono { font-size: .92em; }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+    }
+    .topbar .site { font-weight: 800; color: var(--heading); text-decoration: none; margin-right: auto; }
+    .topbar a { color: var(--text); text-decoration: none; padding: 10px 4px; display: inline-block; }
+    .topbar a:hover { color: var(--accent-2); text-decoration: underline; }
+
+    .breadcrumb {
+      padding: 12px 20px 0; font-size: 14px; color: var(--text-muted);
+      max-width: 1240px; margin: 0 auto;
+    }
+    .breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+    .breadcrumb li + li::before { content: "→"; margin-right: 6px; color: var(--text-muted); }
+
+    .layout {
+      max-width: 1240px; margin: 0 auto; padding: 8px 20px 40px;
+      display: grid; grid-template-columns: 1fr; gap: 24px;
+    }
+    @media (min-width: 768px) { .layout { grid-template-columns: 200px 1fr; } }
+    @media (min-width: 1200px) { .layout { grid-template-columns: 240px 1fr; } }
+
+    .toc-aside { display: none; }
+    @media (min-width: 768px) {
+      .toc-aside { display: block; }
+      .toc-mobile-slot { display: none; }
+    }
+    aside nav, .toc-mobile-slot details {
+      position: sticky; top: 16px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .toc-mobile-slot details { position: static; }
+    aside nav strong, .toc-mobile-slot summary {
+      color: var(--heading); display: block; margin-bottom: 8px; font-size: 14px;
+    }
+    .toc-mobile-slot summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
+    aside nav ol, .toc-mobile-slot ol {
+      list-style: none; margin: 0; padding: 0; counter-reset: toc;
+    }
+    aside nav li, .toc-mobile-slot li { margin: 2px 0; }
+    aside nav a, .toc-mobile-slot a {
+      display: block; padding: 8px 6px; text-decoration: none; color: var(--text);
+      border-radius: 4px; line-height: 1.4;
+    }
+    aside nav a:hover, .toc-mobile-slot a:hover { background: var(--surface-2); color: var(--accent-2); }
+
+    main { min-width: 0; }
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 20px 22px; margin: 0 0 22px;
+      break-inside: avoid-page;
+    }
+    h1 { font-size: 26px; line-height: 1.35; color: var(--heading); margin: 6px 0 4px; }
+    h2 { font-size: 21px; color: var(--heading); margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 17px; color: var(--heading); margin: 20px 0 8px; }
+    p { max-width: 76ch; }
+
+    .meta-note {
+      background: var(--surface-2); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 10px 14px; font-size: 14px; color: var(--text-muted); margin: 10px 0 16px;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+    .tags li {
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 6px 12px; font-size: 13px; background: var(--surface-2); color: var(--text);
+    }
+
+    .badge {
+      display: inline-block; font-size: 12px; font-weight: 700; line-height: 1;
+      padding: 4px 8px; border-radius: 4px; border: 1px solid; vertical-align: 1px; white-space: nowrap;
+    }
+    .b-p { background: var(--p-bg); color: var(--p-fg); border-color: var(--p-border); }
+    .b-r { background: var(--r-bg); color: var(--r-fg); border-color: var(--r-border); }
+    .b-e { background: var(--e-bg); color: var(--e-fg); border-color: var(--e-border); }
+    .b-i { background: var(--i-bg); color: var(--i-fg); border-color: var(--i-border); }
+
+    .fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0; }
+    .fact-card {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .fact-card dt { font-weight: 700; color: var(--heading); margin-bottom: 4px; }
+    .fact-card dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+
+    .callout-warning {
+      background: var(--warn-bg); border: 1px solid var(--warn-border); border-left-width: 5px;
+      border-radius: 6px; padding: 12px 16px; margin: 16px 0;
+    }
+    .callout-warning strong:first-child { color: var(--warn-text); }
+
+    .table-scroll {
+      overflow-x: auto; margin: 14px 0;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
+    caption { text-align: left; font-weight: 700; color: var(--heading); padding: 10px 12px 2px; font-size: 14px; }
+    th, td { border-top: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+    thead th { background: var(--surface-2); color: var(--heading); border-top: none; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: var(--surface-2); }
+    td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+
+    .tradeoff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+    .tradeoff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--surface-2); font-size: 14px; }
+    .tradeoff-card h3 { margin: 0 0 6px; font-size: 15px; }
+
+    figure.architecture-diagram { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--surface); }
+    figure.architecture-diagram img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+    figure.architecture-diagram figcaption { font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+    .diagram-scroll { overflow-x: auto; }
+
+    ul, ol { padding-left: 26px; }
+    li { margin: 4px 0; }
+
+    .decision-checklist fieldset {
+      border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 10px 14px;
+    }
+    .decision-checklist legend { font-weight: 700; color: var(--heading); padding: 0 6px; }
+    .decision-checklist label {
+      display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; min-height: 44px; cursor: pointer;
+    }
+    .decision-checklist input[type="checkbox"] { width: 20px; height: 20px; margin-top: 3px; flex: none; }
+
+    .pager { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 8px 0 0; }
+    .pager a {
+      display: inline-block; min-height: 44px; padding: 10px 16px;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+      color: var(--text); text-decoration: none; font-weight: 600;
+    }
+    .pager a:hover { border-color: var(--accent-2); color: var(--accent-2); }
+    .pager .spacer { flex: 1; }
+
+    footer.site-footer {
+      max-width: 1240px; margin: 0 auto; padding: 16px 20px 40px;
+      font-size: 13px; color: var(--text-muted); border-top: 1px solid var(--border);
+    }
+    @media (max-width: 419px) {
+      .pager a { width: 100%; text-align: center; }
+      .fact-grid { grid-template-columns: 1fr; }
+      section { padding: 16px 14px; }
+    }
+    @media print {
+      .topbar, .breadcrumb, aside nav, .toc-mobile-slot, .pager { display: none !important; }
+      body { background: #fff; color: #000; }
+      section { border: none; padding: 0 0 12px; break-inside: avoid-page; }
+      .table-scroll { overflow: visible; }
+      a { color: #000; text-decoration: none; }
+      a[href^="http"]::after { content: "（" attr(href) "）"; font-size: 11px; }
+      thead { display: table-header-group; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至正文</a>
+
+  <header class="topbar">
+    <a class="site" href="../index.html">GPU 大模型系统论文解读</a>
+    <nav aria-label="站点导航">
+      <a href="../index.html">首页</a>
+      <a href="../index.html">推理服务与资源调度</a>
+      <a href="../index.html">解码加速与量化</a>
+      <a href="../index.html">训练、并行与 GPU Kernel</a>
+      <a href="../index.html#metrics">指标术语</a>
+      <a href="../index.html#methodology">阅读说明</a>
+    </nav>
+  </header>
+
+  <nav class="breadcrumb" aria-label="面包屑">
+    <ol>
+      <li><a href="../index.html">首页</a></li>
+      <li><a href="../index.html">推理服务与资源调度</a></li>
+      <li aria-current="page">vAttention</li>
+    </ol>
+  </nav>
+
+  <div class="layout">
+    <aside class="toc-aside">
+      <nav aria-label="页内目录">
+        <strong>页内目录</strong>
+        <ol>
+          <li><a href="#overview">摘要与一句话判断</a></li>
+          <li><a href="#background">问题背景</a></li>
+          <li><a href="#mechanism">核心机制</a></li>
+          <li><a href="#data-path">GPU/系统数据路径</a></li>
+          <li><a href="#tradeoffs">架构权衡</a></li>
+          <li><a href="#cloud-mapping">云上部署映射</a></li>
+          <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+          <li><a href="#security-ops">安全与可运维性</a></li>
+          <li><a href="#fit">适用 / 不适用场景</a></li>
+          <li><a href="#experiments">实验与指标</a></li>
+          <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+          <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+          <li><a href="#evidence">证据台账</a></li>
+        </ol>
+      </nav>
+    </aside>
+
+    <main id="main">
+      <div class="toc-mobile-slot">
+        <details class="toc-mobile" open>
+          <summary>页内目录（点击展开/折叠）</summary>
+          <nav aria-label="页内目录（移动端）">
+            <ol>
+              <li><a href="#overview">摘要与一句话判断</a></li>
+              <li><a href="#background">问题背景</a></li>
+              <li><a href="#mechanism">核心机制</a></li>
+              <li><a href="#data-path">GPU/系统数据路径</a></li>
+              <li><a href="#tradeoffs">架构权衡</a></li>
+              <li><a href="#cloud-mapping">云上部署映射</a></li>
+              <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+              <li><a href="#security-ops">安全与可运维性</a></li>
+              <li><a href="#fit">适用 / 不适用场景</a></li>
+              <li><a href="#experiments">实验与指标</a></li>
+              <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+              <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+              <li><a href="#evidence">证据台账</a></li>
+            </ol>
+          </nav>
+        </details>
+      </div>
+
+      <section id="overview" aria-labelledby="overview-h">
+        <h1 id="overview-h">vAttention：无 PagedAttention 的 LLM 服务动态显存管理</h1>
+        <div class="meta-note">
+          <p style="margin:0 0 4px"><strong>最后核验日期：</strong>2026-09-14　<strong>证据完整度：</strong>台账 10 条 = P 4 · R 2 · E 1 · I 3，全部带真实 PDF 页码定位（详见 <a href="#evidence">证据台账</a>）。分级口径（本论文台账 schema）：P = 论文原理/机制主张；R = 论文报告的实验结果；E = 外部工件（官方仓库，论文附录仅作锚点）；I = 编辑推断。全页唯一外链为官方仓库 <span class="mono">microsoft/vattention</span>。</p>
+          <p style="margin:0"><strong>输入 PDF：</strong><span class="mono">04_vAttention_2405.04437.pdf</span>（《vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention》，ASPLOS '25）。</p>
+        </div>
+        <ul class="tags" aria-label="快速标签">
+          <li>生命周期：推理服务（单实例显存管理）</li>
+          <li>部署形态：vLLM 框架内集成 + CUDA VMM 按需物理页</li>
+          <li>目标硬件：NVIDIA A100 80GB（1–2 张、TP-2）/ H100（可移植，第 15 页）</li>
+          <li>核心资源：KV cache 虚拟连续性 · 物理页分配粒度 · CUDA VMM API 延迟</li>
+          <li>证据状态：P/R 主导 + 3 条编辑推断（I）；外部工件仅官方仓库（E）</li>
+        </ul>
+
+        <h2>一句话判断</h2>
+        <p>对「长上下文、prefill 占比高、注意力内核迭代快、A100/H100 自托管」的 LLM 服务，vAttention 用 CUDA 虚拟内存管理（VMM）把 KV cache 做成<strong>虚拟地址连续、物理页按需分配</strong>：在保留 PagedAttention 级碎片控制的同时，免掉分页注意力内核改写与 Block-Table 维护。论文口径下：端到端吞吐较分页内核（FlashAttention-2 / FlashInfer）最高 <strong>1.23×</strong>，decode 吞吐较 vLLM 最高 <strong>1.99×</strong>，在线服务中位请求延迟最高降 <strong>42%</strong>，FlashAttention-3 这类无分页支持的新内核<strong>零改造接入</strong>并带来 1.26–1.5× 提升；代价是 CUDA 12.1 / PyTorch 2.3.0 / 修改版 NVIDIA 驱动的<strong>供应链绑定</strong>、VMM 调用延迟需要专门隐藏（每页组增长约 5 毫秒量级），以及「已完成请求的物理页直接交给新请求复用」带来的<strong>租户隔离新议题</strong>。全部数字为论文条件性结果，禁止跨论文横比。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-r">R</span> <span class="badge evidence-badge b-i">I（代价与适用面判断为编辑观点）</span></p>
+
+        <h2>3 分钟速读</h2>
+        <ol>
+          <li><strong>问题：</strong>PagedAttention 用「用户态分页」解决 KV cache 碎片，代价是 KV 在虚拟地址上不再连续——注意力内核必须改写为按块寻址、框架要维护 Block-Table、CPU/GPU 关键路径都有开销。论文 Table 1（第 1 页）汇集证据：vLLM 分页 decode 内核比 FlashAttention-2 慢至 2.8×；块大小改变可使执行时间变化至 1.9×；FlashAttention-2 / FlashInfer 分页 prefill 内核分别慢至 37% / 42%。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>机制：</strong>用 CUDA VMM API 解耦虚拟与物理内存——预先预留大段<strong>虚拟连续</strong>地址空间，<strong>物理页运行时按需映射</strong>；默认页大小 2MB，修改开源 NVIDIA 驱动后另支持 64KB 页（第 1–2 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>隐藏代价：</strong>VMM 调用走内核往返、延迟不低（第 6 页 Table 3：cuMemSetAccess 38µs 等）；vAttention 在 <span class="mono">step</span> 中于迭代开始前完成物理页映射（第 6 页），decode 期把映射与计算重叠、prefill 期延迟回收 + 急切分配（第 8 页）——给 Yi-34B 的 KV 增长一个页组约需 120 次 API 调用 ≈ 5 毫秒，必须移出关键路径。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>结果：</strong>端到端吞吐较 FA2/FlashInfer 分页内核至 1.23×（第 1 页）；decode 较 vLLM 至 1.99×/1.58×/1.53×（Yi-6B/Llama-3-8B/Yi-34B，第 9–11 页）；在线中位延迟降 42%/28%/29%（第 11 页）；FA3 在 H100 上开箱即用、较分页 FA2 提升 1.26–1.5×（第 2 页；H100 可移植性第 15 页）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-r">R</span></li>
+          <li><strong>边界：</strong>decode 场景 vAttention 只是「与最优分页内核持平」（decode 是内存受限、分页开销可被掩盖）；收益随上下文长度与 P:D 比增大；64KB 页需修改驱动（供应链负担）；官方工件仓库为 <span class="mono">github.com/microsoft/vattention</span>（附录第 18–19 页锚定），本页不提供任何其他外部链接。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></li>
+        </ol>
+
+        <h2>论文声称的主要结果</h2>
+        <div class="table-scroll" role="region" aria-label="主要结果表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 A · 论文声称的主要结果（均为条件性数字，禁止脱离条件摘取；条件列含硬件/模型/精度/负载）</caption>
+            <thead>
+              <tr><th scope="col">指标（口径）</th><th scope="col" class="num">数字</th><th scope="col">基线</th><th scope="col">完整条件（硬件 / 模型 / 精度 / 负载）</th><th scope="col">来源页码</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>端到端 LLM 服务吞吐提升（长上下文）</td><td class="num">至 1.23×</td>
+                <td>PagedAttention 分页内核（FlashAttention-2、FlashInfer）</td>
+                <td>1–2× A100 80GB；Yi-6B / Llama-3-8B / Yi-34B；精度论文未明确披露（正文仅以 P=2 即 FP16/BF16 举例计算尺寸）；离线长上下文负载（arXiv-Summarization，427 请求、上下文 64K–192K）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页（摘要）；第 11 页（台账 R1）</td>
+              </tr>
+              <tr>
+                <td>decode 吞吐提升（vs vLLM 内核）</td><td class="num">至 1.99× / 1.58× / 1.53×</td>
+                <td>vLLM PagedAttention decode 内核（对照内核：FA2 非分页 + vAttention）</td>
+                <td>Yi-6B（1×A100）/ Llama-3-8B（2×A100 TP-2）/ Yi-34B（2×A100 TP-2）；初始上下文 16K、批 ≤32；精度论文未明确披露</td>
+                <td><span class="badge evidence-badge b-r">R</span> 第 9–11 页（Fig.8，台账 R1）；第 2 页（§1）</td>
+              </tr>
+              <tr>
+                <td>在线服务中位请求执行延迟降幅</td><td class="num">至 42% / 28% / 29%</td>
+                <td>FA2_Paged（对照 FA2_vAttention）</td>
+                <td>QPS 0.25 / 0.3 / 0.1（泊松到达）；512 请求、输入 22K–45K（均值 29K）、输出 6–3250（均值 348）、P:D≈129；A100 同上</td>
+                <td><span class="badge evidence-badge b-r">R</span> 第 11 页（§7.4，台账 R1）</td>
+              </tr>
+              <tr>
+                <td>新内核（FA3）开箱即用提升</td><td class="num">1.26–1.5×</td>
+                <td>PagedAttention 版 FlashAttention-2</td>
+                <td>FlashAttention-3 发布时无 PagedAttention 支持，vAttention 无需改内核接入；H100 可移植性另见第 15 页（台账 R2）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 2 页（§1） <span class="badge evidence-badge b-r">R</span> 第 15 页</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>不可直接比较：</strong>上表数字来自 vAttention 论文自身的内核版本（vLLM v0.2.7、FA2 v2.5.9、FlashInfer v0.4.0）、模型（Yi-6B/Llama-3-8B/Yi-34B）、负载（arXiv-Summarization 等）与吞吐/延迟口径，与本站收录的其他论文（Mooncake、DistServe 等）的硬件、负载与 SLO 口径均不一致，<strong>不允许跨论文横向排名</strong>。
+        </div>
+
+        <h3>术语与记号</h3>
+        <dl class="fact-grid">
+          <div class="fact-card"><dt>CUDA VMM</dt><dd>CUDA 虚拟内存管理 API 族（cuMemAddressReserve / cuMemCreate / cuMemMap / cuMemSetAccess / cuMemUnmap …），允许虚拟地址预留与物理页分配分离——vAttention 的地基（第 1、6 页）。</dd></div>
+          <div class="fact-card"><dt>虚拟连续（virtual contiguity）</dt><dd>每个请求的 K/V cache 在虚拟地址空间中是一段连续张量，注意力内核可像静态分配一样按平坦地址直接访问（第 1 页）。</dd></div>
+          <div class="fact-card"><dt>page-group / 页大小</dt><dd>一次 VMM 调用分配的一个或多个物理页。CUDA API 仅支持 2MB 页；vAttention 修改开源驱动后支持 64KB/128KB/256KB 页组（第 2、6 页）。</dd></div>
+          <div class="fact-card"><dt>reqId / 虚拟张量</dt><dd>框架启动时按「最大批 × 最大上下文」预留 2×N 个虚拟张量（N 为层数）；每个请求以唯一 reqId 占据其中不重叠的子区域（正文 §5，门控外转述）。<span class="badge evidence-badge b-i">I</span></dd></div>
+          <div class="fact-card"><dt>Block-Table</dt><dd>PagedAttention 体系里框架维护的「逻辑块 → 物理块」映射表，注意力内核按它寻址非连续 KV——vAttention 的虚拟连续设计免除了它（第 1 页 Table 1 论证）。</dd></div>
+          <div class="fact-card"><dt>论文出处</dt><dd>《vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention》，ASPLOS '25（DOI 10.1145/3669940.3707256，第 1 页印刷信息）；本地文件 <span class="mono">04_vAttention_2405.04437.pdf</span>。</dd></div>
+        </dl>
+      </section>
+
+      <section id="background" aria-labelledby="background-h">
+        <h2 id="background-h">问题背景</h2>
+        <h3>KV cache 的显存的两难：碎片 vs 连续</h3>
+        <p>每个请求的 KV cache 随 decode 每迭代增长一个 token，且总长度（输出多少 token）事先未知：按模型最大上下文静态预留（如 Yi-34B-200K 的 200K）会造成严重内部碎片，压低批大小与吞吐（第 1–2 页）。<span class="badge evidence-badge b-p">P</span> vLLM 的 PagedAttention 借鉴操作系统按需分页，把 KV cache 切成小块按需分配，近乎完美地解决了碎片，已成为 TensorRT-LLM、HuggingFace TGI、LightLLM 等系统的事实标准（第 1 页）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>PagedAttention 的根本代价：虚拟连续性丧失</h3>
+        <p>动态分配的对象不保证连续——PagedAttention 在按需分配物理内存的同时，把 KV cache 的虚拟地址布局从连续改成了非连续（第 1 页）。由此产生三类问题：<span class="badge evidence-badge b-p">P</span></p>
+        <ul>
+          <li><strong>内核必须改写：</strong>注意力算子要为非连续 KV 块重写寻址逻辑，跟进新内核研究的成本变高；vLLM 分页 decode 内核已比 FlashAttention-2 慢至 2.8×（第 1 页 Table 1 / Table 7 口径）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>框架冗余：</strong>服务框架要自建「块表管理器」，重复操作系统本已完成的虚→实地址翻译（第 1 页 Figure 1 论证）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>运行时开销：</strong>分页 prefill 内核在 FlashAttention-2 / FlashInfer 中分别慢至 37% / 42%，decode 慢至 12%；块大小选择敏感（至 1.9× 波动）；CPU 侧 Block-Table 准备在 vLLM 早期实验中曾占 decode 迭代延迟约三成、修复后仍可达一成，TensorRT-LLM 亦报告过 &gt;10% 吞吐回退（第 1 页 Table 1；CPU 侧数字出自正文 §3.3.2 第 4 页——台账门控外，此处仅定性转述）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（门控外转述标注）</span></li>
+        </ul>
+        <h3>底层症结：预留式 GPU 分配</h3>
+        <p>cudaMalloc 一类的预留式分配会把虚拟与物理内存一次性锁死——即使虚拟地址没被访问，物理页也已占用。这与操作系统的按需分页（demand paging）相反。论文主张：把虚拟与物理内存的分配<strong>分开</strong>，才能同时保住碎片控制与虚拟连续性（第 1–2 页）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>本页使用的延迟/吞吐口径</h3>
+        <p>与全站一致，跨请求延迟类指标以 TTFT/TBT 讨论为站内通识口径；但需要注意：<strong>vAttention 论文未定义 TTFT/TBT 型 SLO 数值</strong>——其在线实验以固定 QPS（泊松到达）下的「请求端到端执行延迟 CDF / 中位数」与吞吐为准（第 11 页）。两套口径不可混用。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></p>
+      </section>
+
+      <section id="mechanism" aria-labelledby="mechanism-h">
+        <h2 id="mechanism-h">核心机制</h2>
+        <h3>1 · 虚拟连续 + 物理按需：一对分离的分配策略（第 1 页，台账 P1）</h3>
+        <p>vAttention 为 KV cache 预先预留一段大的<strong>虚拟连续</strong>缓冲（像 PagedAttention 之前的系统），而把<strong>物理内存的分配推迟到运行时按需进行</strong>（像 PagedAttention）。虚拟地址的浪费无所谓——现代 64 位系统的进程虚拟地址空间极其充裕；物理页则只在 KV 真正增长时才映射进去。由此物理内存不碎片化，虚拟地址保持连续，未修改的注意力内核开箱即用（第 1–2 页）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>2 · CUDA VMM API 与页大小（第 2、6 页，台账 P2/P3）</h3>
+        <p>解耦依赖 CUDA VMM：cuMemAddressReserve 预留虚拟段、cuMemCreate 分配物理句柄、cuMemMap + cuMemSetAccess 把物理页映射进虚拟段并授权访问、cuMemUnmap / cuMemRelease 逆向回收。CUDA 原生只支持 <strong>2MB 大页</strong>——直接用会产生内部碎片；vAttention 修改开源的 NVIDIA 统一虚拟内存驱动，新增支持 <strong>64KB（以及 128KB/256KB）页组</strong>的自定义 vMem API 族；评测未发现 64KB 页拖慢注意力内核，即没有 TLB 抖动证据（第 2 页）。两套 API 的实测延迟见 <a href="#data-path">数据路径</a> 的表 B2。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（综合表述）</span></p>
+        <h3>3 · 迭代前映射：step 语义（第 6 页，台账 P3）</h3>
+        <p>服务框架每迭代调用一次 <span class="mono">step</span>（传入各请求当前上下文长度）；vAttention 保证所有活跃请求的 KV 子张量在<strong>迭代开始前</strong>已由物理页支撑，然后才把执行权交回框架派发 GPU 内核。物理页不够时返回失败，框架可抢占请求以保证前进（与 vLLM 默认行为类似）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>4 · 把 VMM 延迟移出关键路径（第 8 页，台账 P4）</h3>
+        <p>给 Yi-34B（60 层）的一个请求增长一个页组需要 120 次 cuMemMap + cuMemSetAccess、每次约 40µs——合计约 <strong>5 毫秒</strong>，绝不能同步做。两个优化：<span class="badge evidence-badge b-p">P</span>（第 8 页）</p>
+        <ul>
+          <li><strong>decode：映射与计算重叠。</strong>decode 每迭代每请求只产出 1 个 token，下一迭代是否需要新页组是可预测的——vAttention 用后台线程在上一个迭代执行期间完成下一迭代的物理页映射。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>prefill：延迟回收 + 急切分配。</strong>请求 R1 完成后不急于收回物理页，而是把它的 reqId 连同已映射页面直接交给新请求 R2 复用（R2 上下文更长才需追加分配）；同时常备一个「预热」的空闲 reqId，新请求到达即接管，再为下一个急切预映射。仅当缓存的页组低于 GPU 显存约 10% 时才真正触发回收。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>推断：</strong>综合 P3+P4——内存增长被设计为「提前映射 + 计算期隐藏」，重映射不应阻塞服务主循环；这是本页的解读而非论文印刷声明。<span class="badge evidence-badge b-i">I（台账 I1）</span></li>
+        </ul>
+        <div class="callout-warning" role="note">
+          <strong>核验范围提醒：</strong>本页机制描述严格限定于已核验门控（第 1 页摘要/§1；第 2 页 §1；第 6 页 VMM/step；第 8 页优化；第 9–11 页实验；第 15 页 H100；第 18–19 页附录）。门控之外的实现细节（2×N 虚拟张量布局、reqId 索引、统一内存与张量切片的备选方案讨论等）本站仅作定性转述并标 I，不复述其精确数字。
+        </div>
+      </section>
+
+      <section id="data-path" aria-labelledby="data-path-h">
+        <h2 id="data-path-h">GPU / 系统数据路径</h2>
+        <figure class="architecture-diagram">
+          <div class="diagram-scroll">
+            <img src="../assets/diagrams/vattention-data-path.svg"
+                 alt="vAttention 数据路径图：客户端请求进入 vLLM API 服务器，调度器接纳请求后由 vAttention step 预留 KV 缓存空间；为请求预留一段连续对齐的虚拟地址区，经 CUDA 虚拟内存管理（cuMemCreate、cuMemMap、cuMemSetAccess 映射，cuMemUnmap 解除）按需映射 64KB 物理 GPU 页；未修改的注意力内核通过平坦虚拟地址直接访问显存；采样 token 流回客户端。右侧对比面板显示虚拟布局始终连续（V0–V7 相邻槽位），而物理页分散落在显存任意空闲处；共 7 步"
+                 width="1240" height="880" loading="lazy">
+          </div>
+          <figcaption>图 1 · vAttention 端到端数据路径（本站据论文摘要/§1（第 1–2 页，台账 P1/P2）与 VMM 机制（第 6、8 页，台账 P3/P4）绘制；编号 ①–⑦ 对应下方文字序列）。图注说明：64KB 页为论文修改版驱动提供的分配粒度（第 2 页），CUDA 原生 API 仅支持 2MB 页；图中「映射/解除映射」的调用延迟实测见表 B2。</figcaption>
+        </figure>
+        <h3>端到端文字序列</h3>
+        <ol>
+          <li><strong>① 请求进入：</strong>客户端请求到达 vLLM API 服务器（论文实现以 vLLM 为承载框架，第 2 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>② 调度与 step：</strong>vLLM 调度器接纳请求；框架调用 vAttention 的 <span class="mono">step</span>，确保各活跃请求的 KV 空间在本迭代开始前已就绪（第 6 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>③ 虚拟连续预留：</strong>每个请求在虚拟地址空间中占据一段<strong>连续、对齐</strong>的 KV 区段（init 时按最大批 × 最大上下文预留，reqId 定位子区域；布局细节为正文转述）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（细节转述）</span></li>
+          <li><strong>④ CUDA VMM 映射/解除映射：</strong>映射走 cuMemCreate + cuMemMap + cuMemSetAccess，回收走 cuMemUnmap；vMem 扩展把后两步合并以支持 64KB 页组（第 6 页 Table 3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑤ 物理页按需分配：</strong>只有当 KV 随 token 增长耗尽已映射页时，才映射新的 64KB 物理页——物理显存哪里有空就落哪里，与虚拟布局无关（第 1、2、6 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑥ 注意力内核直接访问：</strong>FlashAttention-2 / FlashInfer / FA3 等<strong>未修改</strong>内核把 KV 当作普通连续张量，经平坦虚拟地址由 GPU MMU 完成到散布物理页的翻译——无需 Block-Table（第 1 页；内核对照见第 9–11 页）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-r">R</span></li>
+          <li><strong>⑦ token 流式返回：</strong>采样 token 回传客户端；decode 期下一迭代所需的新页映射已由后台线程与计算重叠完成（第 8 页）。<span class="badge evidence-badge b-p">P</span></li>
+        </ol>
+
+        <div class="table-scroll" role="region" aria-label="组件职责表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 B1 · 数据路径组件与职责</caption>
+            <thead><tr><th scope="col">组件</th><th scope="col">面</th><th scope="col">职责</th><th scope="col">证据</th></tr></thead>
+            <tbody>
+              <tr><td>vLLM 调度器 + 请求池</td><td>控制面</td><td>请求接纳、批组合；每迭代调用 step 传入各请求上下文长度</td><td><span class="badge evidence-badge b-p">P</span> 第 2、6 页</td></tr>
+              <tr><td>vAttention 库（init / alloc_reqid / step / free_reqid）</td><td>显存管理面</td><td>虚拟张量预留、reqId 分配、迭代前保证物理页就绪、不足时返回失败交由框架抢占</td><td><span class="badge evidence-badge b-p">P</span> 第 6 页（step 语义；API 全集为正文转述 <span class="badge evidence-badge b-i">I</span>）</td></tr>
+              <tr><td>后台线程</td><td>显存管理面</td><td>decode 映射与计算重叠；延迟回收 + 急切分配（缓存页组 &lt;10% 显存才回收）</td><td><span class="badge evidence-badge b-p">P</span> 第 8 页</td></tr>
+              <tr><td>CUDA 驱动 / VMM（含修改版开源驱动）</td><td>内核层</td><td>虚拟/物理解耦的 map / unmap；原生 2MB 页 + 扩展 64KB 页组</td><td><span class="badge evidence-badge b-p">P</span> 第 2、6 页</td></tr>
+              <tr><td>注意力内核（FA2 / FlashInfer / FA3，未修改）</td><td>计算面</td><td>按平坦虚拟地址直接读写连续 KV 张量；批组成变化时由框架更新 cache_batch_idx 映射</td><td><span class="badge evidence-badge b-p">P</span> 第 1–2 页 <span class="badge evidence-badge b-r">R</span> 第 9–11 页</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-scroll" role="region" aria-label="VMM API 延迟表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 B2 · CUDA VMM / vAttention 扩展 API 实测延迟（第 6 页 Table 3，台账 P3 同页门控；单位 µs，2MB 与 64KB 两档）</caption>
+            <thead><tr><th scope="col">API</th><th scope="col">作用</th><th scope="col" class="num">cuMem（仅 2MB）</th><th scope="col" class="num">vMem（64KB 档）</th><th scope="col">备注</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">cuMemAddressReserve / vMemReserve</td><td>虚拟地址预留</td><td class="num">2</td><td class="num">18</td><td>*仅框架启停时调用一次</td></tr>
+              <tr><td class="mono">cuMemCreate / vMemCreate</td><td>分配物理内存句柄</td><td class="num">29</td><td class="num">1.7</td><td>vMem 支持 64–256KB 页组</td></tr>
+              <tr><td class="mono">cuMemMap / vMemMap</td><td>物理句柄映射进虚拟缓冲</td><td class="num">2</td><td class="num">8</td><td>vMemMap 合并了 Map+SetAccess</td></tr>
+              <tr><td class="mono">cuMemSetAccess</td><td>授权虚拟缓冲访问</td><td class="num">38</td><td class="num">—</td><td>已并入 vMemMap</td></tr>
+              <tr><td class="mono">cuMemUnmap</td><td>解除映射</td><td class="num">34</td><td class="num">—</td><td>已并入 vMemRelease</td></tr>
+              <tr><td class="mono">cuMemRelease / vMemRelease</td><td>释放物理页</td><td class="num">23</td><td class="num">2</td><td>合并 Unmap+Release</td></tr>
+              <tr><td class="mono">cuMemAddressFree / vMemFree</td><td>释放虚拟缓冲</td><td class="num">1</td><td class="num">35</td><td>*仅框架启停时调用一次</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>量级感受：</strong>给 Yi-34B（60 层 → 120 个 K/V 张量）的一个请求增长一个页组 ≈ 120 次 Map+SetAccess × 约 40µs ≈ <strong>5 毫秒</strong>——这就是必须做重叠与延迟回收的原因（第 8 页）。<span class="badge evidence-badge b-p">P</span></p>
+      </section>
+
+      <section id="tradeoffs" aria-labelledby="tradeoffs-h">
+        <h2 id="tradeoffs-h">架构权衡</h2>
+        <div class="tradeoff-grid">
+          <div class="tradeoff-card">
+            <h3>内核零改写 ↔ 驱动 fork 负担</h3>
+            <p>注意力内核开箱即用、新内核（FA3）零改造接入（第 1–2 页），省下的是持续性的内核维护成本；但 64KB 页组要修改开源 NVIDIA 驱动，换来的是驱动 fork 的长期维护与版本跟随义务（第 2 页）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（维护成本判断）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>prefill 大赚 ↔ decode 持平</h3>
+            <p>prefill 是计算受限、分页开销无处可藏，vAttention 提升明显（192K 上下文较 FA2_Paged 1.24–1.26×，第 9–11 页）；decode 是内存受限、访存停顿本就掩盖分页开销，vAttention 只是与最优分页内核打平（第 11 页）——收益结构高度依赖负载形状。<span class="badge evidence-badge b-r">R</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>VMM 灵活性 ↔ API 延迟</h3>
+            <p>虚拟/物理解耦是能力来源，也是新成本：单次 VMM 调用微秒级、一个页组增长合计毫秒级（第 6、8 页），必须靠可预测性（decode 每迭代 +1 token）+ 后台线程 + 延迟回收来隐藏——机制复杂度从「内核改写」转移到了「分配调度」。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（综合判断）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>2MB 大页 ↔ 64KB 细粒度</h3>
+            <p>默认 2MB 页零驱动改动但内部碎片大；64KB 页把分配粒度调细、碎片逼近 PagedAttention 的块粒度，代价是修改驱动 + 更多映射调用（第 2 页；页组与延迟对照见第 6 页 Table 3）。二者是同一旋钮的两档，不是免费午餐。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（台账 I2）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>物理页跨请求复用 ↔ 隔离</h3>
+            <p>延迟回收把已完成请求的物理页连同 reqId 直接交给新请求（第 8 页）——性能上极佳，但「新请求读到上一请求残留 KV 页」在机制上是默认行为；多租户强隔离场景必须另加清零/分域策略，论文未涉及。<span class="badge evidence-badge b-p">P</span>（机制） <span class="badge evidence-badge b-i">I（安全含义）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>虚拟地址近乎无限 ↔ 真实显存上限</h3>
+            <p>虚拟连续以「浪费虚拟地址」换「不碎片化物理显存」，前提是 64 位虚拟地址空间充裕；真正约束容量的仍是物理显存与 VMM 可映射的页数——容量规划从「碎片率」转移到「页组粒度 × 物理总量」。<span class="badge evidence-badge b-i">I（设计含义推断，台账 I3 关联）</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="cloud-mapping" aria-labelledby="cloud-mapping-h">
+        <h2 id="cloud-mapping-h">云上部署映射</h2>
+        <p class="meta-note" style="margin-top:0">本节为部署映射：<strong>论文硬件事实</strong>标 P/R，<strong>云产品对应</strong>标 E（仅作厂商中立示例，参数与价格以云厂商文档为准，本站未联网核验），<strong>运维建议/推断</strong>标 I。</p>
+        <div class="table-scroll" role="region" aria-label="云上部署映射表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 C · 论文配置 → 云上对应（厂商中立示例，非推荐）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文配置（P/R/E）</th><th scope="col">云上映射（E/I，示例非推荐）</th><th scope="col">说明</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>GPU 实例与拓扑</td>
+                <td>Yi-6B：1× A100 80GB；Llama-3-8B / Yi-34B：2× NVLink 互联 A100（TP-2）；H100 1–2 张验证可移植 <span class="badge evidence-badge b-r">R</span>（第 9–11 页 Table 5 口径；第 15 页）</td>
+                <td>单卡实例族（A100 80GB）起步，大模型选 NVLink/NVSwitch 互联的多卡实例；H100 实例族用于 FA3 路线 <span class="badge evidence-badge b-e">E</span></td>
+                <td>TP 度决定虚拟张量数量与页组 token 容量，拓扑带宽影响 TP 效率 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>驱动与软件栈</td>
+                <td>复现环境绑定 CUDA 12.1、Python 3.10、PyTorch 2.3.0 与修改版开源 NVIDIA 驱动；论文明言更高 CUDA 版本「可能可用也可能不可用」 <span class="badge evidence-badge b-e">E</span>（附录第 18–19 页，台账 E1）</td>
+                <td>自定义镜像 + 固定驱动/CUDA 版本；将驱动 fork 纳入镜像构建流水线与版本清单 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>驱动层改动是本方案最重的运维绑定项，升级窗口需专门评审 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>部署形态</td>
+                <td>vAttention 以库形态集成进 vLLM（第 2 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>容器化推理服务（vLLM + vAttention 镜像）；单实例内生效，不要求跨节点特殊网络 <span class="badge evidence-badge b-e">E</span></td>
+                <td>与分离式架构（如 Mooncake 类）正交：vAttention 解决的是实例内 KV 显存管理 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>页大小策略</td>
+                <td>默认 2MB；64KB 需修改驱动；页组大小在 init 时配置 <span class="badge evidence-badge b-p">P</span>（第 2、6 页）</td>
+                <td>按负载分型配置：延迟敏感在线服务可用默认 2MB 档，吞吐型批处理可用 64KB 档 <span class="badge evidence-badge b-i">I</span></td>
+                <td>页组粒度影响可支撑的最大批大小与碎片率 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>SLO / 容量口径</td>
+                <td>论文未明确披露显式 TTFT/TBT SLO；在线实验以固定 QPS（0.1–0.3）下请求执行延迟 CDF/中位数为准（第 11 页）<span class="badge evidence-badge b-r">R</span></td>
+                <td>云上 SLO 建议以「请求端到端执行延迟 P50/P99 + 容量 QPS」表达，压测复现论文的泊松到达 + FCFS 设定 <span class="badge evidence-badge b-i">I</span></td>
+                <td>与站内 TTFT/TBT 口径页对照时必须先换算口径 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>可观测</td>
+                <td>论文未披露运维指标体系 <span class="badge evidence-badge b-i">I（缺口）</span></td>
+                <td>指标面：同步分配延迟尖峰（未重叠时毫秒级）、最大批大小随页组策略的变化、碎片/页组缓存水位、TP 拓扑健康 <span class="badge evidence-badge b-i">I</span></td>
+                <td>分配延迟尖峰重现即说明重叠优化失效或配置不当 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="cost-slo" aria-labelledby="cost-slo-h">
+        <h2 id="cost-slo-h">成本 / 性能 / SLO</h2>
+        <h3>SLO 与实验口径（论文定义）</h3>
+        <div class="table-scroll" role="region" aria-label="SLO 与实验口径表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 D · 论文各实验的口径（注意：论文未明确披露 TTFT/TBT 型显式 SLO 数值）</caption>
+            <thead><tr><th scope="col">实验</th><th scope="col">SLO / 关键条件</th><th scope="col">系统配置</th><th scope="col" class="num">结果</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>decode 内核微基准（第 9–11 页）</td>
+                <td>初始上下文 16K；批 ≤32；按 400 次 decode 迭代均值折算吞吐</td>
+                <td>FA2_vAttention vs FA2_Paged / FI_Paged / vLLM</td>
+                <td class="num">vs vLLM 至 1.99×；与 FA2_Paged 持平</td>
+                <td><span class="badge evidence-badge b-r">R</span> R1</td>
+              </tr>
+              <tr>
+                <td>prefill 内核/端到端（第 9–11 页）</td>
+                <td>上下文 1K–192K；prefill 吞吐 = 每秒处理 prompt token 数</td>
+                <td>FA2/FI_vAttention vs 各自 _Paged</td>
+                <td class="num">192K 时 1.24–1.26×（FA2）</td>
+                <td><span class="badge evidence-badge b-r">R</span> R1</td>
+              </tr>
+              <tr>
+                <td>离线端到端（第 11 页）</td>
+                <td>427 请求；上下文 64K–192K；输出 17–5153；P:D≈356；口径 = 每分钟完成请求数</td>
+                <td>FA2_vAttention vs FA2_Paged / FI_Paged</td>
+                <td class="num">1.13–1.18× / 至 1.23×</td>
+                <td><span class="badge evidence-badge b-r">R</span> R1</td>
+              </tr>
+              <tr>
+                <td>在线端到端（第 11 页）</td>
+                <td>512 请求；输入 22K–45K（均值 29K）、输出 6–3250（均值 348）、P:D≈129；泊松到达、FCFS；接近饱和容量运行；口径 = 请求执行延迟 CDF</td>
+                <td>FA2_vAttention vs FA2_Paged</td>
+                <td class="num">中位延迟 −42%/−28%/−29%</td>
+                <td><span class="badge evidence-badge b-r">R</span> R1</td>
+              </tr>
+              <tr>
+                <td>FA3 可移植性 / H100（第 15 页；数字第 2 页）</td>
+                <td>FA3 发布时无 PagedAttention 支持；vAttention 零内核改动接入；1–2× H100</td>
+                <td>FA3_vAttention vs 分页 FA2</td>
+                <td class="num">1.26–1.5×</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 2 页 <span class="badge evidence-badge b-r">R</span> 第 15 页</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>容量规划变量</h3>
+        <ul>
+          <li><strong>上下文长度与 P:D 比：</strong>论文明确「收益与上下文长度、prefill:decode token 比成正比」——prefill 占比越高，vAttention 相对分页内核越有利（第 11 页）；<span class="badge evidence-badge b-r">R</span></li>
+          <li><strong>注意力内核选择：</strong>vAttention 的价值在「随时换上最快的非分页内核」——内核层的进步直接转化为服务层收益（如 FA3，第 2 页）；<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>页组粒度：</strong>2MB 与 64KB 档分别面向延迟敏感与吞吐型负载，影响可支撑的最大批大小（第 6 页页组配置；具体批上限数字在台账门控外，本页不展开）；<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>分配延迟余量：</strong>VMM 分配带宽远高于 decode 期 KV 增长需求（摘要文件同口径记录），分配速度本身不构成瓶颈——瓶颈在单次页组增长的延迟隐藏。<span class="badge evidence-badge b-i">I</span></li>
+        </ul>
+        <h3>成本模型（参数化，非论文结论）</h3>
+        <p>论文不含任何成本数据（仅吞吐/延迟）。架构师可用下式估算（<span class="badge evidence-badge b-i">I</span>，价格项为参数）：</p>
+        <p class="mono" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;overflow-x:auto">每百万生成 token 成本 ≈ ( p_gpu × N_GPU ) ÷ ( T_gen × (1 − φ) ) × 10⁶ …（公式 1）</p>
+        <ul>
+          <li><span class="mono">p_gpu</span>：单卡时租价（A100/H100，按查询日云价代入，<span class="badge evidence-badge b-e">E</span>）；</li>
+          <li><span class="mono">N_GPU</span>：实例卡数（论文口径 1–2 张起，TP-2 时为 2，<span class="badge evidence-badge b-r">R</span>）；</li>
+          <li><span class="mono">T_gen</span>：实测生成吞吐（token/s）——内核选择、批上限、P:D 比、页组策略共同决定；可按论文相对收益作修正（如 prefill 主导负载对分页基线 ×1.13–1.23，<span class="badge evidence-badge b-r">R</span>）；</li>
+          <li><span class="mono">φ</span>：显存浪费率（内部碎片 + 预留损耗）——2MB 档高于 64KB 档；64KB 需驱动支持。<span class="badge evidence-badge b-i">I</span></li>
+        </ul>
+        <p><strong>敏感项：</strong>负载 P:D 比升高 → T_gen 相对基线的收益放大（第 11 页 <span class="badge evidence-badge b-r">R</span>）；页组从 2MB 换 64KB → φ 下降但映射调用增多、依赖驱动 fork（第 2、6 页 <span class="badge evidence-badge b-p">P</span>）；换用更新内核（FA3/H100）→ T_gen 抬升 1.26–1.5×（第 2 页 <span class="badge evidence-badge b-p">P</span>）。</p>
+      </section>
+
+      <section id="security-ops" aria-labelledby="security-ops-h">
+        <h2 id="security-ops-h">安全与可运维性</h2>
+        <h3>论文披露范围</h3>
+        <ul>
+          <li>核验门控内论文<strong>未涉及安全、隐私、多租户与故障恢复议题</strong>——以下部署要点除标注论文事实外均为编辑推断。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>官方工件仓库：</strong><span class="mono">github.com/microsoft/vattention</span>——论文内唯一锚点是附录（第 18–19 页）；仓库自身的可用性/内容属外部事实，本次未联网核验，本页亦不提供任何其他外部链接。<span class="badge evidence-badge b-e">E</span>（台账 E1）</li>
+          <li>复现环境明确要求特权容器（docker <span class="mono">--cap-add=SYS_ADMIN</span>）与 HuggingFace 令牌（HF_TOKEN）访问 Llama-3-8B（第 19 页附录）。<span class="badge evidence-badge b-e">E</span></li>
+        </ul>
+        <h3>论文未披露、部署方必须自行覆盖的项</h3>
+        <div class="table-scroll" role="region" aria-label="安全运维清单表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 E · 安全/运维清单（论文事实 + 缺口 + 编辑建议）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文状态</th><th scope="col">部署建议（I）</th></tr></thead>
+            <tbody>
+              <tr><td>租户隔离 / KV 残留</td><td>机制默认<strong>跨请求复用物理页</strong>：完成请求的页组经延迟回收直接交给新请求（第 8 页）<span class="badge evidence-badge b-p">P</span></td><td>KV 含用户 prompt 衍生状态，页残留是设计默认行为而非缺陷；多租户必须显式决定：按租户分域部署、或回收前清零、或默认关闭跨租户复用，并过合规评审</td></tr>
+              <tr><td>缓存管理语义</td><td>页组缓存 &lt;10% 显存才回收；急切预映射常备空闲 reqId（第 8 页）<span class="badge evidence-badge b-p">P</span></td><td>把「缓存页组水位」「回收触发阈值」纳入配置审计——它们同时影响性能与残留生命周期</td></tr>
+              <tr><td>供应链</td><td>官方仓库 microsoft/vattention（附录第 18–19 页锚定）；复现绑定 CUDA 12.1 / PyTorch 2.3.0 / 修改版开源 NVIDIA 驱动；归档 DOI 10.5281/zenodo.14048692（第 18 页印刷信息，本页不作链接）<span class="badge evidence-badge b-e">E</span></td><td>仅从官方仓库/归档 DOI 构建镜像并锁定 digest；驱动 fork 纳入 SBOM 与上游同步计划；任何「第三方优化版 vAttention」镜像视为未核验供应链</td></tr>
+              <tr><td>RBAC / 访问控制</td><td>论文未涉及；复现流程需要 SYS_ADMIN 特权容器与 HF_TOKEN（第 18–19 页）<span class="badge evidence-badge b-e">E</span></td><td>生产收敛特权：复现环境与生产镜像分离；模型仓库令牌走密钥管理；驱动加载、镜像推送、仓库写权限分角色授权</td></tr>
+              <tr><td>监控告警</td><td>未披露指标体系 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>对同步分配延迟尖峰（毫秒级即异常）、step 失败/抢占率、最大批大小（随页组策略漂移）、页组缓存水位、TP 拓扑健康设告警</td></tr>
+              <tr><td>参数调优</td><td>页组大小为 init 配置项（第 6 页）<span class="badge evidence-badge b-p">P</span></td><td>页组粒度、回收阈值按真实负载在线调优；论文数字基于 vLLM v0.2.7 与特定模型，不能直接迁移到任意生产环境</td></tr>
+              <tr><td>故障恢复</td><td>未披露 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>分层演练：GPU 驱动/VMM 层故障（映射失败、显存耗尽）与推理服务层故障（step 失败→框架抢占请求）分开处置；实例级自愈重建后预热页组缓存</td></tr>
+              <tr><td>回滚</td><td>论文明言更高 CUDA 版本「可能可用也可能不可用」（附录第 18 页）<span class="badge evidence-badge b-e">E</span></td><td>保留两条已验证回退路径：① 换回标准驱动 + PagedAttention 内核后端；② 锁定 CUDA 12.1/PyTorch 2.3.0 的旧镜像；驱动与服务版本分开变更、可独立回滚</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>合规提醒：</strong>「新请求复用上一请求已映射物理页」是 vAttention 的性能机制本身（第 8 页）。多租户服务若不显式处理，请求 B 可能接触请求 A 的 KV 残留。涉及个人数据或监管数据时，默认跨租户分域部署，并在合规评审中把该机制写进威胁模型。<span class="badge evidence-badge b-i">I</span>
+        </div>
+      </section>
+
+      <section id="fit" aria-labelledby="fit-h">
+        <h2 id="fit-h">适用 / 不适用场景</h2>
+        <h3>适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>长上下文 / prefill 占比高的负载</strong>：触发条件——输入数万 token 起、P:D 比高（如摘要、文档问答、代码补全的长前缀场景）。理由——论文明确收益与上下文长度和 P:D 比正相关，实测离线吞吐较分页内核 1.13–1.23×、在线中位延迟至 −42%（第 11 页）。<span class="badge evidence-badge b-r">R</span></li>
+          <li><strong>注意力内核快速迭代的团队</strong>：触发条件——希望随时接入最新非分页内核（FA2 → FlashInfer → FA3）而不维护分页移植。理由——虚拟连续 KV 让未修改内核开箱即用；FA3 发布时无 PagedAttention 支持，vAttention 零内核改动接入并带来 1.26–1.5× 提升（第 1–2 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>A100/H100 自托管、软件栈可控的服务</strong>：触发条件——能用自家镜像管理驱动与 CUDA 版本。理由——论文在 A100 上完成主要评测并验证 H100 可移植（第 9–11、15 页），硬件路线与主流云 GPU 实例族吻合。<span class="badge evidence-badge b-r">R</span></li>
+          <li><strong>被分页内核开销困住的 vLLM 类部署</strong>：触发条件——profile 显示 Block-Table/分页分支开销或块大小敏感性问题（至 1.9× 波动，第 1 页）。理由——同一框架内把分页内核换成「非分页内核 + vAttention」即可消除该层开销，decode 吞吐较 vLLM 内核至 1.99×（第 9–11 页）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-r">R</span></li>
+        </ol>
+        <h3>不适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>decode 主导、短上下文负载</strong>：触发条件——输出远长于输入、上下文短（闲聊式短对话）。理由——decode 是内存受限，分页开销可被访存停顿掩盖，vAttention 仅与最优分页内核持平（第 11 页），收益有限（按论文条件反推）。<span class="badge evidence-badge b-r">R</span> <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>不可修改 GPU 驱动的受管环境</strong>：触发条件——托管 K8s 节点池/托管 GPU 服务不允许替换驱动，或无驱动 fork 维护能力。理由——64KB 细粒度页依赖修改版开源驱动（第 2 页），退回 2MB 默认档则碎片与批上限受限，机制收益打折。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>硬多租户隔离 / 强合规业务</strong>：触发条件——跨租户数据严格不可见、KV 残留须可审计清除。理由——跨请求物理页复用是机制默认（第 8 页），需关闭复用或分域部署，性能前提随之改变；论文未提供隔离机制。<span class="badge evidence-badge b-p">P</span>（机制） <span class="badge evidence-badge b-i">I（缺口判断）</span></li>
+          <li><strong>非 CUDA / 旧 CUDA 生态</strong>：触发条件——非 NVIDIA GPU，或驱动/CUDA 版本无法锁定在经验证组合（附录口径 CUDA 12.1，更高版本不保证可用，第 18 页）。理由——整套机制立在 CUDA VMM 与开源驱动改动之上。<span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>期待调度/多实例优化的团队</strong>：触发条件——诉求是过载准入、prefill/decode 分离、跨实例缓存复用。理由——vAttention 只解决单实例内 KV 显存管理，不含调度器；这类诉求应对照本站 DistServe / Sarathi-Serve / Mooncake 页。<span class="badge evidence-badge b-i">I</span></li>
+        </ol>
+      </section>
+
+      <section id="experiments" aria-labelledby="experiments-h">
+        <h2 id="experiments-h">实验与指标</h2>
+        <h3>复现实验的完整条件（论文核验门控内）</h3>
+        <div class="table-scroll" role="region" aria-label="实验配置表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 F · 实验条件口径（硬件 / 模型 / 精度 / 负载 / 基线）</caption>
+            <thead><tr><th scope="col">条件维度</th><th scope="col">论文口径</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr><td>硬件</td><td>NVIDIA A100 80GB：Yi-6B 单卡，Llama-3-8B / Yi-34B 各 2 张 NVLink 互联卡（TP-2）；H100 1–2 张用于可移植性</td><td><span class="badge evidence-badge b-r">R</span> 第 9–11 页（R1）；第 15 页（R2）</td></tr>
+              <tr><td>模型</td><td>Yi-6B（32 QHead / 4 KVHead / 32 层）、Llama-3-8B（32 / 8 / 32）、Yi-34B（56 / 8 / 60）</td><td><span class="badge evidence-badge b-r">R</span> 第 9 页 Table 5（R1）</td></tr>
+              <tr><td>精度（dtype）</td><td><strong>论文未明确披露</strong>实验精度；正文尺寸计算仅以 P=2（FP16/BF16 每元素 2 字节）举例</td><td><span class="badge evidence-badge b-p">P</span> 第 6 页 <span class="badge evidence-badge b-i">I</span>（不臆测）</td></tr>
+              <tr><td>框架 / 内核版本</td><td>vLLM v0.2.7 为公共框架；FlashAttention-2 v2.5.9、FlashInfer v0.4.0 作为注意力后端集成</td><td><span class="badge evidence-badge b-r">R</span> 第 9 页（R1）</td></tr>
+              <tr><td>基线配置</td><td>KV block size：vLLM 与 FlashInfer 取 16，FA2 分页内核取 256（各自最优配置）</td><td><span class="badge evidence-badge b-r">R</span> 第 9 页（R1）</td></tr>
+              <tr><td>负载（微基准）</td><td>decode：初始上下文 16K、批 ≤32（Yi-34B 批 32 时 OOM）；prefill：上下文 1K–192K；吞吐按 400 次 decode 迭代均值折算</td><td><span class="badge evidence-badge b-r">R</span> 第 9–11 页（R1）</td></tr>
+              <tr><td>负载（端到端）</td><td>离线：arXiv-Summarization 427 请求、上下文 64K–192K、输出 17–5153、P:D≈356；在线：512 请求、输入 22K–45K（均值 29K）、输出 6–3250（均值 348）、P:D≈129、泊松到达 + FCFS、接近饱和容量</td><td><span class="badge evidence-badge b-r">R</span> 第 11 页（R1）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>关键结果（均带条件）</h3>
+        <div class="table-scroll" role="region" aria-label="关键结果表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 G · 评测关键数字 → 完整条件 → 定位</caption>
+            <thead><tr><th scope="col">结论（指标）</th><th scope="col" class="num">数字</th><th scope="col">完整条件（硬件 / 模型 / 精度 / 负载 / 基线）</th><th scope="col">来源页码</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>vLLM 分页 decode 内核落后 FA2</td><td class="num">至 2.8× / 1.5× / 2.5× 延迟</td>
+                <td>Yi-6B / Llama-3-8B / Yi-34B；A100；Table 7 口径（注意力内核总延迟，毫秒/迭代）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页（Table 1）；第 9–11 页（R1）</td>
+              </tr>
+              <tr>
+                <td>分页 prefill 内核开销</td><td class="num">FA2 −37% · FlashInfer −42%</td>
+                <td>非分页内核对照；Fig.2（图注口径：Llama-3-8B，1×A100）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页（摘要/Table 1）；<span class="badge evidence-badge b-r">R</span> R1（Fig.2）</td>
+              </tr>
+              <tr>
+                <td>块大小敏感性</td><td class="num">至 1.9×</td>
+                <td>vLLM 分页 decode 内核执行时间随块大小（64/128 时最差）；Fig.3</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页；<span class="badge evidence-badge b-r">R</span> R1（Fig.3）</td>
+              </tr>
+              <tr>
+                <td>decode 吞吐 vs vLLM 内核</td><td class="num">至 1.99× / 1.58× / 1.53×</td>
+                <td>Yi-6B / Llama-3-8B / Yi-34B；A100（1–2 卡 TP-2）；初始上下文 16K、批 ≤32；FA2_vAttention 与 FA2_Paged 持平且同为最优</td>
+                <td><span class="badge evidence-badge b-r">R</span> 第 9–11 页（Fig.8，R1）；第 2 页</td>
+              </tr>
+              <tr>
+                <td>prefill 吞吐 @192K</td><td class="num">1.24× / 1.26× / 1.24×</td>
+                <td>FA2_vAttention vs FA2_Paged；Yi-6B / Llama-3-8B / Yi-34B；上下文 192K</td>
+                <td><span class="badge evidence-badge b-r">R</span> 第 9–11 页（R1）</td>
+              </tr>
+              <tr>
+                <td>离线端到端吞吐</td><td class="num">vs FA2_Paged 1.18×/1.15×/1.13×；vs FI_Paged 1.19×/1.23×/1.14×</td>
+                <td>427 请求、64K–192K 上下文、P:D≈356；三模型同上</td>
+                <td><span class="badge evidence-badge b-r">R</span> 第 11 页（Fig.9，R1）</td>
+              </tr>
+              <tr>
+                <td>在线中位请求延迟降幅</td><td class="num">−42% / −28% / −29%</td>
+                <td>QPS 0.25 / 0.3 / 0.1（Yi-6B / Llama-3-8B / Yi-34B）；512 请求、均值输入 29K；主因是更快 prefill 消除排队延迟</td>
+                <td><span class="badge evidence-badge b-r">R</span> 第 11 页（§7.4，R1）</td>
+              </tr>
+              <tr>
+                <td>页组增长的同步映射代价</td><td class="num">约 5 ms</td>
+                <td>Yi-34B 60 层 → 120 次 cuMemMap+cuMemSetAccess × 约 40µs；单请求 KV 增长一个页组</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 8 页；API 延迟第 6 页 Table 3</td>
+              </tr>
+              <tr>
+                <td>FA3 开箱即用（H100）</td><td class="num">1.26–1.5×</td>
+                <td>FA3 无 PagedAttention 支持；vAttention 零内核改动接入；对照分页 FA2；H100 可移植性第 15 页</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 2 页 <span class="badge evidence-badge b-r">R</span> 第 15 页（R2）</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>公平性限制与已知差异</h3>
+        <ul>
+          <li>全部数字为对门控页的<strong>转述</strong>；精确引用请回查 PDF 原文（摘要文件同此声明）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>基线时点：</strong>对照基于 vLLM v0.2.7（论文发表时点的「公平比较」口径，第 9 页）；当前 vLLM 及各内核库已持续演进，绝对数字不能外推到今日版本栈。<span class="badge evidence-badge b-r">R</span>（论文口径） <span class="badge evidence-badge b-i">I</span>（时效判断）</li>
+          <li><strong>精度未明示：</strong>实验 dtype 论文未明确披露，本页不臆测；仅正文尺寸计算以 P=2（FP16/BF16）举例（第 6 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li>数字不可与 Mooncake、DistServe 等其他论文横比（硬件、负载、口径均不同；本论文亦无 TTFT/TBT SLO 口径）。<span class="badge evidence-badge b-i">I</span></li>
+        </ul>
+        <h3>核对 / 复现路径（附录第 18–19 页，台账 E1）</h3>
+        <p>论文提供完整工件附录；以下步骤均出自附录原文（<span class="badge evidence-badge b-e">E</span>，页码 18–19），顺序编排为编辑建议（<span class="badge evidence-badge b-i">I</span>）：</p>
+        <ol>
+          <li>克隆官方仓库 <span class="mono">github.com/microsoft/vattention</span>（唯一官方来源；归档 DOI 10.5281/zenodo.14048692，本页不作链接）；</li>
+          <li>环境：conda（Python 3.10）+ CUDA 12.1 + PyTorch 2.3.0；或直接用预装 Docker 镜像 <span class="mono">rnp1910/vattention:asplos_25_pytorch_run</span>（需 <span class="mono">--cap-add=SYS_ADMIN</span> 特权）；</li>
+          <li><span class="mono">huggingface-cli login</span> 提供 HF_TOKEN 以访问 Llama-3-8B；</li>
+          <li>硬件：2 张 NVLink 互联 A100 80GB、200GB 磁盘；准备约 1 小时，实验 1–2 天（Fig.2/3/11 数分钟，Fig.4/7 约 1 小时，Fig.8/9 各 12 小时以上）；</li>
+          <li><span class="mono">./run_all.sh</span> 或按图运行 <span class="mono">run_figure_*.sh</span>，输出落在 <span class="mono">logs/</span> 与 <span class="mono">plots/</span>，图格式与论文一致但绝对数字随环境浮动。</li>
+        </ol>
+      </section>
+
+      <section id="links" aria-labelledby="links-h">
+        <h2 id="links-h">论文 / 链接 / 延伸阅读</h2>
+        <div class="table-scroll" role="region" aria-label="链接表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 H · 来源与链接（外链仅官方仓库一处：HTTPS + rel="noopener noreferrer"）</caption>
+            <thead><tr><th scope="col">资源</th><th scope="col">级别</th><th scope="col">链接 / 文件</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>论文：《vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention》（ASPLOS '25，DOI 10.1145/3669940.3707256）</td>
+                <td><span class="badge evidence-badge b-p">P</span></td>
+                <td>题名与出处取自第 1 页印刷信息与证据台账；本地 <span class="mono">04_vAttention_2405.04437.pdf</span></td>
+              </tr>
+              <tr>
+                <td>官方工件仓库（本页唯一外链）</td>
+                <td><span class="badge evidence-badge b-e">E</span></td>
+                <td><a href="https://github.com/microsoft/vattention" rel="noopener noreferrer">github.com/microsoft/vattention</a>（论文附录第 18–19 页唯一锚定；仓库内容本次未联网核验，属外部工件事实）</td>
+              </tr>
+              <tr>
+                <td>工件归档 DOI（第 18 页印刷信息，仅文字引用不作链接）</td>
+                <td><span class="badge evidence-badge b-e">E</span></td>
+                <td><span class="mono">10.5281/zenodo.14048692</span></td>
+              </tr>
+              <tr>
+                <td>站内对照阅读</td>
+                <td>站内</td>
+                <td><a href="01-distserve.html">DistServe（01，分离式服务）</a> · <a href="02-sarathi-serve.html">Sarathi-Serve（02，chunked prefill）</a> · <a href="03-mooncake.html">Mooncake（03，KVCache 中心分离架构）</a> · <a href="05-flashinfer.html">FlashInfer（05，注意力内核库，与 vAttention 互补：内核层 vs 显存管理层）</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">论文引用的关联工作（vLLM、FlashAttention、GMLake 等）仅按门控页转述；除官方仓库外本页不提供任何外部链接。上一篇：<a href="03-mooncake.html">Mooncake（03）</a>；下一篇：<a href="05-flashinfer.html">FlashInfer（05）</a>；或从<a href="../index.html">首页目录</a>进入。</p>
+      </section>
+
+      <section id="decision-checklist" aria-labelledby="decision-checklist-h">
+        <h2 id="decision-checklist-h">给架构师的决策清单</h2>
+        <form class="decision-checklist" aria-label="vAttention 采用决策清单（静态勾选，不提交数据）">
+          <fieldset>
+            <legend>需求与兼容</legend>
+            <label><input type="checkbox" name="d1"> 工作负载确有长上下文 / 高 P:D 比特征（论文口径：收益与上下文长度、P:D 比正相关，第 11 页）；decode 主导的短上下文负载不应期待显著收益</label>
+            <label><input type="checkbox" name="d2"> 目标硬件为 NVIDIA A100/H100 数据中心卡，且团队具备驱动/CUDA 版本管理能力（64KB 页需修改版开源驱动，第 2 页；复现绑定 CUDA 12.1 + PyTorch 2.3.0，第 18 页）</label>
+            <label><input type="checkbox" name="d3"> 已确认当前注意力内核栈的分页开销可测量（分页 prefill 慢至 37%/42%、块大小敏感至 1.9×，第 1 页）——收益动机成立</label>
+          </fieldset>
+          <fieldset>
+            <legend>PoC 与容量</legend>
+            <label><input type="checkbox" name="d4"> 用真实负载（含长上下文与峰值段）对比「分页内核 vs 非分页内核 + vAttention」，记录 prefill/decode/端到端三层吞吐与延迟分位</label>
+            <label><input type="checkbox" name="d5"> 扫描页组粒度（默认 2MB vs 64KB，第 2、6 页），记录最大批大小、碎片率与同步分配延迟尖峰</label>
+            <label><input type="checkbox" name="d6"> 验证 step 失败→抢占路径与批组成变化（请求中途退出/加入）下的正确性与延迟稳定性</label>
+          </fieldset>
+          <fieldset>
+            <legend>SLO 与成本</legend>
+            <label><input type="checkbox" name="d7"> 确认业务 SLO 口径与论文口径（固定 QPS 下请求执行延迟 CDF/中位数，第 11 页）的关系；论文无 TTFT/TBT SLO 数字，不得直接引用为本站 SLO 承诺</label>
+            <label><input type="checkbox" name="d8"> 用公式 1 按查询日云价核算每百万 token 成本，对 P:D 比与页组粒度各做 ±1 档敏感性</label>
+          </fieldset>
+          <fieldset>
+            <legend>安全与运维</legend>
+            <label><input type="checkbox" name="d9"> 跨请求物理页复用语义（第 8 页）已写入威胁模型：多租户分域或回收清零策略已过合规评审</label>
+            <label><input type="checkbox" name="d10"> 镜像仅从官方仓库/归档 DOI 构建、锁定 digest 并纳入 SBOM；驱动 fork 有上游同步计划；复现用特权容器（SYS_ADMIN）与生产镜像隔离（第 18–19 页）</label>
+            <label><input type="checkbox" name="d11"> 对同步分配延迟尖峰、step 失败/抢占率、页组缓存水位、最大批大小建立监控告警</label>
+          </fieldset>
+          <fieldset>
+            <legend>退出策略</legend>
+            <label><input type="checkbox" name="d12"> 保留回退路径：标准驱动 + PagedAttention 内核后端的已压测基线与切换开关，确保迁移可逆</label>
+            <label><input type="checkbox" name="d13"> 驱动/服务/内核库三层版本分开变更、可独立回滚（CUDA 升级窗口按附录「不保证可用」口径评审，第 18 页）</label>
+          </fieldset>
+        </form>
+      </section>
+
+      <section id="evidence" aria-labelledby="evidence-h">
+        <h2 id="evidence-h">证据台账</h2>
+        <p class="meta-note">分级（本论文台账 schema：<span class="mono">sources/vattention.evidence.json</span>，schema evidence-ledger/v1）：P = 论文原理/机制主张（锚定 PDF 页码/章节）；R = 论文报告的实验结果（锚定 PDF 页码）；E = 外部工件（官方仓库，论文附录仅作锚点，仓库内容未联网核验）；I = 编辑推断（显式标注不确定性，非论文印刷主张）。编号与台账文件一致（P1–P4、R1–R2、E1、I1–I3）；定位均为<strong>真实 PDF 页码</strong>。注意：本页 R 级含义为「论文实验结果」，与站内部分页面「R = 仓库声明」的用法不同，以各页台账 schema 为准。最后核验日期：2026-09-14。</p>
+        <div class="table-scroll" role="region" aria-label="证据台账表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 I · 关键结论 → 级别 → 定位（真实 PDF 页码 + 章节/图号）→ 核验状态（10 条 = P 4 · R 2 · E 1 · I 3）</caption>
+            <thead><tr><th scope="col">编号</th><th scope="col">关键结论（摘要）</th><th scope="col">级别</th><th scope="col">定位（PDF 页码 + 章节/图号）</th><th scope="col">核验状态</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">P1</td><td>vAttention 提供虚拟连续 KV cache，用 CUDA 虚拟内存管理（VMM）把物理内存分配与虚拟地址空间解耦</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页 · 摘要/§1</td><td>已核验（PDF 原页，台账门控）</td></tr>
+              <tr><td class="mono">P2</td><td>默认页大小 2MB；修改版驱动另提供 64KB 页</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页 · §1</td><td>已核验（PDF 原页，台账门控）</td></tr>
+              <tr><td class="mono">P3</td><td>vAttention step 中，物理页在迭代开始前完成映射</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页 · Sec.4（Table 3 VMM API 延迟同页）</td><td>已核验（PDF 原页，台账门控）</td></tr>
+              <tr><td class="mono">P4</td><td>vAttention 把 decode 期执行的映射与计算重叠</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8 页 · Sec.6</td><td>已核验（PDF 原页，台账门控）</td></tr>
+              <tr><td class="mono">R1</td><td>实验覆盖 Yi-6B、Llama-3-8B、Yi-34B（A100），对比呈现于 Fig.2 与 Fig.3（吞吐/开销对照，含 decode vs vLLM 至 1.99×、离线 1.13–1.23×、在线中位延迟至 −42% 等第 9–11 页数字）</td><td><span class="badge evidence-badge b-r">R</span></td><td>第 9–11 页 · Experiments；Fig.2；Fig.3</td><td>已核验（PDF 原页，论文报告结果）</td></tr>
+              <tr><td class="mono">R2</td><td>vAttention 可移植到 H100</td><td><span class="badge evidence-badge b-r">R</span></td><td>第 15 页 · H100 portability</td><td>已核验（PDF 原页，论文报告结果）</td></tr>
+              <tr><td class="mono">E1</td><td>官方工件仓库为 github.com/microsoft/vattention；论文内仅由附录（第 18–19 页）锚定。本证据文件不对仓库作任何外部第三方断言（博客、第三方评测、采用情况均未核验）</td><td><span class="badge evidence-badge b-e">E</span></td><td>第 18–19 页 · 附录（仅论文侧锚点）；仓库本身为外部工件</td><td>部分核验（PDF 附录锚点已核验；仓库存在性/可用性未联网核验，无捏造断言）</td></tr>
+              <tr><td class="mono">I1</td><td>由 P3+P4 推断：内存增长靠「迭代前映射 + decode 期映射藏进计算」处理，即重映射被设计为不阻塞服务主循环</td><td><span class="badge evidence-badge b-i">I</span></td><td>源自 P3（第 6 页）与 P4（第 8 页）</td><td>编辑标注完成（解读，非论文印刷声明）</td></tr>
+              <tr><td class="mono">I2</td><td>由 P2 推断：2MB 页是默认工作点；修改驱动的 64KB 选项是「更细分配粒度 ↔ 额外映射工作」的可选权衡</td><td><span class="badge evidence-badge b-i">I</span></td><td>源自 P2（第 2 页）</td><td>编辑标注完成（解读，非论文印刷声明）</td></tr>
+              <tr><td class="mono">I3</td><td>由 R1+R2 推断：设计在 A100 上评测、演示可移植到 H100，表明方案面向跨代际的 NVIDIA 数据中心 GPU</td><td><span class="badge evidence-badge b-i">I</span></td><td>源自 R1（第 9–11 页）与 R2（第 15 页）</td><td>编辑标注完成（解读，非论文印刷声明）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">数据与文件说明：本页全部性能数字与机制描述均取自论文《vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention》（ASPLOS '25）已核验门控页（第 1、2、6、8、9–11、15、18–19 页），并通过 <span class="mono">sources/vattention.summary.json</span> 与 <span class="mono">sources/vattention.evidence.json</span> 逐条对应；台账 fabrication_policy 明确：不捏造任何台账之外的数字、arXiv 号、作者、出处或日期。编辑推断与部署建议已用 I 标注；本页唯一外链为官方仓库 microsoft/vattention。数据路径图 <span class="mono">assets/diagrams/vattention-data-path.svg</span>（含 title/desc 无障碍描述）。</p>
+      </section>
+
+      <nav class="pager" aria-label="上一篇下一篇">
+        <a href="03-mooncake.html" rel="prev">← 上一篇：Mooncake</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="../index.html">返回分类：推理服务与资源调度</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="05-flashinfer.html" rel="next">下一篇：FlashInfer →</a>
+      </nav>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <p>来源声明：本页全部性能数字与机制描述均取自论文《vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention》（ASPLOS '25）已核验门控页（摘要/§1 第 1–2 页；VMM/step 第 6 页；优化 第 8 页；实验 第 9–11 页；H100 第 15 页；工件附录 第 18–19 页），并通过 <span class="mono">sources/vattention.summary.json</span> 与 <span class="mono">sources/vattention.evidence.json</span> 逐条对应；编辑推断与部署建议已用 I 标注，本页外链仅官方仓库 microsoft/vattention 一处（HTTPS + rel="noopener noreferrer"）。许可提醒：论文内容版权归原作者与出版方所有，引用以论文原文为准。本地生成：2026-09-14 · 输入 PDF <span class="mono">04_vAttention_2405.04437.pdf</span> · 数据路径图 <span class="mono">assets/diagrams/vattention-data-path.svg</span>。</p>
+  </footer>
+  <script src="../assets/js/site.js" defer></script>
+</body>
+</html>

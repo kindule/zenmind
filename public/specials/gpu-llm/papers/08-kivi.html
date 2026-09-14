@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KIVI：免调优的非对称 2bit KV 缓存量化（论文 08 解读）</title>
+<meta name="description" content="基于本地论文 PDF（08_KIVI_2402.02750.pdf，arXiv:2402.02750，ICML 2024/PMLR 235）的中文架构解读：KIVI 对 KV 缓存做免调优的非对称 2bit 量化——key 沿通道维分组、value 沿 token 维分组，辅以不超过 R=128 个 token 的全精度残差滑窗，配合 CUDA 反量化融合矩阵乘与 Triton 组量化 kernel；单卡 A100-80GB 上 Llama-2-7B 峰值显存（含权重）降至约 1/2.6、批大小至多 4 倍、吞吐 2.35×~3.47×。含缓存读写数据路径、云上部署映射、成本/SLO、安全运维回滚与决策清单，全部数字带 PDF 页码定位。">
+<link rel="prev" href="07-medusa.html">
+<link rel="next" href="09-quarot.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:#1f2937; --muted:#4b5563; --line:#d4d9e0;
+  --primary:#14385c; --primary-weak:#eef3fa;
+  --cyan:#0e7490; --cyan-weak:#e6f7fb;
+  --purple:#6d28d9; --purple-weak:#f3ecfd;
+  --orange:#c2410c; --orange-weak:#fdeada;
+  --amber:#92400e; --amber-weak:#fef3c7;
+  --red:#b91c1c; --red-weak:#fee2e2;
+  --code-bg:#f3f4f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#10161f; --fg:#e5eaf2; --muted:#b6c0ce; --line:#3a4657;
+    --primary:#c7d9ee; --primary-weak:#1b2a3d;
+    --cyan:#7dd3e8; --cyan-weak:#0d2a33;
+    --purple:#c9b2f5; --purple-weak:#241a3d;
+    --orange:#f3b58a; --orange-weak:#3a2113;
+    --amber:#fbd88a; --amber-weak:#33270e;
+    --red:#f5a9a9; --red-weak:#3a1414;
+    --code-bg:#1a2230;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:16px; line-height:1.7;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:1.6em; line-height:1.35; color:var(--primary); margin:1.2em 0 .4em}
+h2{font-size:1.28em; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:.25em; margin-top:2.2em}
+h3{font-size:1.05em; margin-top:1.6em}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.92em}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:.6em 1em; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:.5em 1.5em; justify-content:space-between; align-items:baseline; padding:.7em 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:1.2em}
+.breadcrumb{padding:.6em 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:.3em; margin:0; padding:0; font-size:.92em}
+.breadcrumb li+li::before{content:"/"; margin-right:.3em; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:8px; background:var(--primary-weak); padding:.9em 1.1em; margin:1.2em 0}
+.fact-card h3{margin:.2em 0 .5em}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:.5em; padding:0; margin:.4em 0 .8em}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:.05em .8em; font-size:.88em}
+.ev{display:inline-block; border:1.5px solid var(--muted); border-radius:5px; padding:0 .45em; font-size:.82em; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:6px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:.8em 1em; margin:1.1em 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:1.1em 0}
+table{border-collapse:collapse; width:100%; font-size:.92em}
+caption{caption-side:top; text-align:left; font-weight:700; padding:.3em 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:.45em .6em; text-align:left; vertical-align:top}
+thead th{background:var(--primary-weak); color:var(--primary)}
+tbody th{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:.9em; margin:1.1em 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:8px; padding:.8em 1em; background:var(--bg)}
+.tradeoff-grid h3{margin:.1em 0 .4em; font-size:1em; color:var(--primary)}
+.fit-list li{margin:.7em 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:1em 0}
+.decision-checklist ul{list-style:none; padding-left:.2em}
+.decision-checklist ul li{margin:.35em 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:.4em}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:.6em; justify-content:space-between; margin:1.4em 0}
+.pager a{display:inline-block; min-height:44px; padding:.45em 1em; border:1px solid var(--line); border-radius:8px; background:var(--bg); text-decoration:none}
+.pager a:hover{background:var(--primary-weak)}
+.architecture-diagram{border:1px solid var(--line); border-radius:8px; padding:.8em; margin:1.2em 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:.88em; color:var(--muted); margin-top:.6em}
+.toc{border:1px solid var(--line); border-radius:8px; padding:.6em 1em; margin:1.2em 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:.4em 0; padding-left:1.4em; columns:2; column-gap:2em}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:1.02em; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:.8em 1em; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.9em}
+.site-footer{border-top:1px solid var(--line); padding:1em 16px 2em; font-size:.88em; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">解码加速与量化</a></li>
+    <li aria-current="page">KIVI</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>KIVI：key 按通道 / value 按 token 的免调优非对称 2bit KV 缓存量化</h1>
+<p class="lede">本页为第 8 篇（解码加速与量化类）。定量内容取自本地论文 PDF <code>08_KIVI_2402.02750.pdf</code>（arXiv:2402.02750v2，ICML 2024 / PMLR 235，共 15 页）并逐条标注 PDF 页码；第 1、3、4、5、6、7、8、9、13 页已渲染原页逐项目检，图 5 的逐点坐标值为读图近似并单独标注（见 <a href="#evidence">#evidence</a> 与 <code>sources/kivi.evidence.json</code>）。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：推理（KV 缓存压缩）</li>
+    <li>形态：即插即用算法 + GPU kernel（免训练、免校准）</li>
+    <li>目标硬件：单卡 NVIDIA A100（80GB，效率实验口径，第 7-8 页）</li>
+    <li>核心资源：KV 缓存显存 · 显存带宽（KV 搬运）· batch 容量</li>
+    <li>证据状态：P（论文，页码级核验）+ R（摘要印明仓库，未在线核验）+ E/I</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-14">2026-09-14</time>。<strong>证据完整度：</strong>论文核心数字（摘要、表 1-5、图 2-5、§3-§4 结论）已回 PDF 原页逐项核验并标注页码；附录第 12、14、15 页经文本提取交叉核对；图 5 无数据表，逐点数值为编辑读图近似（标 I）；TTFT/TPOT、量化统计量存储精度论文未披露，页面写「论文未明确披露」。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文摘要印明的官方仓库（本次未在线核验）">R＝仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/读图近似，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="07-medusa.html" rel="prev">上一篇：07 Medusa</a>
+  <a href="09-quarot.html" rel="next">下一篇：09 QuaRot（文件可能尚未发布）</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（逐字核验自 PDF 第 1 页）</caption>
+    <tbody>
+      <tr><th scope="row">题名</th><td>KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache（编辑译名：KIVI——面向 KV 缓存的免调优非对称 2bit 量化）</td></tr>
+      <tr><th scope="row">作者 / 机构</th><td>Zirui Liu*、Jiayi Yuan*（Rice）；Hongye Jin（Texas A&amp;M）；Shaochen (Henry) Zhong（Rice）；Zhaozhuo Xu（Stevens）；Vladimir Braverman（Rice）；Beidi Chen（CMU）；Xia Hu（Rice）。*共同一作，脚注注明作者顺序由抛硬币决定（第 1 页）</td></tr>
+      <tr><th scope="row">发表</th><td>ICML 2024（Proceedings of the 41st International Conference on Machine Learning, Vienna, PMLR 235, 2024）；arXiv:2402.02750v2，2024-07-25；本地 PDF <code>08_KIVI_2402.02750.pdf</code>（15 页）<span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">代码</th><td>摘要末句印明 <code>github.com/jy-yuan/KIVI</code>（第 1 页）<span class="ev ev-r">R</span>；本次会话未在线核验可达性，使用前复核（见 <a href="#links">#links</a>）</td></tr>
+      <tr><th scope="row">评估范围</th><td>模型：Llama/Llama-2（7B/13B）、Falcon-7B（MQA）、Mistral-7B，另有 Llama-3-8B-Instruct、Mistral-7B-v0.2、LongChat-7B-v1.5（附录）；任务：CoQA、TruthfulQA、GSM8K（LM-Eval）、LongBench 8 任务、大海捞针 NIAH；效率：ShareGPT 合成负载（第 6-9、13-15 页）<span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">实验硬件</th><td>效率实验：单卡 NVIDIA A100 GPU（80GB），Llama-2-7B（第 8 页）；精度实验 GPU 型号/数量：论文未明确披露</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> KIVI 抓住一个经验事实——KV 缓存里 <strong>key 有少数固定通道幅值极大、value 没有</strong>——据此把 2bit 量化拆成两套几何：key 沿通道维每 G=32 个 token 一组、value 沿 token 维分组，再配一段不超过 R=128 个 token 的全精度残差滑窗解决「按通道量化无法流式写入」的工程矛盾。它免训练、免校准，换来的不是单请求变快，而是<strong>同显存下装下 4 倍 batch、吞吐 2.35×~3.47×</strong>（单卡 A100-80GB、Llama-2-7B）。适合 KV 显存已成瓶颈的批量/长上下文服务；Falcon 这类 MQA 模型 2bit 会明显掉精度，数学推理等硬任务依赖滑窗配置正确。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>批量与上下文一大，KV 缓存就成为显存与速度瓶颈——540B PaLM 在批 512、上下文 2048 时 KV 缓存达 3TB（参数量的 3 倍，第 1 页）；OPT-175B 在批 512、输入 512、输出 32 时 KV 缓存 1.2TB（权重的 3.8 倍，第 3 页）；GPU 每生成一个 token 都要把整个 KV 缓存从显存搬进 SRAM，期间计算核空闲（第 1、3 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>关键观察：</strong>仿真量化显示（Llama-2-13B、组大小 32，第 3 页表 1）：双 per-token 的 2bit 掉到 52.93/24.98（CoQA/TruthfulQA），value 也按通道则崩到 2.88/0.74，而 <strong>key 按通道 + value 按 token</strong> 拿到 63.53/28.60，几乎追平 16bit 的 66.37/29.53 <span class="ev ev-p">P</span>。</li>
+  <li><strong>为什么：</strong>key 的离群集中在少数固定通道，按通道分组把误差锁在通道内（注意力分数误差 9.60 vs 47.00，第 4 页表 2）；value 是注意力输出的「混合器」且注意力稀疏 84.3%，按 token 分组把误差锁在单个 token 内（输出误差 3.55 vs 49.89）<span class="ev ev-p">P</span>。</li>
+  <li><strong>工程化：</strong>key/value 都拆成「2bit 分组部分 + 全精度残差」：value 队列天然流式；key 攒满 R 个 token 再按通道成组量化（R 能被 G 整除）；反量化用 CUDA 融合进矩阵乘（Q_MatMul），组量化 kernel 用 Triton；与 weight-only 权重量化完全兼容（第 5-6 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>结果与边界：</strong>Llama-2-7B 峰值显存（含权重）降至约 1/2.6；相近峰值显存下 batch 至多 4×、吞吐 2.35×~3.47×（单卡 A100-80GB、ShareGPT 负载均值输入 161/输出 338，第 1、7-8 页图 5）<span class="ev ev-p">P</span>；Llama/Mistral 上 2bit 精度损失至多约 2%，但 Falcon-7B（MQA 单 KV 头）需 4bit（第 6、8 页）<span class="ev ev-p">P</span>；论文未报告 TTFT/TPOT 与单请求延迟<span class="ev ev-i">I</span>（口径核对）。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>瓶颈的量级：</strong>KV 缓存随 batch 与上下文线性增长。540B PaLM、批 512、上下文 2048 时 KV 缓存 3TB，是参数量的 3 倍（第 1 页，引 Pope et al., 2023）；OPT-175B、批 512、输入 512、输出 32 时 KV 缓存 1.2TB，是权重的 3.8 倍（第 3 页，引 Sheng et al., 2023）<span class="ev ev-p">P</span>。同时解码期 GPU 每产出一个 token 都要把整个 KV 缓存从显存搬入 SRAM，期间计算核基本空闲——KV 既吃容量也吃带宽<span class="ev ev-p">P</span>（第 1、3 页）。</p>
+
+<p><strong>既有路线及其代价：</strong><span class="ev ev-p">P</span>（第 1 页）论文把已有工作分三类：①减少 KV 头数（MQA/GQA）——需从头训练或微调；②驱逐不重要 token（H2O、Scissorhands、StreamingLLM）——丢弃信息；③系统层手段（FlexGen 卸载、vLLM 分页）——改内存管理、不缩小 KV 本身。量化是最直接的「省字节」手段，但此前 KV 量化研究很少，多是对全量 KV 直接套 4bit round-to-nearest；GPTQ 这类优化型方法因 KV 流式到达、开销不适用（第 3 页）<span class="ev ev-p">P</span>。</p>
+
+<p><strong>目标工作负载与约束：</strong>长上下文与批量推理服务；约束是：不训练、不微调、不用校准数据（tuning-free），精度损失可忽略，且实现必须对 GPU 亲和（第 1 页摘要主张；第 6 页 System Support）<span class="ev ev-p">P</span>。</p>
+
+<p><strong>基线口径：</strong>精度基线为同模型 16bit KV（FP16 缓存）；效率基线为 FP16 KV + FP16 权重的标准推理，批量从小到大扫描直至 OOM（第 6-8 页）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 因此论文数字回答的是「KIVI 比 FP16 缓存强多少」，不回答「与其他 KV 压缩方案比谁优」。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 量化原语与关键实验观察</h3>
+<p>KV 缓存是流式结构，作者采用最灵活的 round-to-nearest（RTN）对称区间量化<span class="ev ev-p">P</span>（第 3 页）：</p>
+<div class="formula">
+Q(X) = ⌊(X − z_X) / s_X⌉，反量化 X′ = Q(X)·s_X + z_X<br>
+z_X = min X（零点），s_X = (max X − min X) / (2^B − 1)（B 为位宽缩放因子）
+</div>
+<p>仿真（fake）量化实验<span class="ev ev-p">P</span>（第 3 页表 1；Llama-2-13B、CoQA/TruthfulQA、组大小 32，先量化再在注意力层反量化）：</p>
+<div class="table-scroll">
+  <table>
+    <caption>表 1 转录：不同量化维度的 2bit 结果（<span class="ev ev-p">P</span>，PDF 第 3 页；K-C＝key 按通道，V-T＝value 按 token，余类推）</caption>
+    <thead><tr><th scope="col">配置</th><th scope="col" class="num">CoQA</th><th scope="col" class="num">TruthfulQA</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">16bit</th><td class="num">66.37</td><td class="num">29.53</td></tr>
+      <tr><th scope="row">4bit（K-T, V-T）</th><td class="num">66.48</td><td class="num">29.51</td></tr>
+      <tr><th scope="row">2bit（K-C, V-T）<strong>（最优）</strong></th><td class="num">63.53</td><td class="num">28.60</td></tr>
+      <tr><th scope="row">2bit（K-T, V-T）</th><td class="num">52.93</td><td class="num">24.98</td></tr>
+      <tr><th scope="row">2bit（K-C, V-C）</th><td class="num">2.88</td><td class="num">0.74</td></tr>
+      <tr><th scope="row">2bit（K-T, V-C）</th><td class="num">2.80</td><td class="num">0.26</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>三条观察<span class="ev ev-p">P</span>（第 3 页 OB1-OB3）：INT4 双 per-token 尚可保持精度、INT2 明显掉点（OB1）；value 一旦按通道，无论 key 怎样都显著恶化（OB2）；INT2 下最优组合是 key 按通道 + value 按 token（OB3）。</p>
+
+<h3>3.2 为什么 K/V 的量化维度必须不同</h3>
+<ul>
+  <li><strong>Key：离群锁在少数固定通道。</strong>图 2（第 4 页）显示 Llama-2-13B 第 16/31 层与 Falcon-7B 第 16/20 层的 key 缓存存在少数幅值极大的固定通道，value 无此模式。按通道分组使离群通道「独享」自己的零点/缩放，不污染其他通道：key 重建误差 4.55（按通道）vs 13.67（按 token），注意力分数误差 9.60 vs 47.00（按 token 差约 5×）<span class="ev ev-p">P</span>（第 4 页表 2）。</li>
+  <li><strong>Value：注意力输出的「混合器」，误差要按 token 锁。</strong>注意力输出是 value 向量按注意力分数的加权和，而注意力高度稀疏（平均 84.3%，第 4 页表 2）——输出只依赖少数重要 token。按 token 量化把误差限制在单个 token 内，量化其他 token 不伤害重要 token：输出相对误差 ∆ 为 3.55（按 token）vs 49.89（按通道，约 15× 差距）<span class="ev ev-p">P</span>（第 4 页 §3.2）。</li>
+</ul>
+
+<h3>3.3 KIVI 算法：分组缓存 + 全精度残差滑窗</h3>
+<p>按通道量化跨 token 成组、无法「来一个 token 量化一个」；KIVI 的解法是把 key 与 value 各拆成两段<span class="ev ev-p">P</span>（第 5 页 §3.3，图 3 与附录 A Algorithm 1，第 12 页）：</p>
+<ul>
+  <li><strong>key 拆分：</strong><code>X_Kg = X_K[:l−r]</code>（分组段，2bit）＋ <code>X_Kr = X_K[l−r:]</code>（残差段，全精度，≤R 个 token）。新 token 的 key 追加进 X_Kr；攒满 R 个即按通道维量化（每 G 个 token 一组）并入 Q(X_Kg)，X_Kr 清空。约束：<strong>R 必须能被 G 整除</strong><span class="ev ev-p">P</span>（第 5 页）。</li>
+  <li><strong>value 拆分：</strong>FIFO 队列 X_Vr 保留最新 R 个全精度 value；队列超过 R 时弹出最旧的，按 token 维分组量化并入 Q(X_Vg)。按 token 量化与自回归流式天然对齐<span class="ev ev-p">P</span>（第 5 页）。</li>
+  <li><strong>注意力拼接：</strong>A = Concat([A_g, A_r])，其中 A_g = t_Q·Q(X_Kg)ᵀ（经 Q_MatMul，反量化融合在 tiling 级完成）、A_r = t_Q·X_Krᵀ；输出 t_O = A_g·Q(X_Vg) + A_r·X_Vr<span class="ev ev-p">P</span>（第 5 页式 3）。</li>
+  <li><strong>全精度滑窗：</strong>KIVI 实际为局部相关 token 维护一个全精度 KV 滑窗，窗口大小预期为 <strong>key R/2、value R</strong>（第 6 页；注：<code>kivi.txt</code> 提取把两者归属写反，已按 PDF 原页更正）。该滑窗对 GSM8K 等硬任务拿到理想性能至关重要——fake 2bit(K-C,V-T) 全量化在 Llama-2-7B GSM8K 只有 5.76，KIVI-2 保留滑窗后为 12.74（16bit 13.50）<span class="ev ev-p">P</span>（第 6 页 §4.2.1、第 8 页表 3）。</li>
+  <li><strong>开销可控：</strong>实验取 R ≤ 128，序列长度通常远大于 R，残差显存开销可忽略；prefill 阶段传给下一层的是精确张量（精度不受影响），内存中只保留量化 KV<span class="ev ev-p">P</span>（第 5-6 页）。</li>
+</ul>
+
+<h3>3.4 系统支持（GPU kernel）</h3>
+<p><span class="ev ev-p">P</span>（第 6 页 System Support）为压低开销：①反量化融合进矩阵乘——<code>Q_MatMul</code>（混合精度矩阵乘，CUDA 实现，反量化在 tiling 级完成）；②组量化 kernel 用 Triton 实现；③方法与 weight-only 权重量化<strong>完全兼容</strong>，可叠加。</p>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝超参 G 与 R 的选择（R 可整除 G）、量化触发阈值（len(X_Kr)=R；len(X_Vr)&gt;R）、位宽档位（KIVI-2/KIVI-4）；<strong>数据面</strong>＝token 投影、残差追加/出队、组量化 kernel、Q_MatMul 注意力、缓存四元组回写。该划分只影响叙述，不改变论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/kivi-data-path.svg"
+       alt="KIVI 缓存读写数据路径图：当前 token 经前向投影得到 query、key、value；写路径上 key 追加进全精度残差缓冲 X_Kr（不超过 R 个 token），value 进入 FIFO 队列 X_Vr（保留最新 R 个）；阈值触发量化时，key 残差攒满 R 个 token 后沿通道维分组（每组 G=32 个 token）量化为 2bit 并入分组 key 缓存 Q(X_Kg)，value 队列超过 R 个时弹出最旧的 token、沿 token 维量化并入 Q(X_Vg)；读路径上注意力得分由两段拼接——2bit 分组 key 经 Q_MatMul（反量化融合进矩阵乘的 CUDA 算子）与查询相乘、全精度残差 key 直接与查询相乘——拼接后 softmax，输出为 2bit 分组 value 与全精度 value 两段加权和；显存中的 KV 缓存是每层每头一个四元组：Q(X_Kg) 2bit 加零点缩放、X_Kr 全精度不超过 R、Q(X_Vg) 2bit 加零点缩放、X_Vr 全精度 R 个；每步解码循环写-读-回写。右侧面板列出参数 G=32、R=128、量化公式（零点取最小值、缩放取极差除以 2^B 减一）、非对称依据（key 少数固定通道幅值大、注意力分数误差 9.60 对 47.00；value 是输出混合器、注意力稀疏 84.3%、输出误差 3.55 对 49.89）与收益风险（峰值显存含权重约降至 1/2.6、batch 至多 4 倍、吞吐 2.35 至 3.47 倍；Falcon 等 MQA 模型 2bit 掉精度需 4bit、GSM8K 依赖全精度滑窗、组大小 128 时精度下降、论文未报告 TTFT/TPOT）。" width="980" height="920">
+  <figcaption>图 1：KIVI 单步解码的缓存读写路径与非对称量化机制。实线＝GPU 计算/数据流，虚线＝控制流（阈值触发量化）；紫色＝KV 缓存与存储对象，琥珀＝风险点；编号 ①-⑥ 对应下方文字序列。依据论文图 1-3、表 1-3、图 5、§3.3、§4（arXiv:2402.02750v2）绘制 <span class="ev ev-p">P</span>；编号与平面划分为编辑标注 <span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 前向投影：</strong>当前 token 嵌入 t 经 W_Q/W_K/W_V 得到 t_Q、t_K、t_V（每层每头各一份）；prefill 逐层传精确张量，解码期每步只有一个 token 到达（流式）<span class="ev ev-p">P</span>（第 2、5 页）。</li>
+  <li><strong>② 写缓存（残差）：</strong>t_K 直接追加进全精度残差缓冲 X_Kr（≤R 个 token）；t_V 进入 FIFO 队列 X_Vr（保留最新 R 个）。两者此时都是 FP16<span class="ev ev-p">P</span>（第 5 页）。</li>
+  <li><strong>③ 触发量化：</strong>len(X_Kr)=R 时 KeyQuant——沿通道维分组、每 G=32 个 token 一组、组内按通道算零点/缩放，量化为 2bit 并入 Q(X_Kg)，X_Kr 清空；len(X_Vr)&gt;R 时弹出最旧 token、沿 token 维量化并入 Q(X_Vg)<span class="ev ev-p">P</span>（第 5 页、第 12 页 Algorithm 1）。</li>
+  <li><strong>④ 读缓存（注意力）：</strong>A = Concat([t_Q·Q(X_Kg)ᵀ, t_Q·X_Krᵀ])，量化段经 Q_MatMul（CUDA 反量化融合矩阵乘）；Softmax 后输出 t_O = A_g·Q(X_Vg) + A_r·X_Vr<span class="ev ev-p">P</span>（第 5 页式 3、第 6 页）。</li>
+  <li><strong>⑤ 存储布局：</strong>每层每头一个四元组 ⟨Q(X_Kg) 2bit＋统计量, X_Kr 全精度 ≤R, Q(X_Vg) 2bit＋统计量, X_Vr 全精度 R⟩；R≤128 时残差开销可忽略<span class="ev ev-p">P</span>（第 5 页）。统计量（零点/缩放）的存储精度：论文未明确披露。</li>
+  <li><strong>⑥ 循环与收益：</strong>每步重复 ②→④ 并回写四元组；KV 显存下降 → 同显存可容更大 batch → 吞吐上升。单卡 A100-80GB、Llama-2-7B 上：峰值显存（含权重）约 1/2.6，batch 至多 4×，吞吐 2.35×~3.47×<span class="ev ev-p">P</span>（第 1、7-8 页图 5）；上下文/输出越长收益越大<span class="ev ev-p">P</span>（第 8 页）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与事实（机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>组大小 G=32（所有实验）；残差 R=128，且 R ≤ 128、R 可被 G 整除</td><td>量化超参（KIVI-2/KIVI-4 共用）</td><td><span class="ev ev-p">P</span> 第 6 页 §4.1、第 5 页 §3.3</td></tr>
+      <tr><td>key 按通道维分组、value 按 token 维分组（2bit）</td><td>非对称量化几何</td><td><span class="ev ev-p">P</span> 第 1 页摘要、第 2 页图 1、第 4 页 §3.2</td></tr>
+      <tr><td>全精度滑窗：预期 key R/2、value R；对 GSM8K 至关重要</td><td>精度保持机制</td><td><span class="ev ev-p">P</span> 第 6 页 §3.3（提取文件方向颠倒已按原页更正）</td></tr>
+      <tr><td>Q_MatMul＝反量化融合矩阵乘（CUDA，tiling 级）；组量化 kernel 用 Triton；兼容 weight-only 量化</td><td>GPU 实现</td><td><span class="ev ev-p">P</span> 第 5 页图 3 注、第 6 页 System Support</td></tr>
+      <tr><td>prefill 传给下一层的是精确张量；内存只保留量化 KV</td><td>prefill/decode 边界</td><td><span class="ev ev-p">P</span> 第 5 页 §3.3</td></tr>
+      <tr><td>量化统计量（零点/缩放）存储精度、KV 量化/反量化算子的绝对耗时：论文未明确披露</td><td>数据路径运行细节</td><td><span class="ev ev-p">P</span>（本次证据源未载明，页面不补写）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong><span class="ev ev-p">P</span> 口径提醒（读数方式）：</strong>效率数字的完整条件是：单卡 NVIDIA A100（80GB）、Llama-2-7B、ShareGPT 合成负载（平均输入 161 / 输出 338 token）、批量从小到大扫描直至 OOM、对比对象为 FP16 KV 基线（第 7-8 页）<span class="ev ev-p">P</span>。引用本页任何吞吐/显存数字时必须携带这些条件，且不可与其他论文的数字横向比较。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>显存下降 ↔ 精度风险（模型相关）</h3>
+    <p><span class="ev ev-p">P</span> KV 存 2bit 后 Llama/Mistral 精度损失至多约 2%（第 6 页）；但 Falcon-7B 用 MQA、KV 只有单头，本已高度压缩，2bit 明显掉精度（CoQA 57.48 vs 16bit 59.83，GSM8K 3.41 vs 4.55），需 KIVI-4（第 6、8 页）。<span class="ev ev-i">I</span> 位宽档位（2bit/4bit）是按模型注意力结构选的，不是全局常数。</p>
+  </li>
+  <li>
+    <h3>非对称收益 ↔ 写路径复杂度</h3>
+    <p><span class="ev ev-p">P</span> value 按 token 天然流式；key 按通道跨 token 成组，必须维护残差缓冲、攒满 R 个才量化，且 R 要能被 G 整除（第 5 页）。<span class="ev ev-i">I</span> 这是「更优量化几何」换来的状态机复杂度：两套触发阈值、两种队列语义，配置错误会直接打击精度（见 GSM8K 敏感性）。</p>
+  </li>
+  <li>
+    <h3>精度保持 ↔ 全精度滑窗依赖</h3>
+    <p><span class="ev ev-p">P</span> 全量化 2bit(K-C,V-T) 在 Llama-2-7B GSM8K 仅 5.76，KIVI 靠滑窗拉回 12.74（16bit 13.50）；残差长度对常规任务不敏感（{32,96,128} 无显著差异）但对困难任务重要（R=64 最差 19.86 vs R=128 20.77）（第 6-9 页）。<span class="ev ev-i">I</span> 滑窗是精度生命线：窗口被配小或失效时，硬任务先受伤且不易在常规评测中发现。</p>
+  </li>
+  <li>
+    <h3>吞吐上升 ↔ 反量化开销与融合深度</h3>
+    <p><span class="ev ev-p">P</span> 吞吐 2.35×~3.47× 的同时，论文承认量化开销尚未充分融合——「若把 KV 量化进一步与前序算子融合，加速还能大幅提升」，留作未来工作（第 8-9 页）。<span class="ev ev-i">I</span> 即当前实现存在可回收的开销；但绝对耗时论文未披露，无法估算上限。</p>
+  </li>
+  <li>
+    <h3>批量容量 ↔ 单请求延迟（未量化）</h3>
+    <p><span class="ev ev-p">P</span> 论文报告批处理吞吐与峰值显存，未报告 TTFT/TPOT 或单请求延迟；图 5 中 FP16 基线的吞吐峰值出现在小批量（读图约 batch 32 处 ~760 tokens/s），更大批量反而回落<span class="ev ev-p">P</span>＋<span class="ev ev-i">I</span>（读图）。<span class="ev ev-i">I</span> 引用「4× batch」时必须明确：那是 OOM 边界的容量收益，不是「任何 batch 下都快 4×」。</p>
+  </li>
+  <li>
+    <h3>正交可组合 ↔ 集成面</h3>
+    <p><span class="ev ev-p">P</span> KIVI 与 weight-only 量化、token 驱逐（H2O 等）、系统分页（vLLM PagedAttention、S3）正交、可叠加（第 6、9 页）。<span class="ev ev-i">I</span> 代价是集成面在推理框架的 KV 读写关键路径上：自研 CUDA/Triton kernel 的版本、兼容性与性能回归都成为平台责任。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>KIVI 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算：单卡即可承载（A100-80GB、Llama-2-7B 效率实验）</th>
+        <td><span class="ev ev-e">E</span> 单卡 GPU 推理实例起步（如各云 A10G/L4/A100 类）；KV 显存节省可换更大 batch 或更长上下文，按吞吐 SLO 决定是否升配</td>
+        <td>单卡实验口径为论文事实 <span class="ev ev-p">P</span>（第 7-8 页）；实例规格为厂商目录示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">KV 显存容量规划：KV 字节数 × 序列长 × batch ≪ FP16</th>
+        <td><span class="ev ev-e">E</span> 容量模型进编排：按「权重 + KIVI 量化 KV + 残差 + 激活」估算单实例可容并发；为回退 FP16 预留显存余量或配置降载</td>
+        <td>KV 结构（四元组、残差 ≤R）为论文事实 <span class="ev ev-p">P</span>（第 5 页）；容量公式与回退余量为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">推理框架集成：HF Transformers 代码库上的 CUDA/Triton kernel</th>
+        <td><span class="ev ev-e">E</span> 自建推理服务（vLLM/TGI 类或云托管模型服务）集成 KIVI kernel 时走制品化镜像；kernel 版本与框架版本配对 pin</td>
+        <td>论文实现在 HF Transformers 之上、kernel 自研 <span class="ev ev-p">P</span>（第 6 页）；论文未绑定任何服务框架 <span class="ev ev-p">P</span>；框架选型为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">配置面：G、R、位宽（KIVI-2/4）按模型选择</th>
+        <td><span class="ev ev-e">E</span> 配置随模型制品下发（模型卡注明 G=32、R=128、MQA 模型用 4bit）；变更走灰度 + 精度回归</td>
+        <td>参数口径为论文事实 <span class="ev ev-p">P</span>（第 6、9、14-15 页）；配置治理为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性：容量收益在批量侧兑现</th>
+        <td><span class="ev ev-e">E</span> 相同显存水位提高单实例并发上限或接入更多并发路由；长上下文流量优先路由到 KIVI 实例（收益随上下文增大）</td>
+        <td>「batch 至多 4×、吞吐随上下文/输出增长」为论文事实 <span class="ev ev-p">P</span>（第 8 页）；路由策略为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：显存水位、吞吐、精度抽样</th>
+        <td><span class="ev ev-e">E</span> 监控峰值显存/批量上限、tokens/s、GSM8K 类硬任务抽样分数与 NIAH 类检索抽测；异常回退 FP16 缓存并告警</td>
+        <td>论文以吞吐/峰值显存/精度基准为口径 <span class="ev ev-p">P</span>（第 6-9 页）；监控指标设计为编辑建议 <span class="ev ev-i">I</span>、接入为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> ①KIVI 的收益兑现在「同卡装更多并发/更长上下文」，最适合 KV 显存水位长期偏高的批量与长上下文服务；②短上下文、低并发实例收益有限（残差占比上升、KV 本身不构成瓶颈）；③与 weight-only 量化叠加是论文明示的兼容方向，可把「权重 + KV」一起压。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 指标口径（论文使用的）</h3>
+<p><span class="ev ev-p">P</span>（第 6-9 页）精度：CoQA（精确匹配）、TruthfulQA（BLEU）、GSM8K（精确匹配）、LongBench 8 任务平均、NIAH 检索；效率：批处理吞吐（tokens/s，全并发合计）与峰值显存（GB），负载为 ShareGPT 合成（平均输入 161/输出 338），扫描 batch 直至 OOM。TTFT、TPOT、单请求延迟：论文未明确披露。</p>
+
+<h3>7.2 容量与成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+FP16 KV 显存/token ≈ 2(K与V) × 层数 L × 隐藏维 d × 2 字节<br>
+KIVI-2 KV 显存/token ≈ 2 × L × d × (2bit + 组统计量摊销)/8 （组统计量：每组零点+缩放）<br>
+单实例可容 batch ≈ (HBM 容量 − 权重 − 激活/框架开销 − 回退余量) ÷ (单请求 KV 字节)<br>
+每百万 token 成本 ≈ 实例时单价 ÷ (batch × 单请求 tokens/s × 3600) × 10^6（记录单价查询日期）
+</div>
+<p><span class="ev ev-i">I</span> 公式中可由论文支撑的量：KIVI 相对 FP16 的 KV 压缩与「相近峰值显存下 batch 至多 4×」（Llama-2-7B、A100-80GB，第 8 页）；峰值显存（含权重）约 1/2.6（第 1 页）。其余（单价、激活开销、回退余量、请求长度分布）需按部署实测填写，本页不给出伪精确数字。<span class="ev ev-e">E</span> Llama-2-7B 的 L=32、d=4096 取自公开模型卡（非论文内容），仅作代入示例。</p>
+
+<h3>7.3 图 5 数字上下文（A100-80GB · Llama-2-7B）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>图 5 上下文速查（论文文字结论为 <span class="ev ev-p">P</span>；逐点读数为 <span class="ev ev-i">I</span> 读图近似，论文无数据表）</caption>
+    <thead>
+      <tr><th scope="col">条目</th><th scope="col">数值/结论</th><th scope="col">条件</th><th scope="col">来源</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">硬件 / 模型 / 负载</th><td>单卡 NVIDIA A100（80GB）；Llama-2-7B；ShareGPT 合成负载（均值输入 161/输出 338）；batch 扫描至 OOM</td><td>效率实验总口径</td><td><span class="ev ev-p">P</span> 第 7-8 页 §4.2.4</td></tr>
+      <tr><th scope="row">batch 容量</th><td>相近峰值显存下 KIVI 至多 4×（读图：基线 ~96 处 OOM vs KIVI-R32 ~384）</td><td>对比 FP16 KV 基线</td><td><span class="ev ev-p">P</span> 第 8 页；读数 <span class="ev ev-i">I</span></td></tr>
+      <tr><th scope="row">吞吐</th><td>2.35×~3.47×（读图：基线峰值 ~760 tokens/s；KIVI-R128 ~1780 @bs~256；KIVI-R32 ~2640 @bs~384）</td><td>同上；上下文/输出更长时倍数更大</td><td><span class="ev ev-p">P</span> 第 8 页；读数 <span class="ev ev-i">I</span></td></tr>
+      <tr><th scope="row">峰值显存</th><td>读图：基线 ~60GB@bs~96；KIVI-R128 ~56GB@bs~256；KIVI-R32 ~54GB@bs~384</td><td>含权重；KIVI 残差 32 压缩率更高（附录 C）</td><td>读数 <span class="ev ev-i">I</span>；残差结论 <span class="ev ev-p">P</span> 第 13 页</td></tr>
+      <tr><th scope="row">残差 32 vs 128</th><td>R32 显存压缩率显著更高、吞吐随之增加；精度差距不大（Llama-2-7B GSM8K：R32 13.57 vs R128 12.74）</td><td>KIVI-2，LM-Eval</td><td><span class="ev ev-p">P</span> 第 13 页附录 C、表 6</td></tr>
+      <tr><th scope="row">基线形状</th><td>FP16 吞吐峰值在小批量（读图 ~760 @bs~32），加大批量反而回落直至 OOM</td><td>图 5 下子图</td><td>读数 <span class="ev ev-i">I</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>7.4 敏感项与数据缺口</h3>
+<ul>
+  <li><span class="ev ev-p">P</span> 敏感项排序（各自条件下）：模型注意力结构（MQA 的 Falcon 2bit 掉精度，需 4bit）＞ 组大小（G=128 时 GSM8K 降到 17.29，G=32/64 相当）＞ 残差长度（常规任务不敏感、困难任务忌 R=64）＞ 任务类型（GSM8K 等硬任务对滑窗最敏感）。</li>
+  <li><span class="ev ev-p">P</span> 数据缺口：TTFT/TPOT/单请求延迟、量化与反量化算子绝对耗时、精度实验的 GPU 型号与数量、不同上下文长度下的吞吐曲线（只有定性「越长越大」）——论文未明确披露。</li>
+  <li><span class="ev ev-i">I</span> 云价格、能耗、kernel 集成的一次性工程成本：论文未涉及，部署时自测。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>KV 缓存即用户数据：</strong><span class="ev ev-i">I</span> KIVI 不改变 KV 缓存的语义——它仍完整保留全部输入 token（论文明确「保留所有 token、只压缩精度」，第 9 页），量化不是加密。多租户实例复用前必须重置/清零 KV 显存，防止跨会话残留；显存 dump 即数据泄露（通用推理服务要求）。</li>
+  <li><strong>数据驻留与边界：</strong><span class="ev ev-p">P</span> KV 缓存全程驻留 GPU 显存（四元组，第 5 页），论文无外置/卸载设计。<span class="ev ev-i">I</span> 云上驻留边界＝实例边界；跨可用区不复制 KV。</li>
+  <li><strong>供应链：</strong><span class="ev ev-r">R</span> 代码来自摘要印明的 <code>github.com/jy-yuan/KIVI</code>（第 1 页）；<span class="ev ev-i">I</span> 引入时 pin commit/镜像 digest、扫描 CUDA/Triton kernel 与依赖、保留可回退版本；本页未在线核验仓库，接入前先人工复核归属、许可与活跃度。</li>
+  <li><strong>输出风险继承：</strong><span class="ev ev-p">P</span> 论文 Impact Statement 表示无额外需特别强调的社会影响（第 9 页）。<span class="ev ev-i">I</span> 但 2bit 量化改变了输出分布（精度基准内「至多约 2%」是均值口径），合规审查应以「KIVI 实际输出」为对象。</li>
+</ul>
+
+<h3>8.2 可运维性（含恢复与回滚）</h3>
+<ul>
+  <li><strong>天然回退路径＝FP16 缓存：</strong><span class="ev ev-i">I</span> KIVI 是推理时配置（论文基线即 FP16），回退＝关闭量化开关重新加载模型。关键运维约束：回退后 KV 显存占用上升（容量收益消失），必须预留显存余量或同步降载，否则回退动作本身会触发 OOM。</li>
+  <li><strong>配置变更管理：</strong><span class="ev ev-p">P</span> G=32、R=128 是全部实验的验证口径；G=128 精度显著下降、R 必须能被 G 整除（第 5-9 页）。<span class="ev ev-i">I</span> 把 (G, R, 位宽) 作为与模型版本绑定的配置资产管理，变更走灰度＋GSM8K/检索类硬任务回归；禁用未经校验的组合。</li>
+  <li><strong>故障恢复：</strong><span class="ev ev-i">I</span> 推理服务无训练态，故障恢复＝实例重启＋模型制品重载；KV 缓存不持久化、丢失即重算（prefill 重放）。多实例无状态水平扩展，单实例故障由负载均衡摘除（云编排能力，<span class="ev ev-e">E</span>）。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 建议：①显存水位与 OOM 边界批量（量化失效会先表现为显存回升）；②吞吐相对基线的漂移；③GSM8K 类硬任务与 NIAH 检索的抽样分数（滑窗配置错误时硬任务先受伤）；④残差/队列长度分布（异常增长提示触发逻辑故障）。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-i">I</span> kernel（CUDA/Triton）与推理框架版本配对 pin；升级走金丝雀＋双基线回归（开/关量化各测一组吞吐与精度）；回滚＝回退上一配对制品或运行时关闭量化。模型升级需重验 (G, R, 位宽) 组合，发布计划包含再评测周期。</li>
+  <li><strong>验收基线：</strong><span class="ev ev-i">I</span> 上线前固定「关量化（FP16）vs 开量化」两组读数：吞吐、峰值显存、GSM8K/检索抽测，形成可复核差值；此后任何变更以差值回归验收。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>KV 显存已成瓶颈的批量/长上下文服务（Llama/Mistral 类）。</strong>触发：显存水位随并发或上下文增长触顶、OOM 限制并发上限。理由：Llama-2-7B 峰值显存（含权重）约 1/2.6，相近显存下 batch 至多 4×、吞吐 2.35×~3.47×（A100-80GB）<span class="ev ev-p">P</span>（第 1、7-8 页）；上下文/输出越长收益越大 <span class="ev ev-p">P</span>（第 8 页）。</li>
+  <li><strong>不能训练/微调、也没有校准数据的部署。</strong>触发：只用现成权重、零改动接入。理由：KIVI 免调优（RTN、无训练无校准），plug-and-play <span class="ev ev-p">P</span>（第 1 页摘要、第 3 页）。</li>
+  <li><strong>权重已做 weight-only 量化、还想继续压显存的实例。</strong>触发：INT4/INT3 权重量化后 KV 成为剩余大头。理由：论文明示与 weight-only 量化完全兼容、可叠加 <span class="ev ev-p">P</span>（第 6、9 页）。</li>
+  <li><strong>已用/计划用 token 驱逐或分页系统、想叠加压缩的团队。</strong>触发：vLLM 分页、H2O 驱逐已上线或规划中。理由：KIVI 保留全部 token 只压精度，与驱逐/分页正交可组合 <span class="ev ev-p">P</span>（第 9 页）；长上下文精度有 NIAH 27K/30K token 证据 <span class="ev ev-p">P</span>（第 7 页）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>Falcon 等 MQA/单 KV 头模型追求 2bit。</strong>触发：模型 KV 头数已被 MQA/GQA 压缩。理由：Falcon-7B 上 2bit 明显掉精度（CoQA 57.48 vs 59.83），需 KIVI-4，压缩收益打折 <span class="ev ev-p">P</span>（第 6、8 页）。</li>
+  <li><strong>短上下文、低并发、KV 不构成瓶颈的场景。</strong>触发：序列短、批量小，KV 显存占比低且无 OOM 压力。理由：论文收益口径是批量/长上下文；残差占比在短序列下上升（论文以「序列远大于 R≤128」论证开销可忽略）<span class="ev ev-p">P</span>（第 5 页）＋<span class="ev ev-i">I</span>（外推判断）。</li>
+  <li><strong>把单请求延迟（TPOT/TTFT）当首要 SLO 的交互式场景。</strong>触发：目标是个位数字毫秒级的每 token 延迟。理由：论文只报批处理吞吐与显存，未报 TTFT/TPOT；反量化开销绝对值未披露且论文承认量化融合尚有提升空间 <span class="ev ev-p">P</span>（第 8-9 页）。<span class="ev ev-i">I</span> 期望「单请求变快」属于误读收益对象。</li>
+  <li><strong>无法保证 (G, R, 滑窗) 配置正确、也没有硬任务回归能力的团队。</strong>触发：无评测流水线、配置随意改动。理由：G=128 显著掉精度（GSM8K 17.29 vs 20.77）、R=64 最差、滑窗失效直接打击 GSM8K 类任务 <span class="ev ev-p">P</span>（第 7、9 页）。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span>（第 6-8 页）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（页码均已核验）</caption>
+    <tbody>
+      <tr><th scope="row">模型</th><td>Llama/Llama-2（7B/13B）、Falcon-7B（MQA）、Mistral-7B；附录另含 Llama-3-8B-Instruct（8K 上下文、GQA 8 KV 头）、Mistral-7B-Instruct-v0.2（32K）、LongChat-7B-v1.5-32K <span class="ev ev-p">P</span>（第 6、14-15 页）</td></tr>
+      <tr><th scope="row">精度/位宽</th><td>KV：KIVI-2（2bit）/ KIVI-4（4bit），基线 16bit（FP16）；权重精度：论文未明确披露（兼容 weight-only 量化）<span class="ev ev-p">P</span>（第 6 页）</td></tr>
+      <tr><th scope="row">超参</th><td>组大小 G=32（所有实验）；残差 R=128（另测 R=32）<span class="ev ev-p">P</span>（第 6、13 页）</td></tr>
+      <tr><th scope="row">任务</th><td>LM-Eval：CoQA（EM）、TruthfulQA（BLEU）、GSM8K（EM）；LongBench：Qasper/QMSum/MultiNews/TREC/TriviaQA/SAMSum/LCC/RepoBench-P（最大序列 Mistral 8192、其他 4096）；NIAH <span class="ev ev-p">P</span>（第 6 页）</td></tr>
+      <tr><th scope="row">效率负载</th><td>仿 vLLM 用 ShareGPT 合成（均值输入 161/输出 338）；batch 扫描至 OOM，报峰值显存与吞吐；硬件单卡 NVIDIA A100（80GB）、Llama-2-7B <span class="ev ev-p">P</span>（第 7-8 页）</td></tr>
+      <tr><th scope="row">基线</th><td>精度：同模型 16bit KV；效率：FP16 KV + FP16 权重 <span class="ev ev-p">P</span>（第 6-8 页）</td></tr>
+      <tr><th scope="row">精度实验硬件</th><td>论文未明确披露（GPU 型号/数量未载明）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 主精度结果（表 3 全量转录）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>LM-Eval 精度转录（均为 <span class="ev ev-p">P</span>，PDF 第 8 页表 3；KIVI 保留 ≤R 全精度残差，fake 量化则全量化）</caption>
+    <thead>
+      <tr><th scope="col">模型</th><th scope="col">配置</th><th scope="col" class="num">CoQA</th><th scope="col" class="num">TruthfulQA</th><th scope="col" class="num">GSM8K</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="8">Llama-2-7B</th><td>16bit</td><td class="num">63.88</td><td class="num">30.76</td><td class="num">13.50</td></tr>
+      <tr><td>4bit（K-T, V-T）</td><td class="num">64.82</td><td class="num">29.85</td><td class="num">12.28</td></tr>
+      <tr><td>2bit（K-C, V-T）</td><td class="num">59.08</td><td class="num">33.10</td><td class="num">5.76</td></tr>
+      <tr><td>2bit（K-T, V-T）</td><td class="num">39.88</td><td class="num">18.29</td><td class="num">0.83</td></tr>
+      <tr><td>2bit（K-C, V-C）</td><td class="num">3.60</td><td class="num">0.27</td><td class="num">0.00</td></tr>
+      <tr><td>2bit（K-T, V-C）</td><td class="num">1.30</td><td class="num">0.49</td><td class="num">0.08</td></tr>
+      <tr><td>KIVI-4</td><td class="num">63.78</td><td class="num">30.80</td><td class="num">13.80</td></tr>
+      <tr><td><strong>KIVI-2</strong></td><td class="num">63.05</td><td class="num">33.95</td><td class="num">12.74</td></tr>
+      <tr><th scope="row" rowspan="8">Llama-2-13B</th><td>16bit</td><td class="num">66.37</td><td class="num">29.53</td><td class="num">22.67</td></tr>
+      <tr><td>4bit（K-T, V-T）</td><td class="num">66.73</td><td class="num">29.14</td><td class="num">20.92</td></tr>
+      <tr><td>2bit（K-C, V-T）</td><td class="num">63.53</td><td class="num">28.60</td><td class="num">12.21</td></tr>
+      <tr><td>2bit（K-T, V-T）</td><td class="num">52.93</td><td class="num">24.98</td><td class="num">4.55</td></tr>
+      <tr><td>2bit（K-C, V-C）</td><td class="num">2.88</td><td class="num">0.74</td><td class="num">0.00</td></tr>
+      <tr><td>2bit（K-T, V-C）</td><td class="num">2.80</td><td class="num">0.26</td><td class="num">0.08</td></tr>
+      <tr><td>KIVI-4</td><td class="num">66.38</td><td class="num">29.49</td><td class="num">23.65</td></tr>
+      <tr><td><strong>KIVI-2</strong></td><td class="num">66.23</td><td class="num">29.84</td><td class="num">20.77</td></tr>
+      <tr><th scope="row" rowspan="8">Falcon-7B（MQA）</th><td>16bit</td><td class="num">59.83</td><td class="num">23.20</td><td class="num">4.55</td></tr>
+      <tr><td>4bit（K-T, V-T）</td><td class="num">58.53</td><td class="num">22.94</td><td class="num">3.26</td></tr>
+      <tr><td>2bit（K-C, V-T）</td><td class="num">43.93</td><td class="num">20.82</td><td class="num">1.29</td></tr>
+      <tr><td>2bit（K-T, V-T）</td><td class="num">25.72</td><td class="num">0.91</td><td class="num">0.53</td></tr>
+      <tr><td>2bit（K-C, V-C）</td><td class="num">41.95</td><td class="num">17.11</td><td class="num">1.52</td></tr>
+      <tr><td>2bit（K-T, V-C）</td><td class="num">19.53</td><td class="num">0.94</td><td class="num">0.15</td></tr>
+      <tr><td><strong>KIVI-4</strong></td><td class="num">59.67</td><td class="num">22.58</td><td class="num">4.47</td></tr>
+      <tr><td>KIVI-2</td><td class="num">57.48</td><td class="num">24.98</td><td class="num">3.41</td></tr>
+      <tr><th scope="row" rowspan="8">Mistral-7B</th><td>16bit</td><td class="num">67.40</td><td class="num">30.45</td><td class="num">38.36</td></tr>
+      <tr><td>4bit（K-T, V-T）</td><td class="num">67.80</td><td class="num">29.83</td><td class="num">36.85</td></tr>
+      <tr><td>2bit（K-C, V-T）</td><td class="num">61.65</td><td class="num">29.64</td><td class="num">26.46</td></tr>
+      <tr><td>2bit（K-T, V-T）</td><td class="num">54.55</td><td class="num">25.86</td><td class="num">5.00</td></tr>
+      <tr><td>2bit（K-C, V-C）</td><td class="num">24.40</td><td class="num">24.86</td><td class="num">2.27</td></tr>
+      <tr><td>2bit（K-T, V-C）</td><td class="num">10.73</td><td class="num">19.12</td><td class="num">0.99</td></tr>
+      <tr><td>KIVI-4</td><td class="num">66.95</td><td class="num">30.49</td><td class="num">37.30</td></tr>
+      <tr><td><strong>KIVI-2</strong></td><td class="num">66.35</td><td class="num">32.17</td><td class="num">36.01</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span> 论文口径：Llama 与 Mistral 上 KIVI 2bit 仅至多约 2% 精度损失；Falcon-7B 因 MQA 单 KV 头已高度压缩，需 4bit 保持精度、2bit 可能大幅掉点（第 6 页）。</p>
+
+<h3>10.3 长上下文、消融与其他证据</h3>
+<div class="table-scroll">
+  <table>
+    <caption>长上下文与消融要点（均为 <span class="ev ev-p">P</span>；页码已核验）</caption>
+    <thead>
+      <tr><th scope="col">证据</th><th scope="col">数值/结论</th><th scope="col">条件</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">LongBench 平均（表 4）</th><td class="num">Llama2-7B：16bit 44.52 / KIVI-4 44.59 / KIVI-2 44.27；Llama2-13B：44.85/44.48/44.69；Llama2-7B-Chat：45.95/45.83/45.67；Llama2-13B-Chat：45.96/46.44/45.52；Falcon-7B：8.71/8.78/7.95；Mistral-7B：46.58/46.56/45.85</td><td>8 任务平均；G=32、R=128</td><td>第 9 页</td></tr>
+      <tr><th scope="row">NIAH（图 4）</th><td>2bit 下检索能力保持（Llama-3-8B-Instruct 20K 词/27K token；Mistral-7B-Instruct-v0.2 20K 词/30K token，全深度×深度网格基本满命中）</td><td>统计词数以消除 tokenizer 差异</td><td>第 7 页、附录 B 第 13 页</td></tr>
+      <tr><th scope="row">组大小消融（表 5）</th><td class="num">G=32/64/128 → GSM8K 20.77/21.00/17.29（G=128 显著下降）</td><td>Llama2-13B、R=128</td><td>第 9 页（讨论第 7 页）</td></tr>
+      <tr><th scope="row">残差消融（表 5）</th><td class="num">R=32/64/96/128 → 20.62/19.86/20.55/20.77（{32,96,128} 无显著差异；R=64 最差；「合理较大的残差长度重要」）</td><td>Llama2-13B、G=32</td><td>第 9 页（讨论第 7 页）</td></tr>
+      <tr><th scope="row">R32 复测（附录 C、表 6）</th><td class="num">R=32 压缩率更高、吞吐增加；Llama-2-7B KIVI-2 R32 62.85/33.01/13.57 vs R128 63.05/33.95/12.74（GSM8K 反而略高）</td><td>KIVI-2，LM-Eval</td><td>第 13 页</td></tr>
+      <tr><th scope="row">补充模型（表 8-10）</th><td>Llama-3-8B-Instruct（8K/GQA）、Mistral-7B-Instruct-v0.2（32K/GQA）、LongChat-7B-v1.5-32K：KIVI-2/4 与全精度基线接近（如 Llama-3 平均 45.21 → KIVI-4 45.31）</td><td>G=32、R=128</td><td>第 14-15 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>各结果条件字段完整性（缺项一律显式标注）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col">硬件</th><th scope="col">精度</th><th scope="col">批量/负载</th><th scope="col">基线</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">LM-Eval 精度（表 3）</th><td>论文未明确披露</td><td>KV 2bit/4bit vs 16bit；权重未披露</td><td>评测集默认参数；批量未披露</td><td>同模型 16bit KV</td><td><span class="ev ev-p">P</span> 第 8 页</td></tr>
+      <tr><th scope="row">LongBench（表 4）</th><td>论文未明确披露</td><td>同上</td><td>最大序列 8192/4096</td><td>同上</td><td><span class="ev ev-p">P</span> 第 9 页</td></tr>
+      <tr><th scope="row">效率（图 5）</th><td>单卡 A100（80GB）</td><td>KIVI-2 vs FP16</td><td>ShareGPT 合成 161/338，batch 扫描至 OOM</td><td>FP16 KV + FP16 权重</td><td><span class="ev ev-p">P</span> 第 7-8 页；逐点读数 <span class="ev ev-i">I</span></td></tr>
+      <tr><th scope="row">消融（表 5）</th><td>论文未明确披露</td><td>KIVI-2</td><td>GSM8K</td><td>组内互比</td><td><span class="ev ev-p">P</span> 第 9 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①全部数字仅在「论文所述模型 + 所列基准 + 所述超参（G=32、R=128）」语境成立，不可外推到其他模型/负载，<strong>不可与本站其他论文的数字直接比较</strong>；②「4× batch」是 OOM 边界的容量结论，不是任意 batch 下的加速；③图 5 逐点坐标为读图近似（I），论文只承诺 4× 与 2.35×~3.47× 两个区间结论；④Falcon 的 2bit 结果不能代表 Llama/Mistral 类模型；⑤精度实验 GPU 型号论文未披露，数字无法关联具体硬件复核。
+</div>
+
+<h3>10.4 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 从摘要印明仓库取代码（先人工复核归属与许可，pin commit/digest）；确认 CUDA/Triton kernel 与推理框架版本配对。</li>
+  <li><span class="ev ev-i">I</span> 精度复测：Llama-2-7B/13B、Mistral-7B、Falcon-7B 各跑 16bit 基线与 KIVI-2/KIVI-4（G=32、R=128），对齐 LM-Eval 默认参数与 LongBench 序列上限（8192/4096）。</li>
+  <li><span class="ev ev-i">I</span> 效率复测：单卡 A100-80GB、Llama-2-7B，ShareGPT 合成负载（均值 161/338），batch 从小到大至 OOM，记录峰值显存与吞吐；对照图 5 形状（基线小批量峰值、KIVI 大批量胜出）。</li>
+  <li><span class="ev ev-i">I</span> 敏感性扫描：G∈{32,64,128}、R∈{32,64,96,128}、R=32 全量评测；重点观察 GSM8K 与检索类任务（滑窗敏感性最高）。</li>
+  <li><span class="ev ev-i">I</span> 目标业务实测：在真实上下文长度分布与并发区间测「开/关量化」差值（吞吐、峰值显存、硬任务抽样精度），再决定启用范围与位宽档位。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2402.02750" rel="noopener noreferrer">https://arxiv.org/abs/2402.02750</a></td>
+        <td><span class="ev ev-p">P</span> arXiv:2402.02750v2（2024-07-25，PDF 水印逐字核验）；ICML 2024 / PMLR 235（第 1 页版权行，论文未给出 PMLR 链接，故不外链）；本地 PDF：<code>08_KIVI_2402.02750.pdf</code>（15 页）</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/jy-yuan/KIVI" rel="noopener noreferrer">https://github.com/jy-yuan/KIVI</a></td>
+        <td><span class="ev ev-r">R</span> 论文摘要末句印明（第 1 页逐字核验：The source code is available at https://github.com/jy-yuan/KIVI）。本次会话未在线访问该 URL；接入前请人工复核归属、活跃度与许可。</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库</th>
+        <td>不提供</td>
+        <td><span class="ev ev-i">I</span> 遵循本站「不猜测仓库」策略：论文未印明且未经核验的第三方/镜像/集成仓库（如各推理框架的适配）一律不链接。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验项，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认瓶颈确实是 KV 显存：记录当前实例的 KV 显存占比、OOM 触发批量与上下文分布（I；P：KV 随批量/上下文增长为瓶颈，第 1、3 页）</label></li>
+      <li><label><input type="checkbox"> 明确收益对象是容量/吞吐而非单请求延迟：TTFT/TPOT 需求单列，不以论文数字承诺延迟（P：论文只报吞吐/显存，第 8 页）</label></li>
+      <li><label><input type="checkbox"> 盘点模型清单：Llama/Mistral 类与 MQA 类（Falcon）分开评估位宽档位（P：Falcon 需 4bit，第 6、8 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认推理框架可集成 KIVI 的 CUDA/Triton kernel，且与现有 weight-only 量化、分页/驱逐机制不冲突（P：正交可组合，第 6、9 页；I：集成前提）</label></li>
+      <li><label><input type="checkbox"> 核验官方仓库归属/许可/活跃度后 pin commit；本页链接未在线核验（R：第 1 页印明；核验责任在使用方）</label></li>
+      <li><label><input type="checkbox"> 固化 (G, R, 位宽) 为模型绑定配置：默认 G=32、R=128，R 必须能被 G 整除（P：第 5-6 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 复测「关量化 vs 开量化」：吞吐、峰值显存、CoQA/GSM8K 三组读数，对齐论文口径（G=32、R=128）（P：第 6-8 页；I：方法）</label></li>
+      <li><label><input type="checkbox"> 跑硬任务回归：GSM8K 与 NIAH 检索抽测，验证滑窗在自身负载下有效（P：滑窗对硬任务关键，第 6-7 页）</label></li>
+      <li><label><input type="checkbox"> 扫 G/R 敏感性（含 G=128 反例、R=64 反例），确认默认配置不是最差区间（P：表 5，第 9 页）</label></li>
+      <li><label><input type="checkbox"> 在目标上下文/并发区间实测，核对收益随上下文增大的论文结论（P：第 8 页；I：实测要求）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式重算单实例可容 batch：权重 + KIVI KV + 残差 + 激活 + 回退余量（P：KV 四元组结构，第 5 页；I：公式与余量）</label></li>
+      <li><label><input type="checkbox"> 为「回退 FP16」预留显存余量或配套降载预案，避免回退动作本身 OOM（I：回退后 KV 膨胀）</label></li>
+      <li><label><input type="checkbox"> 长上下文流量单独规划：收益随上下文增大，但基线显存压力也最大（P：第 8 页；I：配对判断）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义吞吐/并发 SLO 并以「开/关量化」双基线固化验收差值（I）</label></li>
+      <li><label><input type="checkbox"> 定义精度 SLO：GSM8K 类硬任务 + 检索抽测阈值，跌破即回退（P：硬任务先受伤，第 6-7 页；I：阈值自定）</label></li>
+      <li><label><input type="checkbox"> 故障演练：实例重启重载、运行时关量化降级各演练一次（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以「当时单价 + 查询日期」估算每百万 token 成本差，不写死即时云价（I）</label></li>
+      <li><label><input type="checkbox"> 计入一次性成本：kernel 集成、精度回归流水线、每轮模型升级的再验证（I）</label></li>
+      <li><label><input type="checkbox"> 评估 R=32 档位：压缩率更高、吞吐更高，精度需复测（P：附录 C，第 13 页；I：成本取舍）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> KV 显存按用户数据处理：租户/会话切换清零，显存 dump 纳入威胁模型（P：KIVI 保留全部 token，第 9 页；I：残留风险）</label></li>
+      <li><label><input type="checkbox"> 供应链 pin：仓库 commit/镜像 digest 锁定 + CUDA/Triton kernel 扫描 + 可回退层（I；R：先完成仓库核验）</label></li>
+      <li><label><input type="checkbox"> 输出合规以「KIVI 实际输出」为审查对象（2bit 改变输出分布）（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 运行时「关闭量化回退 FP16」开关就绪，并与降载联动、有告警（I）</label></li>
+      <li><label><input type="checkbox"> 监控：显存水位/OOM 边界、吞吐漂移、硬任务抽测、残差队列长度分布（I）</label></li>
+      <li><label><input type="checkbox"> 升级走金丝雀 + 双基线回归；回滚 = 上一配对制品或关量化，两者独立可执行（I）</label></li>
+      <li><label><input type="checkbox"> (G, R, 位宽) 变更纳入变更管理：灰度 + 硬任务回归，禁止热改（P：G=128/R=64 反例，第 7、9 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 退出成本≈低：关闭量化即回 FP16 缓存基线，无数据/格式迁移（P：基线即回退态；I：评估）</label></li>
+      <li><label><input type="checkbox"> 归档配置、评测脚本与双基线读数，保证可重建（I）</label></li>
+      <li><label><input type="checkbox"> 若转向其他 KV 压缩（驱逐/分页/低秩），把「KIVI 与其正交可叠加」计入对比而非二选一（P：第 9 页；I：对比框架）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与核验记录见构建文件 <code>sources/kivi.evidence.json</code>。核验日期为 <time datetime="2026-09-14">2026-09-14</time>。</p>
+
+<div class="callout">
+  <strong>核验范围声明：</strong>本页写作时完成了迄今最完整的一轮核验：<code>sources/kivi.txt</code> 可读并用作检索索引，PDF 全部 15 页经 pdftoppm 渲染，其中第 1、3、4、5、6、7、8、9、13 页逐项目检（含图 5 高分辨率放大读图），第 2、12、14、15 页经 pdftotext 与提取文本交叉核对。一处提取错误已在核验中纠正：第 6 页「全精度滑窗 key R/2、value R」在 <code>kivi.txt</code> 中方向颠倒，本页以 PDF 原页为准。
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位（PDF 页码）</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名/作者/机构/ICML 2024 PMLR 235/arXiv:2402.02750v2；仓库 github.com/jy-yuan/KIVI 印于摘要</td><td><span class="ev ev-p">P</span>/<span class="ev ev-r">R</span></td><td>第 1 页</td><td>已核验（原页目检）；仓库未在线访问</td></tr>
+      <tr><td>摘要级结论：免调优非对称 2bit（K 按通道/V 按 token）；峰值显存（含权重）1/2.6；batch 至多 4×；吞吐 2.35×~3.47×</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要</td><td>已核验（原页目检）</td></tr>
+      <tr><td>瓶颈量级：PaLM 540B 批 512/上下文 2048 → KV 3TB＝3× 参数；OPT-175B → 1.2TB＝3.8× 权重；每 token 全量搬运 KV、计算核空闲</td><td><span class="ev ev-p">P</span></td><td>第 1 页引言、第 3 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>既有三类路线（MQA/GQA 需训练、token 驱逐、系统分页/卸载）；GPTQ 因流式开销不适用；此前 KV 量化多为 4bit RTN</td><td><span class="ev ev-p">P</span></td><td>第 1、3 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>表 1：2bit 下 (K-C,V-T) 63.53/28.60 最优，(K-C,V-C) 崩至 2.88/0.74（Llama-2-13B、G=32）；OB1-OB3</td><td><span class="ev ev-p">P</span></td><td>第 3 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>RTN 公式 Q(X)=⌊(X−z)/s⌉，z=min，s=(max−min)/(2^B−1)</td><td><span class="ev ev-p">P</span></td><td>第 3 页 §3.1</td><td>已核验（原页目检）</td></tr>
+      <tr><td>图 2：key 少数固定通道幅值极大、value 无明显离群（Llama-2-13B L16/L31、Falcon-7B L16/L20）</td><td><span class="ev ev-p">P</span></td><td>第 4 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>表 2：K 重建误差 4.55 vs 13.67、注意力分数误差 9.60 vs 47.00、稀疏 84.3%；V 输出误差 ∆ 3.55 vs 49.89（约 15×）</td><td><span class="ev ev-p">P</span></td><td>第 4 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>图 3/算法：分组+残差拆分、R 可整除 G、式(3) 拼接注意力、value FIFO、prefill 传精确张量、R≤128 开销可忽略</td><td><span class="ev ev-p">P</span></td><td>第 5 页；伪代码第 12 页</td><td>已核验（第 5 页原页目检；第 12 页文本交叉）</td></tr>
+      <tr><td>全精度滑窗预期 key R/2、value R；对 GSM8K 至关重要（fake 5.76 vs KIVI-2 12.74 vs 16bit 13.50）</td><td><span class="ev ev-p">P</span></td><td>第 6 页；表 3 第 8 页</td><td>已核验（400dpi 放大目检；提取方向颠倒已更正）</td></tr>
+      <tr><td>系统支持：CUDA 融合 Q_MatMul、Triton 组量化 kernel、兼容 weight-only 量化</td><td><span class="ev ev-p">P</span></td><td>第 6 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>设置：G=32 全实验、R=128；HF Transformers 实现；LM-Eval/LongBench/NIAH 任务与序列上限 8192/4096</td><td><span class="ev ev-p">P</span></td><td>第 6 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>表 3 全量：4 模型 × 8 配置精度；Llama/Mistral 2bit 至多约 2% 损失；Falcon 需 4bit</td><td><span class="ev ev-p">P</span></td><td>第 8 页（结论第 6 页）</td><td>已核验（原页目检）</td></tr>
+      <tr><td>图 4 NIAH：2bit 保持 27K/30K token 检索能力</td><td><span class="ev ev-p">P</span></td><td>第 7 页、附录 B 第 13 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>表 4 LongBench 平均（6 模型 KIVI-2/4 vs 16bit）</td><td><span class="ev ev-p">P</span></td><td>第 9 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>表 5 消融：G=128 显著下降（17.29）；R 无一致规律但忌 64（19.86）、合理较大残差重要</td><td><span class="ev ev-p">P</span></td><td>第 9 页（讨论第 7 页）</td><td>已核验（原页目检）</td></tr>
+      <tr><td>效率口径：ShareGPT 161/338、batch 扫描至 OOM、单卡 A100-80GB、Llama-2-7B</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>图 5：相近显存下 batch 至多 4×、吞吐 2.35×~3.47×；越长越大；融合量化可再提升（未来工作）</td><td><span class="ev ev-p">P</span></td><td>第 8 页图 5 及正文</td><td>已核验（原页目检）；逐点坐标为读图近似 <span class="ev ev-i">I</span></td></tr>
+      <tr><td>附录 C：R32 压缩率更高、吞吐增加、精度差距不大（表 6）；附录 D 补充模型（表 8-10）</td><td><span class="ev ev-p">P</span></td><td>第 13-15 页</td><td>第 13 页原页目检；第 14-15 页文本交叉</td></tr>
+      <tr><td>与 H2O/StreamingLLM/vLLM/S3/weight-only 正交可组合；KVQuant 为独立并发工作；未来优化量化开销</td><td><span class="ev ev-p">P</span></td><td>第 9 页 §5-§6</td><td>已核验（原页目检）</td></tr>
+      <tr><td>云实例/服务/存储/监控映射示例</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录与推理服务文档</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>成本公式、图 5 逐点读数、SLO/监控/回滚/清单、控制面-数据面划分等工程内容</td><td><span class="ev ev-i">I</span></td><td>本报告 §4、§6-§9、§12</td><td>编辑标注完成；不含伪精确数字，读图值已注明近似</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="07-medusa.html" rel="prev">上一篇：07 Medusa</a>
+  <a href="09-quarot.html" rel="next">下一篇：09 QuaRot（文件可能尚未发布）</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页论文事实基于本地 <code>08_KIVI_2402.02750.pdf</code>（arXiv:2402.02750v2，ICML 2024 / PMLR 235），经文本提取检索并回 PDF 原页逐项核验（页码见各处标注与 <a href="#evidence">#evidence</a>）；图 5 逐点坐标为读图近似并已标注。云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有（PMLR 235，Copyright 2024 by the authors）；官方仓库代码与权重许可以仓库当时声明为准（本页未在线核验，使用前先复核）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-14；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+</body>
+</html>

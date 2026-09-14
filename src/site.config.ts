@@ -44,6 +44,10 @@ const config: SiteConfig = {
       name: 'Products',
       url: '/products',
     },
+    {
+      name: '专项论文分析',
+      url: '/paper-analysis/',
+    },
   ],
   // The theming configuration for the site.
   themes: {

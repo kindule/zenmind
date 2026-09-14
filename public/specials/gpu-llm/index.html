@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU 大模型系统论文解读站：16 篇云架构视角的中文精读（2024–2025）</title>
+<meta name="description" content="面向云计算架构师、AI 基础设施与推理/训练平台负责人的中文 GPU 大模型系统论文解读站：16 篇论文按推理服务、解码加速与量化、训练与 Kernel 三条路径组织，含筛选、选型矩阵、指标词典与 P/R/E/I 证据说明。">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <ul class="site-nav">
+      <li><a href="index.html" aria-current="page">首页</a></li>
+      <li><a href="#papers">论文卡片</a></li>
+      <li><a href="#theme-serving">推理服务与资源调度</a></li>
+      <li><a href="#theme-decoding">解码加速与量化</a></li>
+      <li><a href="#theme-training">训练、并行与 GPU Kernel</a></li>
+      <li><a href="#foundation">奠基论文</a></li>
+      <li><a href="#matrix">选型矩阵</a></li>
+      <li><a href="#metrics">指标词典</a></li>
+      <li><a href="#methodology">阅读说明</a></li>
+    </ul>
+  </nav>
+  <button type="button" class="theme-toggle" data-theme-toggle hidden>主题：跟随系统</button>
+</header>
+
+<main id="main">
+
+<!-- ============================================================
+     1. Hero：站点定位、覆盖范围、更新时间与使用方法
+     ============================================================ -->
+<section id="hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">GPU 大模型系统论文解读站</h1>
+  <p class="lede">面向<strong>云计算架构师、AI 基础设施负责人、推理/训练平台技术负责人</strong>的中文论文精读站。每篇解读回答五个问题：该技术解决什么云上问题、数据如何经过 GPU 与系统组件、代价是什么、何时值得采用、怎样验证。覆盖 2024–2025 年 16 篇 GPU 大模型系统论文。</p>
+  <ul class="stat-row" aria-label="站点概况">
+    <li><strong>16</strong> 篇论文解读</li>
+    <li><strong>3</strong> 条学习路径</li>
+    <li><strong>13</strong> 节统一章节模板</li>
+    <li>更新时间 <time datetime="2026-09-14">2026-09-14</time></li>
+  </ul>
+  <div class="callout">
+    <strong>当前进度：</strong>16 个核心论文页中已发布 8 篇（01–05、07、08、14）；其余 8 张卡片的入口链接暂指向尚未创建的页面，对应页面交付后自动生效。另发布<strong>奠基论文 F01</strong>（Attention Is All You Need）1 篇，单列于<a href="#foundation">「奠基论文」章节</a>，不计入核心 16 篇的卡片、筛选与统计。本站为纯静态站点，可离线打开；禁用 JavaScript 时全部内容与导航仍可完整阅读。
+  </div>
+  <h2 class="subsection-title">如何使用本站</h2>
+  <ol class="howto">
+    <li>从下方<strong>三条学习路径</strong>中挑选与你当前架构问题最接近的一条，按顺序浏览该路径的论文。</li>
+    <li>用<strong>筛选与搜索</strong>（生命周期、优化层、资源瓶颈、年份、关键词）缩小候选，进入卡片详情。</li>
+    <li>在详情页按 13 节模板阅读：先看「摘要与一句话判断」和「适用 / 不适用场景」，再用「证据台账」核对每个数字的页码与条件。</li>
+  </ol>
+</section>
+
+<!-- ============================================================
+     2. 架构师速览：三条学习路径
+     ============================================================ -->
+<section id="paths" aria-labelledby="paths-title">
+  <h2 id="paths-title">架构师速览：三条学习路径</h2>
+  <div class="path-grid">
+    <article class="path-card path-serving" id="theme-serving" aria-labelledby="theme-serving-title">
+      <h3 id="theme-serving-title">推理服务与资源调度</h3>
+      <p class="path-question"><strong>解决的云架构问题：</strong>在线 LLM 服务如何在不违反时延 SLO 的前提下，提高 GPU 集群的整体效率与容量上限。</p>
+      <p>这组论文覆盖服务侧的主要杠杆：把预填与解码拆开或切块（DistServe、Sarathi-Serve、Mooncake）、把 KV Cache 显存管好（vAttention）、把注意力算子换快（FlashInfer）。适合先读 DistServe 建立 TTFT/TPOT/goodput 的指标框架。</p>
+      <p class="path-order"><span class="chip chip-serving">阅读顺序</span> 01 DistServe → 02 Sarathi-Serve → 03 Mooncake → 04 vAttention → 05 FlashInfer</p>
+    </article>
+    <article class="path-card path-decoding" id="theme-decoding" aria-labelledby="theme-decoding-title">
+      <h3 id="theme-decoding-title">解码加速与量化</h3>
+      <p class="path-question"><strong>解决的云架构问题：</strong>解码慢、显存贵，如何在可控的质量与硬件约束下，压低每 token 的服务成本。</p>
+      <p>这组论文分两类杠杆：减少解码步数（EAGLE、Medusa 的投机采样）与降低每步的显存/带宽代价（KIVI、QuaRot、QServe 的量化）。量化类方案需要一起评估精度保持条件与硬件支持。</p>
+      <p class="path-order"><span class="chip chip-decoding">阅读顺序</span> 06 EAGLE → 07 Medusa → 08 KIVI → 09 QuaRot → 10 QServe</p>
+    </article>
+    <article class="path-card path-training" id="theme-training" aria-labelledby="theme-training-title">
+      <h3 id="theme-training-title">训练、并行与 GPU Kernel</h3>
+      <p class="path-question"><strong>解决的云架构问题：</strong>大规模训练如何吃满集群算力、把显存与通信撑住，并保持长时间稳定运行。</p>
+      <p>这组论文从底到顶：单算子（FlashAttention-3、Liger Kernel）、单卡显存（GaLore）、训练框架（TorchTitan）、万卡集群（MegaScale）与全栈实践（DeepSeek-V3 报告）。适合按「算子 → 框架 → 集群」顺序阅读。</p>
+      <p class="path-order"><span class="chip chip-training">阅读顺序</span> 11 FlashAttention-3 → 12 Liger Kernel → 13 MegaScale → 14 TorchTitan → 15 GaLore → 16 DeepSeek-V3</p>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================
+     3–4. 论文筛选区 + 16 张论文卡
+     筛选为渐进增强：禁用 JS 时全部卡片照常显示。
+     ============================================================ -->
+<section id="papers" aria-labelledby="papers-title">
+  <h2 id="papers-title">论文卡片（16 篇）</h2>
+
+  <form id="paper-filters" class="filter-panel" data-paper-filters action="#papers" role="search" aria-describedby="filter-note">
+    <p id="filter-note" class="filter-note">筛选与搜索需要启用 JavaScript；禁用时所有 16 张卡片照常显示。</p>
+    <div class="filter-fields">
+      <p class="filter-item filter-item-search">
+        <label for="paper-search">关键词搜索</label>
+        <input type="search" id="paper-search" data-paper-search placeholder="如：KV Cache、量化、调度、H100" size="24">
+      </p>
+      <p class="filter-item">
+        <label for="filter-theme">主题</label>
+        <select id="filter-theme" data-filter="theme">
+          <option value="">全部主题</option>
+          <option value="serving">推理服务与资源调度</option>
+          <option value="decoding">解码加速与量化</option>
+          <option value="training">训练、并行与 GPU Kernel</option>
+        </select>
+      </p>
+      <p class="filter-item">
+        <label for="filter-lifecycle">生命周期</label>
+        <select id="filter-lifecycle" data-filter="lifecycle">
+          <option value="">全部</option>
+          <option value="infer">推理</option>
+          <option value="train">训练</option>
+        </select>
+      </p>
+      <p class="filter-item">
+        <label for="filter-layer">优化层</label>
+        <select id="filter-layer" data-filter="layer">
+          <option value="">全部</option>
+          <option value="algorithm">算法</option>
+          <option value="kernel">Kernel</option>
+          <option value="runtime">运行时</option>
+          <option value="cluster">集群</option>
+        </select>
+      </p>
+      <p class="filter-item">
+        <label for="filter-resource">资源瓶颈</label>
+        <select id="filter-resource" data-filter="resource">
+          <option value="">全部</option>
+          <option value="compute">算力</option>
+          <option value="hbm">HBM / 显存</option>
+          <option value="kv">KV Cache</option>
+          <option value="network">网络</option>
+        </select>
+      </p>
+      <p class="filter-item">
+        <label for="filter-year">年份</label>
+        <select id="filter-year" data-filter="year">
+          <option value="">全部</option>
+          <option value="2024">2024</option>
+          <option value="2025">2025</option>
+        </select>
+      </p>
+      <p class="filter-item">
+        <button type="reset">重置筛选</button>
+      </p>
+    </div>
+    <p class="filter-status" data-paper-count role="status">显示全部 16 篇论文。</p>
+  </form>
+
+  <p class="filter-empty" data-paper-empty hidden>没有匹配的论文。请调整关键词或放宽筛选条件，也可以选择「重置筛选」。</p>
+
+  <div class="paper-grid" id="paper-grid">
+
+    <article class="paper-card" data-theme="serving" data-lifecycle="infer" data-layer="runtime cluster" data-resource="compute kv network" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-serving">推理服务与资源调度</span></p>
+      <h3><a href="papers/01-distserve.html">01 · DistServe：prefill/decode 分离的 goodput 优化服务</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>共置服务中预填与解码互相干扰，双 SLO 下只能堆 GPU 达标。</p>
+      <p class="paper-card-method"><strong>方法：</strong>按实例拆分两阶段，放置算法联合优化并行策略与资源，KV Cache 按需拉取。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>prefill/decode 分离</li>
+        <li>放置算法</li>
+        <li>goodput 调度</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>运行时 · 集群</dd>
+        <dt>核心资源</dt><dd>算力 · KV Cache · 网络</dd>
+        <dt>适用硬件</dt><dd>NVIDIA A100 80GB SXM（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="serving" data-lifecycle="infer" data-layer="runtime" data-resource="compute kv" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-serving">推理服务与资源调度</span></p>
+      <h3><a href="papers/02-sarathi-serve.html">02 · Sarathi-Serve：chunked-prefills 与 stall-free batching</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>长预填卡住解码迭代，交互时延与 GPU 吞吐只能二选一。</p>
+      <p class="paper-card-method"><strong>方法：</strong>预填切块与解码同批执行，按 token 预算调度，在不伤时延下扩大批量。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>chunked prefill</li>
+        <li>stall-free batching</li>
+        <li>token 预算调度</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>运行时</dd>
+        <dt>核心资源</dt><dd>算力 · KV Cache</dd>
+        <dt>适用硬件</dt><dd>NVIDIA A100（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="serving" data-lifecycle="infer" data-layer="cluster runtime" data-resource="kv network" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-serving">推理服务与资源调度</span></p>
+      <h3><a href="papers/03-mooncake.html">03 · Mooncake：KV Cache 中心的分离式服务平台</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>突发流量与长上下文下，KV Cache 显存与集群算力错配。</p>
+      <p class="paper-card-method"><strong>方法：</strong>以 KV Cache 为中心分离 prefill/decode 集群，跨本地与远端分层池化调度。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>KV Cache 中心调度</li>
+        <li>P/D 分离</li>
+        <li>缓存分层池化</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>集群 · 运行时</dd>
+        <dt>核心资源</dt><dd>KV Cache · 网络</dd>
+        <dt>适用硬件</dt><dd>生产级 GPU 集群（Kimi 线上服务，论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="serving" data-lifecycle="infer" data-layer="runtime" data-resource="hbm" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-serving">推理服务与资源调度</span></p>
+      <h3><a href="papers/04-vattention.html">04 · vAttention：用虚拟内存动态管理 KV Cache 显存</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>PagedAttention 的固定页映射带来碎片、预留浪费与接口耦合。</p>
+      <p class="paper-card-method"><strong>方法：</strong>复用 GPU 虚拟内存按需分配物理页，虚拟地址连续、物理页离散。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>GPU 虚拟内存</li>
+        <li>按需分页</li>
+        <li>KV 显存管理</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>运行时</dd>
+        <dt>核心资源</dt><dd>HBM / 显存</dd>
+        <dt>适用硬件</dt><dd>NVIDIA A100 / H100（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="serving" data-lifecycle="infer" data-layer="kernel" data-resource="compute kv" data-year="2025">
+      <p class="paper-card-top"><span class="chip chip-year">2025</span> <span class="chip chip-serving">推理服务与资源调度</span></p>
+      <h3><a href="papers/05-flashinfer.html">05 · FlashInfer：面向 LLM 服务的注意力 kernel 库</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>服务端注意力负载多样，专用 kernel 难以复用与组合。</p>
+      <p class="paper-card-method"><strong>方法：</strong>块稀疏可组合 kernel 库，统一 KV 布局，支持共享前缀与负载均衡调度。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>kernel 库</li>
+        <li>块稀疏</li>
+        <li>共享前缀</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2025</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>Kernel</dd>
+        <dt>核心资源</dt><dd>算力 · KV Cache</dd>
+        <dt>适用硬件</dt><dd>NVIDIA sm75+（实验以 H100 为主，论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="decoding" data-lifecycle="infer" data-layer="algorithm" data-resource="compute" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-decoding">解码加速与量化</span></p>
+      <h3><a href="papers/06-eagle.html">06 · EAGLE：特征级自回归的投机采样</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>自回归解码每步仅产出一个 token，GPU 算力大量闲置。</p>
+      <p class="paper-card-method"><strong>方法：</strong>特征层自回归的草稿头做投机采样，单次验证多个 token，接受率更高。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>投机采样</li>
+        <li>特征级草稿</li>
+        <li>单次多 token 验证</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>算法</dd>
+        <dt>核心资源</dt><dd>算力</dd>
+        <dt>适用硬件</dt><dd>NVIDIA RTX 3090 24GB（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="decoding" data-lifecycle="infer" data-layer="algorithm" data-resource="compute" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-decoding">解码加速与量化</span></p>
+      <h3><a href="papers/07-medusa.html">07 · Medusa：多头解码与树注意力加速</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>逐 token 解码受访存限制，直接多预测又难以保证质量。</p>
+      <p class="paper-card-method"><strong>方法：</strong>多个解码头并行产出候选，树注意力一次验证多条路径。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>多头解码</li>
+        <li>树注意力</li>
+        <li>多 token 预测</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>算法</dd>
+        <dt>核心资源</dt><dd>算力</dd>
+        <dt>适用硬件</dt><dd>NVIDIA GPU（型号详见详情页）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="decoding" data-lifecycle="infer" data-layer="algorithm" data-resource="kv hbm" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-decoding">解码加速与量化</span></p>
+      <h3><a href="papers/08-kivi.html">08 · KIVI：KV Cache 的 2bit 量化</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>KV Cache 随上下文与批量线性膨胀，显存先见顶。</p>
+      <p class="paper-card-method"><strong>方法：</strong>Key 按通道、Value 按 token 的 2bit 非对称量化，保持逐 token 生成兼容。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>KV 量化</li>
+        <li>2bit 非对称</li>
+        <li>逐通道 / 逐 token</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>算法</dd>
+        <dt>核心资源</dt><dd>KV Cache · HBM / 显存</dd>
+        <dt>适用硬件</dt><dd>NVIDIA GPU（型号详见详情页）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="decoding" data-lifecycle="infer" data-layer="algorithm" data-resource="hbm compute" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-decoding">解码加速与量化</span></p>
+      <h3><a href="papers/09-quarot.html">09 · QuaRot：旋转消除离群值的 4bit 推理</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>激活离群值让 4bit 量化的精度大幅下滑。</p>
+      <p class="paper-card-method"><strong>方法：</strong>计算不变的 Hadamard 旋转消除离群值，实现 W4A4 端到端低比特推理。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>旋转不变量</li>
+        <li>Hadamard 变换</li>
+        <li>W4A4</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>算法</dd>
+        <dt>核心资源</dt><dd>HBM / 显存 · 算力</dd>
+        <dt>适用硬件</dt><dd>NVIDIA RTX 3090（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="decoding" data-lifecycle="infer" data-layer="algorithm kernel" data-resource="hbm compute kv" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-decoding">解码加速与量化</span></p>
+      <h3><a href="papers/10-qserve.html">10 · QServe：W4A8KV4 的 GPU 服务系统</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>现有 GPU 上 4bit 权重的反量化开销吃掉理论收益。</p>
+      <p class="paper-card-method"><strong>方法：</strong>W4A8KV4 精度与计算感知权重布局，配合高效 kernel 提升 4bit 服务吞吐。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>W4A8KV4</li>
+        <li>计算感知量化</li>
+        <li>服务吞吐</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>推理</dd>
+        <dt>优化层</dt><dd>算法 · Kernel</dd>
+        <dt>核心资源</dt><dd>HBM / 显存 · 算力 · KV Cache</dd>
+        <dt>适用硬件</dt><dd>NVIDIA A100 / L40S（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="training" data-lifecycle="train infer" data-layer="kernel" data-resource="compute hbm" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-training">训练、并行与 GPU Kernel</span></p>
+      <h3><a href="papers/11-flashattention-3.html">11 · FlashAttention-3：Hopper 上的异步注意力</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>Hopper 硬件特性未被 attention kernel 用满，距算力峰值远。</p>
+      <p class="paper-card-method"><strong>方法：</strong>warp 专化与 TMA 异步重叠访存与计算，软件流水 softmax，支持 FP8。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>异步流水</li>
+        <li>warp 专化</li>
+        <li>FP8</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>训练 + 推理</dd>
+        <dt>优化层</dt><dd>Kernel</dd>
+        <dt>核心资源</dt><dd>算力 · HBM / 显存</dd>
+        <dt>适用硬件</dt><dd>NVIDIA H100 80GB（SXM5，论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="training" data-lifecycle="train" data-layer="kernel" data-resource="hbm" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-training">训练、并行与 GPU Kernel</span></p>
+      <h3><a href="papers/12-liger-kernel.html">12 · Liger Kernel：LLM 训练的融合算子库</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>训练中激活复制与超大 logits 张量吃掉大量显存。</p>
+      <p class="paper-card-method"><strong>方法：</strong>RMSNorm、RoPE、SwiGLU、交叉熵等融合算子原地或分块计算，降低显存。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>算子融合</li>
+        <li>原地计算</li>
+        <li>分块交叉熵</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>训练</dd>
+        <dt>优化层</dt><dd>Kernel</dd>
+        <dt>核心资源</dt><dd>HBM / 显存</dd>
+        <dt>适用硬件</dt><dd>NVIDIA A100 80GB（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="training" data-lifecycle="train" data-layer="cluster" data-resource="network compute" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-training">训练、并行与 GPU Kernel</span></p>
+      <h3><a href="papers/13-megascale.html">13 · MegaScale：万卡级 LLM 训练系统</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>万卡规模训练大模型，通信、稳定性与效率必须全栈协同。</p>
+      <p class="paper-card-method"><strong>方法：</strong>分层通信优化与混合并行，配合容错与监控，支撑万卡生产训练。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>万卡集群</li>
+        <li>通信优化</li>
+        <li>容错恢复</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>训练</dd>
+        <dt>优化层</dt><dd>集群</dd>
+        <dt>核心资源</dt><dd>网络 · 算力</dd>
+        <dt>适用硬件</dt><dd>&gt;10000 GPU 生产集群（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="training" data-lifecycle="train" data-layer="runtime" data-resource="compute hbm" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-training">训练、并行与 GPU Kernel</span></p>
+      <h3><a href="papers/14-torchtitan.html">14 · TorchTitan：PyTorch 原生 4D 并行训练框架</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>组合四维并行要拼装多套外部库，体验割裂、难以维护。</p>
+      <p class="paper-card-method"><strong>方法：</strong>PyTorch 原生 FSDP/TP/PP/CP 组合式设计，统一检查点与容错管理。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>4D 并行</li>
+        <li>原生 PyTorch</li>
+        <li>统一检查点</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>训练</dd>
+        <dt>优化层</dt><dd>运行时</dd>
+        <dt>核心资源</dt><dd>算力 · HBM / 显存</dd>
+        <dt>适用硬件</dt><dd>NVIDIA H100（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="training" data-lifecycle="train" data-layer="algorithm" data-resource="hbm" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-training">训练、并行与 GPU Kernel</span></p>
+      <h3><a href="papers/15-galore.html">15 · GaLore：梯度低秩投影的省显存训练</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>优化器状态显存随参数量增长，单卡训不动大模型。</p>
+      <p class="paper-card-method"><strong>方法：</strong>把梯度投影到低秩子空间压缩优化器状态，更新时投回原空间，兼容 Adam。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>低秩梯度投影</li>
+        <li>优化器显存</li>
+        <li>单卡训练 7B</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>训练</dd>
+        <dt>优化层</dt><dd>算法</dd>
+        <dt>核心资源</dt><dd>HBM / 显存</dd>
+        <dt>适用硬件</dt><dd>NVIDIA RTX 4090（论文口径）</dd>
+      </dl>
+    </article>
+
+    <article class="paper-card" data-theme="training" data-lifecycle="train" data-layer="algorithm cluster" data-resource="compute network hbm" data-year="2024">
+      <p class="paper-card-top"><span class="chip chip-year">2024</span> <span class="chip chip-training">训练、并行与 GPU Kernel</span></p>
+      <h3><a href="papers/16-deepseek-v3.html">16 · DeepSeek-V3：FP8 训练的 MoE 大模型报告</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>MoE 大模型的训练成本与跨节点通信成为规模化瓶颈。</p>
+      <p class="paper-card-method"><strong>方法：</strong>无辅助损失负载均衡 MoE、FP8 混合精度与高效跨节点通信压低成本。</p>
+      <ul class="tag-row" aria-label="关键机制">
+        <li>MoE 负载均衡</li>
+        <li>FP8 训练</li>
+        <li>通信压缩</li>
+      </ul>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2024</dd>
+        <dt>生命周期</dt><dd>训练</dd>
+        <dt>优化层</dt><dd>算法 · 集群</dd>
+        <dt>核心资源</dt><dd>算力 · 网络 · HBM / 显存</dd>
+        <dt>适用硬件</dt><dd>NVIDIA H800 ×2048（论文口径）</dd>
+      </dl>
+    </article>
+
+  </div>
+</section>
+
+<!-- ============================================================
+     4b. 奠基论文：独立于 16 篇核心合集（不进入筛选/矩阵/统计）
+     ============================================================ -->
+<section id="foundation" aria-labelledby="foundation-title">
+  <h2 id="foundation-title">奠基论文（非核心 16 篇）</h2>
+  <p>除 16 篇 2024–2025 年 GPU/LLM 系统论文外，本站单列<strong>奠基论文</strong>：提出于更早、被合集反复引用的机制原始文献。奠基论文<strong>不进入</strong>上方筛选区、选型矩阵与站点统计（卡片数量、筛选逻辑与统计口径均按核心 16 篇保持不变），只按同一 13 节模板与 P/R/E/I 证据规则精读。</p>
+  <div class="foundation-grid">
+    <article class="foundation-card">
+      <p class="paper-card-top"><span class="chip chip-year">2017</span> <span class="chip chip-foundation">奠基论文 F01</span></p>
+      <h3><a href="papers/f01-attention-is-all-you-need.html">F01 · Attention Is All You Need（Transformer）：完全基于注意力的序列转导</a></h3>
+      <p class="paper-card-problem"><strong>问题：</strong>循环模型沿位置串行、训练难并行；卷积模型跨距离关联的操作数随距离增长。</p>
+      <p class="paper-card-method"><strong>方法：</strong>完全以多头自注意力＋逐位置前馈构成编码器-解码器，任意两位置常数次操作关联。</p>
+      <p class="foundation-note"><strong>收录说明：</strong>2017 年模型结构论文，非 2024–2025 系统论文，故单列而不入核心合集。详情页显式区分 arXiv v7（2023-08-02 修订）与 NIPS 2017 两条发表记录、原样保留英法 BLEU 41.8（摘要/表 2）与 41.0（§6.1）的文内差异，并将 Tensor2Tensor 标注为「官方历史实现，已归档（2026-09-14 核验）」；decoder-only、RoPE、RMSNorm、GQA、FlashAttention、现代 KV-cache 服务等后续工作均不归于该论文。</p>
+      <dl class="paper-card-meta">
+        <dt>年份</dt><dd>2017（NIPS 2017；本地 PDF 为 arXiv v7，2023-08-02）</dd>
+        <dt>类别</dt><dd>奠基论文（非核心 16 篇）</dd>
+        <dt>证据状态</dt><dd>P + R + E + I</dd>
+        <dt>代码</dt><dd>Tensor2Tensor：官方历史实现，已归档只读（2026-09-14 核验）</dd>
+      </dl>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================
+     5. 定性选型矩阵（不含跨论文性能排名）
+     ============================================================ -->
+<section id="matrix" aria-labelledby="matrix-title">
+  <h2 id="matrix-title">定性选型矩阵</h2>
+  <p>本矩阵只收录可规范化的定性字段，用于快速圈定候选；<strong>论文之间的性能数字不可直接横向比较</strong>（硬件、模型、精度、批量与上下文长度不一致），任何数字请进入对应详情页查看完整条件。「工程侵入性」为编辑给出的定性判断（<span class="evidence-badge ev-i">I</span>），非论文结论。</p>
+  <div class="table-scroll">
+    <table class="metric-table">
+      <caption>16 篇论文的定性字段一览（按阅读顺序）</caption>
+      <thead>
+        <tr>
+          <th scope="col">论文</th>
+          <th scope="col">年份</th>
+          <th scope="col">生命周期</th>
+          <th scope="col">优化层</th>
+          <th scope="col">核心资源</th>
+          <th scope="col">工程侵入性（定性 <span class="evidence-badge ev-i">I</span>）</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row"><a href="papers/01-distserve.html">01 DistServe</a></th><td>2024</td><td>推理</td><td>运行时 · 集群</td><td>算力 · KV Cache · 网络</td><td>高（新增服务系统与编排）</td></tr>
+        <tr><th scope="row"><a href="papers/02-sarathi-serve.html">02 Sarathi-Serve</a></th><td>2024</td><td>推理</td><td>运行时</td><td>算力 · KV Cache</td><td>中（服务引擎内调度改造）</td></tr>
+        <tr><th scope="row"><a href="papers/03-mooncake.html">03 Mooncake</a></th><td>2024</td><td>推理</td><td>集群 · 运行时</td><td>KV Cache · 网络</td><td>高（集群级架构改造）</td></tr>
+        <tr><th scope="row"><a href="papers/04-vattention.html">04 vAttention</a></th><td>2024</td><td>推理</td><td>运行时</td><td>HBM / 显存</td><td>中（替换引擎内存管理）</td></tr>
+        <tr><th scope="row"><a href="papers/05-flashinfer.html">05 FlashInfer</a></th><td>2025</td><td>推理</td><td>Kernel</td><td>算力 · KV Cache</td><td>中（替换或叠加 kernel 库）</td></tr>
+        <tr><th scope="row"><a href="papers/06-eagle.html">06 EAGLE</a></th><td>2024</td><td>推理</td><td>算法</td><td>算力</td><td>中（需训练草稿头并改解码循环）</td></tr>
+        <tr><th scope="row"><a href="papers/07-medusa.html">07 Medusa</a></th><td>2024</td><td>推理</td><td>算法</td><td>算力</td><td>中（需训练解码头并改验证）</td></tr>
+        <tr><th scope="row"><a href="papers/08-kivi.html">08 KIVI</a></th><td>2024</td><td>推理</td><td>算法</td><td>KV Cache · HBM / 显存</td><td>中（替换注意力实现并量化）</td></tr>
+        <tr><th scope="row"><a href="papers/09-quarot.html">09 QuaRot</a></th><td>2024</td><td>推理</td><td>算法</td><td>HBM / 显存 · 算力</td><td>中（需校准与模型结构变换）</td></tr>
+        <tr><th scope="row"><a href="papers/10-qserve.html">10 QServe</a></th><td>2024</td><td>推理</td><td>算法 · Kernel</td><td>HBM / 显存 · 算力 · KV Cache</td><td>中（量化方案与服务栈协同改造）</td></tr>
+        <tr><th scope="row"><a href="papers/11-flashattention-3.html">11 FlashAttention-3</a></th><td>2024</td><td>训练 + 推理</td><td>Kernel</td><td>算力 · HBM / 显存</td><td>低（替换 attention kernel）</td></tr>
+        <tr><th scope="row"><a href="papers/12-liger-kernel.html">12 Liger Kernel</a></th><td>2024</td><td>训练</td><td>Kernel</td><td>HBM / 显存</td><td>低（替换训练算子，可回退）</td></tr>
+        <tr><th scope="row"><a href="papers/13-megascale.html">13 MegaScale</a></th><td>2024</td><td>训练</td><td>集群</td><td>网络 · 算力</td><td>高（自研集群级训练系统）</td></tr>
+        <tr><th scope="row"><a href="papers/14-torchtitan.html">14 TorchTitan</a></th><td>2024</td><td>训练</td><td>运行时</td><td>算力 · HBM / 显存</td><td>中（更换训练框架）</td></tr>
+        <tr><th scope="row"><a href="papers/15-galore.html">15 GaLore</a></th><td>2024</td><td>训练</td><td>算法</td><td>HBM / 显存</td><td>低（替换优化器，侵入小）</td></tr>
+        <tr><th scope="row"><a href="papers/16-deepseek-v3.html">16 DeepSeek-V3</a></th><td>2024</td><td>训练</td><td>算法 · 集群</td><td>算力 · 网络 · HBM / 显存</td><td>高（全栈自研训练方案）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================
+     6. 指标词典
+     ============================================================ -->
+<section id="metrics" aria-labelledby="metrics-title">
+  <h2 id="metrics-title">指标词典</h2>
+  <p>详情页出现的每个指标都必须先对齐口径再比较。下表给出常见指标的定义与<strong>比较前提</strong>；各论文的具体口径以其详情页「成本 / 性能 / SLO」与「实验与指标」章节为准。</p>
+  <div class="table-scroll">
+    <table class="metric-table">
+      <caption>常见性能指标的定义与比较前提</caption>
+      <thead>
+        <tr>
+          <th scope="col">指标</th>
+          <th scope="col">定义</th>
+          <th scope="col">单位 / 口径</th>
+          <th scope="col">比较前提</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">tokens/s（吞吐）</th>
+          <td>单位时间内生成或处理 token 的数量，可分预填吞吐与解码吞吐。</td>
+          <td>token/秒；常按请求或按卡归一</td>
+          <td>必须同批大小、上下文长度、精度与硬件对比；不同系统对「计入了什么 token」口径可能不同。</td>
+        </tr>
+        <tr>
+          <th scope="row">TTFT</th>
+          <td>time to first token：从发出请求到收到首个 token 的时间，主要反映预填与排队时延。</td>
+          <td>秒或毫秒；平均或 P90/P99 分位</td>
+          <td>需对齐输入长度分布、到达过程与排队策略；分位口径（均值 vs P90）不可混用。</td>
+        </tr>
+        <tr>
+          <th scope="row">TPOT</th>
+          <td>time per output token：除首 token 外，平均每个输出 token 的生成时间。</td>
+          <td>秒或毫秒；平均或分位</td>
+          <td>需对齐输出长度、批大小与解码并行度；单请求总时延 ≈ TTFT + TPOT × 输出 token 数。</td>
+        </tr>
+        <tr>
+          <th scope="row">峰值显存</th>
+          <td>训练或推理过程中 GPU 显存占用的最大值。</td>
+          <td>GB；区分权重 / 激活 / KV / 优化器状态</td>
+          <td>需说明测量阶段（前向/反向/长稳）、模型规模、精度与上下文长度；不同测量工具口径有差异。</td>
+        </tr>
+        <tr>
+          <th scope="row">GPU 利用率</th>
+          <td>时间片内 GPU 至少有一个 kernel 在执行的比例。</td>
+          <td>百分比；采样口径依工具而异</td>
+          <td>「利用率高」不等于「计算效率高」；kernel 可能只是在等访存。应结合 MFU 与时延分解解读。</td>
+        </tr>
+        <tr>
+          <th scope="row">MFU</th>
+          <td>model FLOPs utilization：实际达到的模型 FLOPs 除以硬件峰值 FLOPs（按精度计）。</td>
+          <td>百分比；是否计入重计算与通信需注明</td>
+          <td>需对齐硬件型号、精度（FP16/BF16/FP8 峰值不同）与是否含梯度重计算；跨精度不可直接比。</td>
+        </tr>
+        <tr>
+          <th scope="row">goodput</th>
+          <td>满足时延 SLO 约束的有效吞吐：只有达到 SLO 的请求才计入吞吐（DistServe 的核心口径）。</td>
+          <td>req/s；常按每 GPU 归一</td>
+          <td>必须同时给出 TTFT/TPOT 阈值、达标率目标与到达过程；SLO 不同则 goodput 不可比。</td>
+        </tr>
+        <tr>
+          <th scope="row">SLO attainment</th>
+          <td>满足全部时延 SLO 约束的请求比例。</td>
+          <td>百分比；常用 90% / 99% 作为目标</td>
+          <td>需给出具体阈值与达标率目标档位；同一系统在 90% 与 99% 目标下的容量差异可能很大。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================
+     7. 方法与证据说明（P/R/E/I）
+     ============================================================ -->
+<section id="methodology" aria-labelledby="methodology-title">
+  <h2 id="methodology-title">阅读说明：方法与证据</h2>
+  <p>每篇详情页把「论文声称、仓库核验、外部资料、编辑推断」分开标注，不混写。证据标签共四级：</p>
+  <dl class="evidence-legend">
+    <dt><span class="evidence-badge ev-p">P</span> Paper（论文）</dt>
+    <dd>来自论文正文、附录与图表的内容，页面以「论文报告 / 作者指出」的措辞呈现，并给出页码、章节、表号或图号。</dd>
+    <dt><span class="evidence-badge ev-r">R</span> Repository（官方仓库）</dt>
+    <dd>论文明确链接、且经核验的作者/机构官方仓库；标注仓库归属、访问日期，commit/tag 若可得则一并标注。</dd>
+    <dt><span class="evidence-badge ev-e">E</span> External（外部资料）</dt>
+    <dd>云厂商文档或相关项目文档，只用于「云上部署映射」，不冒充论文结论；具体产品仅作示例。</dd>
+    <dt><span class="evidence-badge ev-i">I</span> Inference（编辑推断）</dt>
+    <dd>架构师视角的分析与建议，一律带推断标签，不给出伪精确数字；与论文事实明确分隔。</dd>
+  </dl>
+  <h3 class="subsection-title">数字口径要求</h3>
+  <p>详情页中每个性能数字必须同时携带：<strong>指标定义、硬件、模型/规模、精度、批量/并发、输入输出长度、基线、论文定位（页码/表号）</strong>。论文未披露的字段会明确写「论文未明确披露」，不会留空，也不会用其他论文的数字补齐。</p>
+  <div class="callout callout-warning">
+    <strong>跨论文比较警告：</strong>各论文的实验硬件、模型、精度、批量与上下文长度不一致，本站<strong>不做</strong>跨论文性能数字的横向排名。选型矩阵只含定性字段；任何倍数、百分比请回到对应详情页核对完整条件后再引用。
+  </div>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-14">2026-09-14</time>（各详情页以页面顶部标注的核验日期为准）。</p>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本站全部论文事实基于各论文的本地 PDF（arXiv 公开版本）及论文明确引用的材料；云上产品映射为示例性外部信息（E）；标注 I 的内容为编辑推断。论文链接统一使用 arXiv 摘要页，本地 PDF 不随站点分发。</p>
+  <p><strong>许可提醒：</strong>各论文版权归原作者所有；相关开源仓库代码许可以仓库当时声明为准。引用本站内容时请遵循相应许可并注明论文出处。</p>
+  <p><strong>本地生成信息：</strong>纯静态站点，无构建框架与在线依赖，可离线打开；生产页面不依赖 CDN。结构自检：<code>node scripts/check-structure.mjs</code>；链接自检：<code>node scripts/check-links.mjs --internal</code>。最后核验日期 <time datetime="2026-09-14">2026-09-14</time>。</p>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>

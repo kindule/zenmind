@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Sarathi-Serve：以 chunked-prefills 与 stall-free batching 驯服 LLM 推理的吞吐—延迟权衡 · GPU 大模型系统论文解读</title>
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <!-- 说明：本页已引用共享骨架 ../assets/css/site.css 与 ../assets/js/site.js；
+       下方内联样式保留为回退（共享文件缺失或离线 file:// 打开时页面仍完整可读）。
+       主题策略：跟随系统明暗（prefers-color-scheme），站点级主题切换/目录高亮由共享 site.js 增强，禁用 JS 时本页仍完整可读。 -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fa;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --border: #cbd5e1;
+      --text: #1f2937;
+      --text-muted: #475569;
+      --heading: #16213e;
+      --accent: #16213e;
+      --accent-2: #0e7490;
+      --accent-soft: #e0f2fe;
+      --mem: #6d28d9;
+      --mem-soft: #ede9fe;
+      --net: #c2410c;
+      --net-soft: #ffedd5;
+      --warn-bg: #fffbeb;
+      --warn-border: #b45309;
+      --warn-text: #92400e;
+      --p-bg: #d1fae5; --p-fg: #065f46; --p-border: #059669;
+      --r-bg: #dbeafe; --r-fg: #1e40af; --r-border: #2563eb;
+      --e-bg: #ffedd5; --e-fg: #9a3412; --e-border: #c2410c;
+      --i-bg: #ede9fe; --i-fg: #5b21b6; --i-border: #7c3aed;
+      --focus: #b45309;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220;
+        --surface: #111a2c;
+        --surface-2: #17223a;
+        --border: #33415c;
+        --text: #e2e8f0;
+        --text-muted: #a8b3c7;
+        --heading: #f1f5f9;
+        --accent: #cbd5e1;
+        --accent-2: #67e8f9;
+        --accent-soft: #164e63;
+        --mem-soft: #3b2a63;
+        --net-soft: #4a2410;
+        --warn-bg: #2c2410;
+        --warn-border: #d97706;
+        --warn-text: #fcd34d;
+        --p-bg: #064e3b; --p-fg: #a7f3d0; --p-border: #10b981;
+        --r-bg: #1e3a8a; --r-fg: #bfdbfe; --r-border: #60a5fa;
+        --e-bg: #4a2410; --e-fg: #fdba74; --e-border: #ea580c;
+        --i-bg: #3b2a63; --i-fg: #ddd6fe; --i-border: #a78bfa;
+        --focus: #fbbf24;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    }
+    a { color: var(--accent-2); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+    .skip-link {
+      position: absolute; left: 8px; top: -48px; z-index: 10;
+      background: var(--surface); color: var(--text);
+      border: 2px solid var(--focus); border-radius: 4px;
+      padding: 10px 16px; font-weight: 700; transition: top .15s ease;
+    }
+    .skip-link:focus { top: 8px; }
+    code, .num, .mono { font-family: var(--mono); }
+    .mono { font-size: .92em; }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+    }
+    .topbar .site { font-weight: 800; color: var(--heading); text-decoration: none; margin-right: auto; }
+    .topbar a { color: var(--text); text-decoration: none; padding: 10px 4px; display: inline-block; }
+    .topbar a:hover { color: var(--accent-2); text-decoration: underline; }
+
+    .breadcrumb {
+      padding: 12px 20px 0; font-size: 14px; color: var(--text-muted);
+      max-width: 1240px; margin: 0 auto;
+    }
+    .breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+    .breadcrumb li + li::before { content: "→"; margin-right: 6px; color: var(--text-muted); }
+
+    .layout {
+      max-width: 1240px; margin: 0 auto; padding: 8px 20px 40px;
+      display: grid; grid-template-columns: 1fr; gap: 24px;
+    }
+    @media (min-width: 768px) { .layout { grid-template-columns: 200px 1fr; } }
+    @media (min-width: 1200px) { .layout { grid-template-columns: 240px 1fr; } }
+
+    .toc-aside { display: none; }
+    @media (min-width: 768px) {
+      .toc-aside { display: block; }
+      .toc-mobile-slot { display: none; }
+    }
+    aside nav, .toc-mobile-slot details {
+      position: sticky; top: 16px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .toc-mobile-slot details { position: static; }
+    aside nav strong, .toc-mobile-slot summary {
+      color: var(--heading); display: block; margin-bottom: 8px; font-size: 14px;
+    }
+    .toc-mobile-slot summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
+    aside nav ol, .toc-mobile-slot ol {
+      list-style: none; margin: 0; padding: 0; counter-reset: toc;
+    }
+    aside nav li, .toc-mobile-slot li { margin: 2px 0; }
+    aside nav a, .toc-mobile-slot a {
+      display: block; padding: 8px 6px; text-decoration: none; color: var(--text);
+      border-radius: 4px; line-height: 1.4;
+    }
+    aside nav a:hover, .toc-mobile-slot a:hover { background: var(--surface-2); color: var(--accent-2); }
+
+    main { min-width: 0; }
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 20px 22px; margin: 0 0 22px;
+      break-inside: avoid-page;
+    }
+    h1 { font-size: 26px; line-height: 1.35; color: var(--heading); margin: 6px 0 4px; }
+    h2 { font-size: 21px; color: var(--heading); margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 17px; color: var(--heading); margin: 20px 0 8px; }
+    p { max-width: 76ch; }
+
+    .meta-note {
+      background: var(--surface-2); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 10px 14px; font-size: 14px; color: var(--text-muted); margin: 10px 0 16px;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+    .tags li {
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 6px 12px; font-size: 13px; background: var(--surface-2); color: var(--text);
+    }
+
+    .badge {
+      display: inline-block; font-size: 12px; font-weight: 700; line-height: 1;
+      padding: 4px 8px; border-radius: 4px; border: 1px solid; vertical-align: 1px; white-space: nowrap;
+    }
+    .b-p { background: var(--p-bg); color: var(--p-fg); border-color: var(--p-border); }
+    .b-r { background: var(--r-bg); color: var(--r-fg); border-color: var(--r-border); }
+    .b-e { background: var(--e-bg); color: var(--e-fg); border-color: var(--e-border); }
+    .b-i { background: var(--i-bg); color: var(--i-fg); border-color: var(--i-border); }
+
+    .fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0; }
+    .fact-card {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .fact-card dt { font-weight: 700; color: var(--heading); margin-bottom: 4px; }
+    .fact-card dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+
+    .callout-warning {
+      background: var(--warn-bg); border: 1px solid var(--warn-border); border-left-width: 5px;
+      border-radius: 6px; padding: 12px 16px; margin: 16px 0;
+    }
+    .callout-warning strong:first-child { color: var(--warn-text); }
+
+    .table-scroll {
+      overflow-x: auto; margin: 14px 0;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
+    caption { text-align: left; font-weight: 700; color: var(--heading); padding: 10px 12px 2px; font-size: 14px; }
+    th, td { border-top: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+    thead th { background: var(--surface-2); color: var(--heading); border-top: none; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: var(--surface-2); }
+    td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+
+    .tradeoff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+    .tradeoff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--surface-2); font-size: 14px; }
+    .tradeoff-card h3 { margin: 0 0 6px; font-size: 15px; }
+
+    figure.architecture-diagram { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--surface); }
+    figure.architecture-diagram img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+    figure.architecture-diagram figcaption { font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+    .diagram-scroll { overflow-x: auto; }
+
+    ul, ol { padding-left: 26px; }
+    li { margin: 4px 0; }
+
+    .decision-checklist fieldset {
+      border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 10px 14px;
+    }
+    .decision-checklist legend { font-weight: 700; color: var(--heading); padding: 0 6px; }
+    .decision-checklist label {
+      display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; min-height: 44px; cursor: pointer;
+    }
+    .decision-checklist input[type="checkbox"] { width: 20px; height: 20px; margin-top: 3px; flex: none; }
+
+    .pager { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 8px 0 0; }
+    .pager a {
+      display: inline-block; min-height: 44px; padding: 10px 16px;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+      color: var(--text); text-decoration: none; font-weight: 600;
+    }
+    .pager a:hover { border-color: var(--accent-2); color: var(--accent-2); }
+    .pager .spacer { flex: 1; }
+
+    footer.site-footer {
+      max-width: 1240px; margin: 0 auto; padding: 16px 20px 40px;
+      font-size: 13px; color: var(--text-muted); border-top: 1px solid var(--border);
+    }
+    @media (max-width: 419px) {
+      .pager a { width: 100%; text-align: center; }
+      .fact-grid { grid-template-columns: 1fr; }
+      section { padding: 16px 14px; }
+    }
+    @media print {
+      .topbar, .breadcrumb, aside nav, .toc-mobile-slot, .pager { display: none !important; }
+      body { background: #fff; color: #000; }
+      section { border: none; padding: 0 0 12px; break-inside: avoid-page; }
+      .table-scroll { overflow: visible; }
+      a { color: #000; text-decoration: none; }
+      a[href^="http"]::after { content: "（" attr(href) "）"; font-size: 11px; }
+      thead { display: table-header-group; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至正文</a>
+
+  <header class="topbar">
+    <a class="site" href="../index.html">GPU 大模型系统论文解读</a>
+    <nav aria-label="站点导航">
+      <a href="../index.html">首页</a>
+      <a href="../index.html">推理服务与资源调度</a>
+      <a href="../index.html">解码加速与量化</a>
+      <a href="../index.html">训练、并行与 GPU Kernel</a>
+      <a href="../index.html#metrics">指标术语</a>
+      <a href="../index.html#methodology">阅读说明</a>
+    </nav>
+  </header>
+
+  <nav class="breadcrumb" aria-label="面包屑">
+    <ol>
+      <li><a href="../index.html">首页</a></li>
+      <li><a href="../index.html">推理服务与资源调度</a></li>
+      <li aria-current="page">Sarathi-Serve</li>
+    </ol>
+  </nav>
+
+  <div class="layout">
+    <aside class="toc-aside">
+      <nav aria-label="页内目录">
+        <strong>页内目录</strong>
+        <ol>
+          <li><a href="#overview">摘要与一句话判断</a></li>
+          <li><a href="#background">问题背景</a></li>
+          <li><a href="#mechanism">核心机制</a></li>
+          <li><a href="#data-path">GPU/系统数据路径</a></li>
+          <li><a href="#tradeoffs">架构权衡</a></li>
+          <li><a href="#cloud-mapping">云上部署映射</a></li>
+          <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+          <li><a href="#security-ops">安全与可运维性</a></li>
+          <li><a href="#fit">适用 / 不适用场景</a></li>
+          <li><a href="#experiments">实验与指标</a></li>
+          <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+          <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+          <li><a href="#evidence">证据台账</a></li>
+        </ol>
+      </nav>
+    </aside>
+
+    <main id="main">
+      <div class="toc-mobile-slot">
+        <details class="toc-mobile" open>
+          <summary>页内目录（点击展开/折叠）</summary>
+          <nav aria-label="页内目录（移动端）">
+            <ol>
+              <li><a href="#overview">摘要与一句话判断</a></li>
+              <li><a href="#background">问题背景</a></li>
+              <li><a href="#mechanism">核心机制</a></li>
+              <li><a href="#data-path">GPU/系统数据路径</a></li>
+              <li><a href="#tradeoffs">架构权衡</a></li>
+              <li><a href="#cloud-mapping">云上部署映射</a></li>
+              <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+              <li><a href="#security-ops">安全与可运维性</a></li>
+              <li><a href="#fit">适用 / 不适用场景</a></li>
+              <li><a href="#experiments">实验与指标</a></li>
+              <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+              <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+              <li><a href="#evidence">证据台账</a></li>
+            </ol>
+          </nav>
+        </details>
+      </div>
+
+      <section id="overview" aria-labelledby="overview-h">
+        <h1 id="overview-h">Sarathi-Serve：以 chunked-prefills 与 stall-free batching 驯服 LLM 推理的吞吐—延迟权衡</h1>
+        <div class="meta-note">
+          <p style="margin:0 0 4px"><strong>最后核验日期：</strong>2026-09-14　<strong>证据完整度：</strong>台账 25 条 = P 22 · R 1 · E 1 · I 1，全部带真实 PDF 页码 + 章节/图表号定位（详见 <a href="#evidence">证据台账</a>）。</p>
+          <p style="margin:0"><strong>输入 PDF：</strong><span class="mono">02_Sarathi-Serve_2403.02310.pdf</span>（arXiv 2403.02310v3，2024-06-17；作者：Amey Agrawal 等，Microsoft Research India 与 Georgia Tech）。</p>
+        </div>
+        <ul class="tags" aria-label="快速标签">
+          <li>生命周期：推理服务</li>
+          <li>部署形态：单机 TP / 跨节点 PP</li>
+          <li>目标硬件：NVIDIA A100 / A40</li>
+          <li>核心资源：GPU 算力 · HBM / KV Cache · 网络</li>
+          <li>证据状态：P 主导（性能数字全部为论文报告）</li>
+        </ul>
+
+        <h2>一句话判断</h2>
+        <p>对需要「同时守住交互式尾延迟与 GPU 吞吐」的在线 LLM 服务，Sarathi-Serve 用<strong>切块 prefill（chunked-prefills）</strong>与<strong>不停批调度（stall-free batching）</strong>把吞吐—延迟从二选一变成一个可调的 token 预算旋钮；代价是 prefill 效率的小幅折价（图 14：Yi-34B / TP-2，最小块 512 时 prefill 计算开销 ≤约 25%、2048 块近零，相对不切块归一化，精度论文未明确披露）与按部署调参的运维成本。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（判断为编辑观点）</span></p>
+
+        <h2 id="overview-3min">3 分钟速读</h2>
+        <ol>
+          <li><strong>问题：</strong>prefill 并行算整个 prompt、计算受限；decode 一次每请求只算 1 个 token、内存受限。现有调度要么 prefill 优先（vLLM/Orca）——长 prefill 迭代把运行中请求的 decode 卡住数秒（generation stall）；要么 decode 优先（FasterTransformer）——小批量浪费算力。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>洞察：</strong>prefill 吞吐在序列长约 512 token 就饱和，把长 prompt 切成近等计算量的块，既不损失 prefill 效率，又让每次迭代时长有上界。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>机制：</strong>stall-free batching（算法 3）每迭代先打包全部运行中 decode，再续算未完成 prefill 块，最后在剩余 token 预算内接纳新请求；预算由 TBT SLO 推导（评测取 strict 512 / relaxed 2048）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>结果：</strong>相对作者复现的 vLLM/Orca 基线，服务容量（sustained QPS）：Mistral-7B / 1×A100 最高 2.6×，Yi-34B / 2×A100 最高 3.7×，Falcon-180B / 2 节点×4×A100（TP4-PP2）端到端最高 5.6×；负载为 openchat_sharegpt4（输入/输出中位 1730/415 token）与 arxiv_summarization（7059/208 token），strict/relaxed SLO；精度论文未明确披露。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>边界：</strong>数字不可与其他论文横比；chunk 有开销（图 14：Yi-34B / TP-2，≤约 25%@512 块）；与 disaggregated 方案（DistServe 等）的定量对比论文明确留白（第 13 页 §6）；仓库为科研原型、非完整 vLLM 功能对等（第 18 页附录 A）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-r">R</span></li>
+        </ol>
+
+        <h2 id="overview-claims">论文声称的主要结果</h2>
+        <div class="table-scroll" role="region" aria-label="主要结果表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 A · 论文声称的主要结果（均为条件性数字，禁止脱离条件摘取）</caption>
+            <thead>
+              <tr><th scope="col">指标（口径）</th><th scope="col" class="num">数字</th><th scope="col">模型 / 硬件</th><th scope="col">精度</th><th scope="col">负载 / SLO</th><th scope="col">基线</th><th scope="col">来源</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>服务容量倍数（sustained QPS 倍数）</td><td class="num">2.6×</td>
+                <td>Mistral-7B / 1×A100 80GB</td><td>论文未明确披露</td>
+                <td>openchat_sharegpt4 + arxiv_summarization（输入/输出中位 1730/415 与 7059/208 token，泊松到达）；strict/relaxed SLO</td><td>vLLM</td>
+                <td><span class="badge evidence-badge b-p">P</span> 摘要（第 1 页）、§7（第 14 页）</td>
+              </tr>
+              <tr>
+                <td>服务容量倍数</td><td class="num">最高 3.7×</td>
+                <td>Yi-34B / 2×A100（TP-2）</td><td>论文未明确披露</td>
+                <td>openchat_sharegpt4（输入/输出中位 1730/415 token）；strict SLO</td><td>vLLM（较 Orca 为 4.0×）</td>
+                <td><span class="badge evidence-badge b-p">P</span> §5.1、图10/11（第 11 页）</td>
+              </tr>
+              <tr>
+                <td>容量倍数（PP 场景）</td><td class="num">6.3× / 4.3×</td>
+                <td>LLaMA2-70B / 8×A40（TP4-PP2）</td><td>论文未明确披露</td>
+                <td>openchat_sharegpt4（输入/输出中位 1730/415 token）；strict SLO</td><td>Orca / vLLM</td>
+                <td><span class="badge evidence-badge b-p">P</span> §5.1、图11（第 11 页）</td>
+              </tr>
+              <tr>
+                <td>端到端服务容量倍数</td><td class="num">最高 5.6×（图11a 标 5.62×）</td>
+                <td>Falcon-180B / 2 节点 ×4×A100（TP4-PP2）</td><td>论文未明确披露</td>
+                <td>openchat_sharegpt4（输入/输出中位 1730/415 token）；strict SLO</td><td>vLLM</td>
+                <td><span class="badge evidence-badge b-p">P</span> 摘要（第 1 页）、§1（第 3 页）、图11a（第 11 页）</td>
+              </tr>
+              <tr>
+                <td>容量倍数（并行策略对比）</td><td class="num">4.3× / 3.6× / 1.48×</td>
+                <td>Falcon-180B / 2 节点，100 Gbps 以太网</td><td>论文未明确披露</td>
+                <td>openchat_sharegpt4（输入/输出中位 1730/415 token）；strict（4.3×/3.6×）、relaxed（1.48×）</td><td>vLLM TP-8 / vLLM TP4-PP2</td>
+                <td><span class="badge evidence-badge b-p">P</span> §5.3、图13（第 12 页）</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>不可直接比较：</strong>上表数字来自 Sarathi-Serve 论文的自身测试床、模型、数据集与 SLO 定义（strict = 5× / relaxed = 25× 解码迭代基时），与本站收录的其他论文（DistServe、Mooncake 等）的硬件、模型、口径均不一致，<strong>不允许跨论文横向排名</strong>。
+        </div>
+      </section>
+
+      <section id="background" aria-labelledby="background-h">
+        <h2 id="background-h">问题背景</h2>
+        <h3>两阶段天然不对称</h3>
+        <p>LLM 推理分 prefill（一次并行处理全部 prompt token，产出首 token）与 decode（每迭代每请求只处理 1 个 token）两阶段。prefill 计算受限、吞吐对批量几乎不敏感；decode 内存受限、批量越大越摊薄权重读取成本，吞吐随批量近似线性提升。论文图 3/图 4（Mistral-7B、单张 A100、prompt/输出长度均 1024）实测了这一点，并指出线性层占两阶段总时间 80% 以上（第 1 页摘要、第 3 页 §2.2、第 5 页 §3.1 与图 3/图 4）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>两类现有调度都有硬伤</h3>
+        <ul>
+          <li><strong>prefill 优先</strong>（vLLM、Orca 的迭代级调度）：急切准入新 prefill。一个长 prompt 的 prefill 迭代可执行数秒，期间所有运行中请求的 decode 被卡住——论文称为 generation stall。图 1 实测 vLLM 服务 Yi-34B（2×A100、128 请求、arxiv-summarisation trace）时出现持续数秒的 stall，且负载升高时 P99 TBT 显著恶化（第 1 页图 1、第 2 页 §1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>decode 优先</strong>（FasterTransformer、Triton 等请求级批处理）：批内全部 decode 完成才准入新请求，TBT 有保障，但先完成的请求不能退出、批规模持续缩水直至最慢请求结束，吞吐因此严重受限（第 2 页 §1、第 4 页 §2.5 与算法 1）。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+        <h3>流水线放大问题</h3>
+        <p>跨节点部署常用流水线并行（PP）：通信少、只需点对点。但混合长短 prefill/decode 的微批执行时间差异巨大，产生三类流水线气泡（prefill 长度差、prefill/decode 计算差、decode 间 KV 上下文差）。论文以 Falcon-180B 举例：一个 4k prompt 的 prefill 迭代约 1150ms，而 batch 32 的纯 decode 迭代约 200ms，二者交错即可产生约 950ms 的气泡（第 7 页 §3.3、图 8；该示例未指明所用 GPU 配置与精度，均按论文未明确披露处理）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>指标与约束</h3>
+        <p>论文采用 TTFT（time-to-first-token，取中位）与 TBT（time-between-tokens，取 P99）为延迟指标，Capacity 为「在延迟目标内可持续服务的最大请求负载（QPS）」——吞吐与延迟被统一进一个容量口径（定义见第 4 页 §2.4，容量实验见第 10–11 页 §5.1）。<span class="badge evidence-badge b-p">P</span></p>
+      </section>
+
+      <section id="mechanism" aria-labelledby="mechanism-h">
+        <h2 id="mechanism-h">核心机制</h2>
+        <h3>1 · chunked-prefills：把长 prefill 切成近等计算量的块</h3>
+        <p>依据两条：其一，prefill 吞吐在序列长约 512 token 即进入饱和（图 4 实测：Mistral-7B、单张 A100、长度 1024；第 5 页图 4、第 8 页 §4.1），把千级 token 的 prompt 切成 512 量级的块几乎不损失 prefill 效率；其二，每次迭代的计算量因此有了硬上界，不再取决于 prompt 总长。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>2 · stall-free batching：控制面的迭代编排（算法 3）</h3>
+        <ol>
+          <li>先打包当前批中<strong>所有运行中请求的 decode token</strong>；</li>
+          <li>再续算<strong>未完成的 prefill 块</strong>；</li>
+          <li>最后在剩余 token 预算内<strong>准入新请求</strong>（按预算切出其第一个块）；</li>
+          <li>提交混合批执行，过滤已完成请求，进入下一迭代。</li>
+        </ol>
+        <p>关键不变量：decode 永远在批内、每迭代 token 总量 ≤ token budget = f(TBT SLO)。因此新请求的 prefill 永不推迟运行中请求的 decode——「stall-free」由此得名。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>3 · token 预算的三个约束</h3>
+        <ul>
+          <li><strong>切太碎的代价一（GPU 利用率）：</strong>块小于计算饱和点后线性层效率下降；</li>
+          <li><strong>切太碎的代价二（KV 重读）：</strong>分 N 块时第 i 块的注意力需重读前 i−1 块的 KV，增加 HBM 读取流量（计算量不变）；</li>
+          <li><strong>tile 量化：</strong>GPU 矩阵按 tile 分块，257 token 的块可比 256 多耗 32% prefill 时间（第 9 页 §4.3；该 32% 为论文给出的 tile 量化示例，对应模型/硬件/精度论文未明确披露）——预算应取 2 的幂附近。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+        <p>论文用 Vidur 仿真器对目标部署做一次性剖析来选预算（第 9 页 §4.3）；评测取 strict 512 / relaxed 2048（LLaMA2-70B relaxed 用 1536 以压流水线气泡）（第 11 页 §5.1 末段）。<span class="badge evidence-badge b-p">P</span></p>
+        <div class="callout-warning" role="note">
+          <strong>注意：</strong>512/2048 是论文在其测试床与 SLO 下选定的值，不是通用默认值。换硬件、换 SLO、换长度分布都应重新剖析（论文明确留了「动态调预算」作为未来工作）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（运维提醒为编辑补充）</span>
+        </div>
+        <h3>4 · 实现与控制面/数据面边界</h3>
+        <p>系统实现于 vLLM 开源版之上：新增 paged chunk prefill 支持，接入 FlashAttention v2 与 FlashInfer kernel（评测统一用 FlashAttention 后端，因其支持的模型更广），扩展了调度策略、流水线并行与遥测系统，TP/PP 通信使用 NCCL（第 9 页 §4.4、第 10 页 §4.4 末段）。<span class="badge evidence-badge b-p">P</span></p>
+        <p>按论文事实区分：<strong>控制面</strong>=迭代级调度器（算法 3 的编排与预算执行）；<strong>数据面</strong>=执行引擎（GEMM、注意力 kernel、KV cache 读写、采样与 NCCL 通信）。「调度器只做编排、不碰张量数值」是本站对其结构的编辑概括。<span class="badge evidence-badge b-i">I</span></p>
+      </section>
+
+      <section id="data-path" aria-labelledby="data-path-h">
+        <h2 id="data-path-h">GPU / 系统数据路径</h2>
+        <figure class="architecture-diagram">
+          <div class="diagram-scroll">
+            <img src="../assets/diagrams/sarathi-serve-data-path.svg"
+                 alt="Sarathi-Serve 数据路径图：客户端请求经 API 前端进入 stall-free 调度器，调度器在 token 预算内构造 decode 与 prefill 块的混合批，GPU 前向引擎逐层执行线性层与注意力并读写 HBM 中的权重与 KV cache，TP/PP 通信经 NCCL 完成，token 流式返回客户端"
+                 width="1080" height="800" loading="lazy">
+          </div>
+          <figcaption>图 1 · Sarathi-Serve 单副本端到端数据路径（依据论文 §4–§5 与第 9 页算法 3 绘制，图内标注了关键数字的论文页码依据；编号 ①–⑧ 对应下方文字序列）。</figcaption>
+        </figure>
+        <h3>端到端文字序列</h3>
+        <ol>
+          <li><strong>① 请求进入</strong>：客户端请求到达 API 前端（vLLM 服务进程）入队，遥测系统记录到达时间。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>② 调度编排</strong>（控制面）：每轮迭代，调度器按算法 3 依次打包运行中 decode → 续算未完成 prefill 块 → 在剩余额度内准入新请求（第 9 页算法 3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>③ 混合批成形</strong>：D 个 decode token + 1 个 prefill 块，批内 token 总数 ≤ token budget（strict 512 / relaxed 2048），每迭代计算量近均匀。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>④ GPU 前向</strong>：混合批进入执行引擎逐层计算——线性层 GEMM 与注意力 kernel（FlashAttention v2 / FlashInfer 的 paged chunk prefill 路径）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑤ 显存访问</strong>：线性层从 HBM 读模型权重（按批摊薄）；注意力经 PagedAttention 页表读写 KV cache——prefill 块追加新 KV，decode 读写全部历史 KV；跨块注意力重读同 prompt 先前块的 KV（第 i 块重读 i−1 次）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑥ 并行通信</strong>：TP 每层两次 all-reduce（节点内 NVLink）；PP 在流水线 stage 间点对点传激活（论文跨节点为 100 Gbps 以太网，第 4 页 §2.3、第 10 页表 1），近均匀微批使气泡最小。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑦ 采样回传</strong>：decode 请求采样出新 token 追加到输出序列；prefill 请求算完首块不产出用户可见 token，等待后续块（最后一块产出首 token）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（首 token 产出时点为编辑按 chunked 机制推演）</span></li>
+          <li><strong>⑧ 流式响应</strong>：token 经 API 前端流式返回客户端；首 token 到达即 TTFT，相邻 token 间隔即 TBT——stall-free 保证 TBT 无 prefill 干扰尖峰。<span class="badge evidence-badge b-p">P</span></li>
+        </ol>
+        <div class="table-scroll" role="region" aria-label="组件职责表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 B · 数据路径组件与职责</caption>
+            <thead><tr><th scope="col">组件</th><th scope="col">面</th><th scope="col">职责</th><th scope="col">证据</th></tr></thead>
+            <tbody>
+              <tr><td>API 前端（vLLM 服务）</td><td>接入</td><td>请求队列、流式输出、遥测</td><td><span class="badge evidence-badge b-p">P</span> §4.4（第 9–10 页）</td></tr>
+              <tr><td>迭代级调度器</td><td>控制面</td><td>算法 3 编排、token 预算执行、新请求准入</td><td><span class="badge evidence-badge b-p">P</span> §4.2–4.3（第 8–9 页）</td></tr>
+              <tr><td>执行引擎（GPU）</td><td>数据面</td><td>GEMM、注意力 kernel、采样</td><td><span class="badge evidence-badge b-p">P</span> §4.4（第 9 页）</td></tr>
+              <tr><td>KV cache（HBM）</td><td>数据面</td><td>PagedAttention 分页存取；prefill 块追加、decode 读写</td><td><span class="badge evidence-badge b-p">P</span> §4.1–4.2（第 8 页）</td></tr>
+              <tr><td>NCCL 通信</td><td>数据面</td><td>TP all-reduce / PP 激活点对点传输</td><td><span class="badge evidence-badge b-p">P</span> §4.4（第 10 页）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tradeoffs" aria-labelledby="tradeoffs-h">
+        <h2 id="tradeoffs-h">架构权衡</h2>
+        <div class="tradeoff-grid">
+          <div class="tradeoff-card">
+            <h3>吞吐 ↔ 延迟：预算旋钮</h3>
+            <p>token budget 是显式旋钮：strict 512 下 Mistral-7B（1×A100）相对 vLLM 容量 3.5×（100ms P99 TBT SLO）；relaxed 2048 下 Yi-34B（2×A100）1.65×（1s SLO）。负载为 openchat_sharegpt4（输入/输出中位 1730/415 token），精度论文未明确披露（第 12 页 §5.2、图 12）。SLO 越紧预算越小、prefill 越碎、效率越低，但尾延迟有界。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>算力利用 ↔ HBM 流量</h3>
+            <p>把 prefill 塞进 decode 批吃掉算力闲置；代价是跨块 KV 重读（第 i 块重读 i−1 次）推高 HBM 读取流量，块越小越明显。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>复杂度 ↔ 收益</h3>
+            <p>收益（容量倍数、气泡消除）以调度器复杂度与按部署调参为代价：预算需一次剖析（Vidur）或按经验取 2 的幂；tile 量化使 257 vs 256 差 32%。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>扩展性 ↔ 故障域</h3>
+            <p>Falcon-180B decode-only 中位 TBT：跨节点 TP-8 约为 TP4-PP2 的 2×（图 13a 图注为逾 2×，第 12 页 §5.3），PP+均匀微批成为无高带宽互联时的可行路径；但 PP 引入 stage 间依赖，副本是更大的故障域，论文未给故障恢复数据。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>数值一致性 ↔ 效率</h3>
+            <p>chunked-prefills 是调度层机制，不改变权重与计算数值；论文未报告任何精度/质量变化，也未声称需要重校准。<span class="badge evidence-badge b-p">P</span>（「无精度影响」的表述边界为编辑概括）<span class="badge evidence-badge b-i">I</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>TTFT ↔ TBT（内部再平衡）</h3>
+            <p>消融（表 4：Yi-34B / 2×A100 / token budget 1024 / 128 请求，精度论文未明确披露）：仅混合批 TTFT 0.53s/TBT 0.68s；仅切块 TTFT 1.04s/TBT 0.17s；两者结合 TTFT 0.76s/TBT 0.14s（openchat_sharegpt4；arxiv_summarization 依次为 3.78/1.38、5.38/0.20、3.90/0.17s）——只有组合能同时改善两者（第 13 页 §5.4.2、表 4）。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="cloud-mapping" aria-labelledby="cloud-mapping-h">
+        <h2 id="cloud-mapping-h">云上部署映射</h2>
+        <p class="meta-note" style="margin-top:0">本节为部署映射：<strong>论文硬件事实</strong>标 P，<strong>云产品对应</strong>标 E（仅作厂商中立示例，参数与价格以云厂商文档为准，本站未核验实时价格），<strong>运维建议</strong>标 I。</p>
+        <div class="table-scroll" role="region" aria-label="云上部署映射表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 C · 论文配置 → 云上对应</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文配置（P）</th><th scope="col">云上映射（E，示例非推荐）</th><th scope="col">说明</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>计算实例</td>
+                <td>Azure NC96ads v4（4×A100 80GB，两两 NVLink）；8×A40 48GB 服务器 <span class="badge evidence-badge b-p">P</span></td>
+                <td>各云单机 4×/8× A100-80GB GPU 实例；A40 类比 48GB 卡型</td>
+                <td>选型核心是单卡显存与 NVLink 拓扑，不是具体机型名</td>
+              </tr>
+              <tr>
+                <td>GPU 拓扑</td>
+                <td>节点内 NVLink 跑 TP；跨节点以太网跑 PP <span class="badge evidence-badge b-p">P</span></td>
+                <td>优先把 TP 限制在同一 NVLink 域内</td>
+                <td>论文实测 Falcon-180B decode-only 跨节点 TP-8 中位 TBT 约为 TP4-PP2 的 2×（第 12 页图 13a） <span class="badge evidence-badge b-p">P</span></td>
+              </tr>
+              <tr>
+                <td>网络</td>
+                <td>节点间 100 Gbps 以太网 <span class="badge evidence-badge b-p">P</span></td>
+                <td>同区域低延迟以太网即可，无 RDMA 硬依赖</td>
+                <td>PP 激活为点对点小流量，对网络要求低于 TP</td>
+              </tr>
+              <tr>
+                <td>存储</td>
+                <td>KV cache 全程驻留 GPU HBM（PagedAttention 分页）；论文无跨节点 KV 迁移 <span class="badge evidence-badge b-p">P</span></td>
+                <td>无需分离式 KV 存储层；普通启动盘/镜像盘即可</td>
+                <td>与 disaggregated 架构（需 KV 迁移网络）的关键差异</td>
+              </tr>
+              <tr>
+                <td>编排 / 弹性</td>
+                <td>论文未披露自动伸缩与编排细节</td>
+                <td>单副本单实例组；按 QPS/SLO 水平扩副本</td>
+                <td>伸缩策略属部署方实现 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>可观测</td>
+                <td>论文实现含「extensive telemetry system」 <span class="badge evidence-badge b-p">P</span></td>
+                <td>接入指标系统：P99 TBT、中位 TTFT、排队延迟、迭代时长</td>
+                <td>论文实验用中位排队延迟 ≤2s 判稳 <span class="badge evidence-badge b-p">P</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="cost-slo" aria-labelledby="cost-slo-h">
+        <h2 id="cost-slo-h">成本 / 性能 / SLO</h2>
+        <h3>SLO 口径（论文定义）</h3>
+        <p>为剔除模型/硬件固有差异，P99 TBT 的 SLO 定义为「无 prefill 干扰的 decode 迭代执行时间」（4k prefill 长度、batch 32 基准）的 <strong>5×（strict）/ 25×（relaxed）</strong>；绝对阈值见表 D。容量实验同时限制中位排队延迟 ≤2s（第 10 页 §5.1、表 3）。<span class="badge evidence-badge b-p">P</span></p>
+        <div class="table-scroll" role="region" aria-label="SLO 表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 D · 论文 SLO 配置（第 10 页表 3；token budget 取值见第 11 页 §5.1）</caption>
+            <thead><tr><th scope="col">模型</th><th scope="col" class="num">strict P99 TBT（s）</th><th scope="col" class="num">relaxed P99 TBT（s）</th><th scope="col">token budget</th></tr></thead>
+            <tbody>
+              <tr><td>Mistral-7B</td><td class="num">0.1</td><td class="num">0.5</td><td class="num">512 / 2048</td></tr>
+              <tr><td>Yi-34B</td><td class="num">0.2</td><td class="num">1</td><td class="num">512 / 2048</td></tr>
+              <tr><td>LLaMA2-70B</td><td class="num">1</td><td class="num">5</td><td class="num">512 / 1536（relaxed 压气泡）</td></tr>
+              <tr><td>Falcon-180B</td><td class="num">1</td><td class="num">5</td><td class="num">512 / 2048</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>容量规划变量</h3>
+        <ul>
+          <li>SLO 松紧（5×/25× 倍数）→ 直接决定 token budget 与容量上限；</li>
+          <li>长度分布（prompt/输出中位与 P90，表 2）→ 长 prompt 收益更大但 strict 预算下 prefill 折价更多；</li>
+          <li>并行策略（TP 度、PP stage 数）与跨节点带宽 → 气泡量级；</li>
+          <li>判稳口径：中位排队延迟 ≤2s。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+        <h3>成本模型（参数化，非论文结论）</h3>
+        <p>论文不含任何成本数据。架构师可用下式估算单副本单位成本（<span class="badge evidence-badge b-i">I</span>，价格项为参数）：</p>
+        <p class="mono" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;overflow-x:auto">每百万输出 token 成本 ≈ p_gpu × N_gpu × t_hour ÷ ( C_slo × L_out ) ÷ 10⁻⁶ …（公式 1）</p>
+        <ul>
+          <li><span class="mono">p_gpu</span>：单卡时租价（按查询日云价代入，E）;</li>
+          <li><span class="mono">N_gpu</span>：副本卡数（1/2/8）；</li>
+          <li><span class="mono">C_slo</span>：目标 SLO 下的容量 QPS（用论文图 10–13 按比例估，或实测）；</li>
+          <li><span class="mono">L_out</span>：平均输出 token 数（表 2 口径）。</li>
+        </ul>
+        <p><strong>敏感项：</strong>SLO 从 relaxed 收紧到 strict 时容量普遍明显下降（各档具体数值见图 10–11，第 11–12 页；「约减半」为本站编辑对图中差值的概括，非论文结论 <span class="badge evidence-badge b-i">I</span>）；长 prompt 占比上升时 strict 下容量下降更明显（arxiv_summarization 各系统容量普遍低于 openchat_sharegpt4，第 11–12 页）。<span class="badge evidence-badge b-p">P</span></p>
+      </section>
+
+      <section id="security-ops" aria-labelledby="security-ops-h">
+        <h2 id="security-ops-h">安全与可运维性</h2>
+        <h3>论文披露范围</h3>
+        <ul>
+          <li>实现含「extensive telemetry system」遥测系统，可用于延迟与调度观测（第 9–10 页 §4.4） <span class="badge evidence-badge b-p">P</span>；</li>
+          <li>仓库为 vLLM fork 的<strong>科研原型</strong>，「与开源 vLLM 不具备完整功能对等」（第 18 页附录 A） <span class="badge evidence-badge b-r">R</span>；</li>
+          <li>依赖栈：CUDA 12.1、A100/A40、FlashAttention v2、FlashInfer、NCCL（第 9–10 页 §4.4、第 18 页附录 A） <span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-r">R</span>。</li>
+        </ul>
+        <h3>论文未披露、部署方必须自行覆盖的项</h3>
+        <div class="table-scroll" role="region" aria-label="安全运维缺口表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 E · 安全/运维清单（论文缺口 + 编辑建议）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文状态</th><th scope="col">部署建议（I）</th></tr></thead>
+            <tbody>
+              <tr><td>多租户隔离 / 公平性</td><td>未披露；论文引用公平性调度为互补方向 <span class="badge evidence-badge b-p">P</span></td><td>前置网关做配额与按租户公平排队；避免单租户长 prompt 挤占预算</td></tr>
+              <tr><td>数据驻留 / 缓存残留</td><td>未披露 KV 释放与残留策略 <span class="badge evidence-badge b-p">P（缺口）</span></td><td>确认请求结束后 KV 页回收；共享实例不承载跨租户敏感会话</td></tr>
+              <tr><td>镜像 / 供应链</td><td>依赖 vLLM fork + 自定义 CUDA kernel <span class="badge evidence-badge b-r">R</span></td><td>锁定 commit 构建私有镜像；跟踪上游 vLLM（chunked prefill 已进主流）的安全更新</td></tr>
+              <tr><td>权限与准入</td><td>未披露</td><td>API 层鉴权与限流；调度器参数（budget）仅运维角色可改</td></tr>
+              <tr><td>故障恢复</td><td>未披露 <span class="badge evidence-badge b-p">P（缺口）</span></td><td>副本无状态化重启 + 客户端重试/重放；PP 跨节点副本作为整体故障域演练</td></tr>
+              <tr><td>升级回滚</td><td>未披露</td><td>预算/调度参数与镜像版本分开变更、分别可回滚；灰度用 relaxed SLO 验证容量后再切 strict</td></tr>
+              <tr><td>监控告警</td><td>遥测系统存在 <span class="badge evidence-badge b-p">P</span></td><td>对 P99 TBT、中位排队延迟（2s 判稳线）、迭代时长方差设告警</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>生产化提醒：</strong>勿把科研原型直接当生产网关。论文附录明确该仓库只保留关键特性以加速研究迭代；生产部署建议评估已吸收 chunked prefill 的维护版推理引擎，再对照本页机制逐项核对行为一致性。<span class="badge evidence-badge b-r">R</span> <span class="badge evidence-badge b-i">I</span>
+        </div>
+      </section>
+
+      <section id="fit" aria-labelledby="fit-h">
+        <h2 id="fit-h">适用 / 不适用场景</h2>
+        <h3>适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>交互式对话 / 助手类在线服务</strong>：触发条件——TBT 有 P99 硬约束且并发高。理由——stall-free 调度直接消除 generation stall，strict SLO 下容量较 vLLM 最高 3.7×（Yi-34B / 2×A100 / openchat_sharegpt4，第 11 页 §5.1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>长 prompt 工作负载（总结、文档问答、Copilot 类）</strong>：触发条件——prompt 中位在千级 token 以上。理由——长 prefill 是 stall 与气泡主因，切块后收益最大（arxiv_summarization，中位 7059 token，第 10 页表 2）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>无高带宽互联的跨节点大模型部署</strong>：触发条件——模型超单机 8 卡显存或 NVLink 域不可得。理由——TP4-PP2 + 均匀微批使跨节点 PP 可行，Falcon-180B（2 节点×4×A100）端到端容量最高 5.6×（第 1 页摘要、第 11 页图 11a）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>7B–180B 多模型统一服务底座</strong>：触发条件——同一服务栈承载多个模型规模。理由——论文在四个模型 × 两类并行 × 两数据集上一致取得容量增益（第 10–13 页 §5），机制不依赖特定模型结构。<span class="badge evidence-badge b-p">P</span></li>
+        </ol>
+        <h3>不适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>纯离线批量生成（吞吐唯一目标）</strong>：触发条件——无交互延迟要求。理由——chunk 切块对 prefill 有纯开销（图 14：Yi-34B / TP-2，512 块 ≤约 25%、相对不切块归一化，第 13 页 §5.4.1），无 TBT 收益可换。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>TTFT 极致优先且具备高带宽互联</strong>：触发条件——首 token 延迟权重远高于流式流畅度、且有 RDMA/NVLink 跨节点域。理由——论文自述 disaggregated 方案 prefill 效率与 TTFT 更优，但定量对比留作未来工作（第 13 页 §6）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>需要生产级功能完备 / 硬多租户隔离</strong>：触发条件——直接对外多租户、合规要求严。理由——官方仓库自述为非功能对等的科研原型（第 18 页附录 A）。<span class="badge evidence-badge b-r">R</span></li>
+          <li><strong>低负载 / 超短 prompt 场景</strong>：触发条件——QPS 远低于容量、prompt 数十 token。理由——decode 批小、prefill 本就不饱和，机制收益有限（编辑推断，论文未专门测此区间）。<span class="badge evidence-badge b-i">I</span></li>
+        </ol>
+      </section>
+
+      <section id="experiments" aria-labelledby="experiments-h">
+        <h2 id="experiments-h">实验与指标</h2>
+        <h3>测试床与负载（复现实验的完整条件）</h3>
+        <div class="table-scroll" role="region" aria-label="实验配置表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 F · 实验配置（论文第 10 页表 1 / 表 2 / §5）</caption>
+            <thead><tr><th scope="col">模型</th><th scope="col">注意力</th><th scope="col">GPU 配置</th><th scope="col">精度（dtype）</th><th scope="col" class="num">总显存（单卡）</th><th scope="col">数据集（prompt 中位/P90）</th></tr></thead>
+            <tbody>
+              <tr><td>Mistral-7B</td><td>GQA-SW</td><td>1×A100</td><td>论文未明确披露</td><td class="num">80GB（80GB）</td><td rowspan="4">openchat_sharegpt4：1730/5696<br>arxiv_summarization：7059/12985</td></tr>
+              <tr><td>Yi-34B</td><td>GQA</td><td>2×A100（TP-2）</td><td>论文未明确披露</td><td class="num">160GB（80GB）</td></tr>
+              <tr><td>LLaMA2-70B</td><td>GQA</td><td>8×A40（TP4-PP2）</td><td>论文未明确披露</td><td class="num">384GB（48GB）</td></tr>
+              <tr><td>Falcon-180B</td><td>GQA</td><td>4×A100×2 节点（TP4-PP2）</td><td>论文未明确披露</td><td class="num">640GB（80GB）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>服务器：Azure NC96ads v4（4×A100 80GB、两两 NVLink），节点间 100 Gbps 以太网；A40 为 8×48GB 单机（第 10 页 Models and Environment 段）。<span class="badge evidence-badge b-p">P</span></li>
+          <li>负载：两数据集长度特征 + 泊松到达；总长分别截断于 8192 / 16384 token；指标取中位 TTFT 与 P99 TBT（第 10 页表 2、Workloads/Metrics 段）。<span class="badge evidence-badge b-p">P</span></li>
+          <li>基线：vLLM、Orca（论文自述两者为当时 SOTA，作者自行复现，第 10 页 §5）。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+        <h3>关键结果（均带条件）</h3>
+        <div class="table-scroll" role="region" aria-label="关键结果表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 G · 评测关键数字 → 完整条件 → 定位（精度均为论文未明确披露；负载默认 openchat_sharegpt4，泊松到达）</caption>
+            <thead><tr><th scope="col">结论（指标）</th><th scope="col" class="num">数字</th><th scope="col">完整条件</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr><td>strict 下容量较 vLLM（sustained QPS 倍数）</td><td class="num">最高 3.7×</td><td>Yi-34B / 2×A100（TP-2）/ openchat_sharegpt4（输入/输出中位 1730/415 token）/ strict SLO（P99 TBT 0.2s）/ 精度论文未明确披露 / 基线：作者复现的 vLLM</td><td><span class="badge evidence-badge b-p">P</span> §5.1、图10（第 11 页）</td></tr>
+              <tr><td>strict 下容量较 Orca（同上口径）</td><td class="num">最高 4.0×</td><td>同上（模型/硬件/负载/SLO/精度同上行），基线改为作者复现的 Orca</td><td><span class="badge evidence-badge b-p">P</span> §5.1（第 11 页）</td></tr>
+              <tr><td>PP 场景容量较 Orca / vLLM（QPS 倍数）</td><td class="num">6.3× / 4.3×</td><td>LLaMA2-70B / 8×A40（TP4-PP2）/ openchat_sharegpt4（1730/415 token）/ strict SLO（P99 TBT 5s）/ 精度论文未明确披露 / 基线：作者复现的 Orca 与 vLLM</td><td><span class="badge evidence-badge b-p">P</span> §5.1、图11（第 11 页）</td></tr>
+              <tr><td>跨节点 TP 劣势（decode-only 中位 TBT 倍数）</td><td class="num">约/逾 2×</td><td>Falcon-180B / decode-only / TP-8 跨节点（100 Gbps 以太网）对照 TP4-PP2 / openchat_sharegpt4 / 精度论文未明确披露 / 基线：同系统 TP4-PP2 配置</td><td><span class="badge evidence-badge b-p">P</span> §5.3、图13a（第 12 页）</td></tr>
+              <tr><td>vs vLLM TP-only / TP4-PP2（QPS 倍数，strict）</td><td class="num">4.3× / 3.6×</td><td>Falcon-180B / 2 节点×4×A100（TP4-PP2）/ openchat_sharegpt4（1730/415 token）/ strict SLO（P99 TBT 1s）/ 精度论文未明确披露 / 基线：vLLM TP-8 与 vLLM TP4-PP2</td><td><span class="badge evidence-badge b-p">P</span> §5.3、图13b（第 12 页）</td></tr>
+              <tr><td>budget 旋钮收益（QPS 倍数）</td><td class="num">3.5×（strict）/ 1.65×（relaxed）</td><td>strict：Mistral-7B / 1×A100 / budget 512 / 100ms P99 TBT SLO → 3.5×；relaxed：Yi-34B / 2×A100 / budget 2048 / 1s SLO → 1.65×；均 openchat_sharegpt4 / 精度论文未明确披露 / 基线：vLLM</td><td><span class="badge evidence-badge b-p">P</span> §5.2（第 12 页）</td></tr>
+              <tr><td>vLLM 容量对 max batch 不敏感（QPS）</td><td class="num">32/64/128 近似不变</td><td>Mistral-7B（1×A100）与 Yi-34B（2×A100）/ openchat_sharegpt4 / vLLM max batch 32/64/128 三档 / 精度论文未明确披露 / 对照：Sarathi-Serve 用 max batch 128</td><td><span class="badge evidence-badge b-p">P</span> §5.2、图12（第 12 页）</td></tr>
+              <tr><td>chunk 开销（prefill 计算时间增幅，归一化）</td><td class="num">≤约 25% @512；2048 近零</td><td>Yi-34B / TP-2 / chunk 512/1024/2048、prompt 长度 2K/4K/8K / 相对不切块归一化 / 精度论文未明确披露 / 基线：不切块（图 14）</td><td><span class="badge evidence-badge b-p">P</span> §5.4.1、图14（第 13 页）</td></tr>
+              <tr><td>消融：组合才双赢（TTFT/TBT，秒）</td><td class="num">TTFT 0.76s / TBT 0.14s</td><td>Yi-34B / 2×A100 / token budget 1024 / 128 请求 / openchat_sharegpt4 / 混合批+切块组合 / 精度论文未明确披露 / 基线：仅混合批 0.53/0.68s、仅切块 1.04/0.17s</td><td><span class="badge evidence-badge b-p">P</span> §5.4.2、表4（第 13 页）</td></tr>
+              <tr><td>朴素混合批 TBT 恶化倍数（vs 纯 decode 批）</td><td class="num">最高 28.3×</td><td>(a) Mistral-7B / 1×A100 / token budget 256；(b) LLaMA2-70B / 4×A100 / token budget 512 / 输入/输出长度论文未明确披露 / 精度论文未明确披露 / 基线：纯 decode 批（图 9）</td><td><span class="badge evidence-badge b-p">P</span> §4.2、图9（第 8 页）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>公平性限制</h3>
+        <ul>
+          <li>所有对比基于作者实现的基线复现，非原作者调优结果；<span class="badge evidence-badge b-i">I</span></li>
+          <li>Orca 无 PagedAttention、批大小受限，vLLM 无混合批——代差部分来自系统能力差异而非纯调度；<span class="badge evidence-badge b-p">P</span></li>
+          <li>论文未明确披露模型精度（dtype）与量化设置；未测多租户与故障注入场景。<span class="badge evidence-badge b-p">P（缺口）</span></li>
+        </ul>
+        <h3>建议复现步骤</h3>
+        <ol>
+          <li>获取官方仓库 <span class="mono">microsoft/sarathi-serve</span>，切换 OSDI 复现分支 <span class="mono">osdi-sarathi-serve</span>（第 1 页 §1、第 10 页 §4.4、第 18 页附录 A）；<span class="badge evidence-badge b-r">R</span></li>
+          <li>准备 CUDA 12.1 + A100/A40 环境（/sarathi 源码、/csrc 自定义 kernel，第 18 页附录 A）；<span class="badge evidence-badge b-r">R</span></li>
+          <li>使用 /data 中 trace 与 /osdi-experiments 脚本按图对应 README 跑容量与延迟实验（第 18 页附录 A）；<span class="badge evidence-badge b-r">R</span></li>
+          <li>先复现图 9/图 14（微基准），再复现图 10–13（容量），最后表 4（消融）。<span class="badge evidence-badge b-i">I（顺序为编辑建议）</span></li>
+        </ol>
+      </section>
+
+      <section id="links" aria-labelledby="links-h">
+        <h2 id="links-h">论文 / 代码 / 延伸链接</h2>
+        <div class="table-scroll" role="region" aria-label="链接表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 H · 来源与链接（外链均为 HTTPS，域名明示）</caption>
+            <thead><tr><th scope="col">资源</th><th scope="col">级别</th><th scope="col">链接 / 文件</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>论文（arXiv 2403.02310，v3 2024-06-17）</td>
+                <td><span class="badge evidence-badge b-p">P</span></td>
+                <td><a href="https://arxiv.org/abs/2403.02310" rel="noopener noreferrer">arxiv.org/abs/2403.02310</a>；本地 <span class="mono">02_Sarathi-Serve_2403.02310.pdf</span></td>
+              </tr>
+              <tr>
+                <td>官方代码仓库（论文正文与附录 A 给出；OSDI 复现分支 <span class="mono">osdi-sarathi-serve</span>）</td>
+                <td><span class="badge evidence-badge b-r">R</span></td>
+                <td><a href="https://github.com/microsoft/sarathi-serve" rel="noopener noreferrer">github.com/microsoft/sarathi-serve</a>（URL 逐字取自论文第 1 页 §1 与第 10 页 §4.4；commit/tag 论文未给出；2026-09-14 离线核验，实时可用性未联网复核）</td>
+              </tr>
+              <tr>
+                <td>vLLM（本工作基座；论文参考文献给出）</td>
+                <td>第三方</td>
+                <td><a href="https://github.com/vllm-project/vllm" rel="noopener noreferrer">github.com/vllm-project/vllm</a></td>
+              </tr>
+              <tr>
+                <td>FasterTransformer / LightLLM（论文参考文献给出的基线/生态仓库）</td>
+                <td>第三方</td>
+                <td><a href="https://github.com/NVIDIA/FasterTransformer" rel="noopener noreferrer">github.com/NVIDIA/FasterTransformer</a> · <a href="https://github.com/ModelTC/lightllm" rel="noopener noreferrer">github.com/ModelTC/lightllm</a></td>
+              </tr>
+              <tr>
+                <td>站内延伸：disaggregated 路线的对照论文</td>
+                <td>站内</td>
+                <td><a href="01-distserve.html">DistServe（01）</a> · <a href="03-mooncake.html">Mooncake（03）</a>（论文 §6 将 disaggregation 列为对照方向）</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">Splitwise、DistServe、TetriInfer、APIServe、Vidur、FlashInfer 等论文引用的关联工作仅据论文 §6/§4 转述，未核验到官方仓库的恕不提供链接。</p>
+      </section>
+
+      <section id="decision-checklist" aria-labelledby="decision-checklist-h">
+        <h2 id="decision-checklist-h">给架构师的决策清单</h2>
+        <form class="decision-checklist" aria-label="Sarathi-Serve 采用决策清单（静态勾选，不提交数据）">
+          <fieldset>
+            <legend>需求与兼容</legend>
+            <label><input type="checkbox" name="d1"> 目标业务确有 P99 TBT 约束（交互式），且并发压力已让小批量 decode 或 generation stall 成为瓶颈</label>
+            <label><input type="checkbox" name="d2"> 模型在 GQA 类标准 decoder-only 范围内；GPU 为 A100/A40 代际或同量级（论文证据边界）</label>
+            <label><input type="checkbox" name="d3"> 已确认可接受科研原型或「已吸收 chunked prefill 的维护版引擎」二选一的路线</label>
+          </fieldset>
+          <fieldset>
+            <legend>PoC 与容量</legend>
+            <label><input type="checkbox" name="d4"> 用真实长度分布（中位/P90）+ 泊松到达压测，先 relaxed SLO 再 strict SLO 各测一轮容量</label>
+            <label><input type="checkbox" name="d5"> token budget 至少试 512 / 1536 / 2048 三档，记录容量—TBT 曲线后再定档</label>
+            <label><input type="checkbox" name="d6"> 跨节点部署已比较 TP-only 与 TP+PP 两条路线（论文显示以太网上 TP 延迟约 2×）</label>
+          </fieldset>
+          <fieldset>
+            <legend>SLO 与成本</legend>
+            <label><input type="checkbox" name="d7"> SLO 已写成可测口径（P99 TBT 倍数或绝对值），并设中位排队延迟判稳线（如 2s）</label>
+            <label><input type="checkbox" name="d8"> 用公式 1 代入查询日云价核算每百万 token 成本，并做了 SLO 松紧 ±1 档的敏感性</label>
+          </fieldset>
+          <fieldset>
+            <legend>安全与运维</legend>
+            <label><input type="checkbox" name="d9"> 多租户公平性/配额在前置网关解决；确认 KV 页随请求结束回收、无跨租户残留</label>
+            <label><input type="checkbox" name="d10"> 镜像锁定 commit、依赖（CUDA/FlashAttention/FlashInfer/NCCL）版本固定并有变更回滚演练</label>
+            <label><input type="checkbox" name="d11"> 对 P99 TBT、排队延迟、迭代时长方差建立告警，并演练过副本整体故障恢复</label>
+          </fieldset>
+          <fieldset>
+            <legend>退出策略</legend>
+            <label><input type="checkbox" name="d12"> 保留回退到普通 vLLM 预先优先调度的开关与压测基线，确保迁移可逆</label>
+            <label><input type="checkbox" name="d13"> 若未来转向 disaggregated 架构，已确认 KV 迁移所需网络与双倍部署的成本影响</label>
+          </fieldset>
+        </form>
+      </section>
+
+      <section id="evidence" aria-labelledby="evidence-h">
+        <h2 id="evidence-h">证据台账</h2>
+        <p class="meta-note">分级：P = 论文正文/图表；R = 论文给出的官方仓库；E = 外部/云文档（仅部署映射）；I = 编辑推断。定位均为<strong>真实 PDF 页码 + 章节/图表号</strong>：2026-09-14 以 pdftotext 逐页版式提取对全部 25 条逐条复核（第 15–17 页为参考文献列表、第 19 页无正文，经全文提取交叉覆盖）。完整字段（原文摘录、条件、状态）见 <span class="mono">sources/sarathi-serve.evidence.json</span>。最后核验日期：2026-09-14。</p>
+        <div class="table-scroll" role="region" aria-label="证据台账表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 I · 关键结论 → 级别 → 定位（真实 PDF 页码+章节）→ 核验状态（25 条）</caption>
+            <thead><tr><th scope="col">编号</th><th scope="col">关键结论（摘要）</th><th scope="col">级别</th><th scope="col">定位（PDF 页码 + 章节/图表）</th><th scope="col">核验状态</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">EV-01</td><td>标题/作者/机构（MSR India + GT）、arXiv 2403.02310v3（2024-06-17）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页（题名/作者块与 arXiv 水印）</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-02</td><td>prefill 计算受限、decode 内存受限；batching 对 decode 近线性、对 prefill 影响很小（图 3/图 4：Mistral-7B 单 A100，长度 1024）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页摘要与 §1、第 3 页 §2.2、第 5 页 §3.1 与图 3/图 4</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-03</td><td>两类调度与各自的坑（prefill 优先 → generation stall；decode 优先 → 吞吐严重受限；图 2 为示意图）；Splitwise/DistServe 单列 disaggregated 类</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页 §1、图 2 与脚注 1；第 4 页 §2.5 与算法 1/2</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-04</td><td>图 1 实测 vLLM 数秒级 stall、P99 TBT 尾部恶化（Yi-34B / 2×A100 / 128 请求 / arxiv-summarisation trace）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页图 1(a)(b) 及图注</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-05</td><td>chunked-prefills 机制；prefill 吞吐约 512 token 即饱和（512 点为 Mistral-7B 单 A100 实测，非普遍结论）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页 §1、第 5 页图 4、第 8 页 §4.1</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-06</td><td>stall-free batching（算法 3）：decode → prefill 块 → 新请求准入；token 预算 = f(TBT SLO)</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8 页 §4.2、第 9 页算法 3</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-07</td><td>朴素混合批 TBT 最高恶化 28.3×（vs 纯 decode 批；图 9 条件见页面表 G）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8 页 §4.2 与图 9</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-08</td><td>KV 重读 N−i 次；tile 量化 257→+32%；Vidur 仿真选预算</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 9 页 §4.3</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-09</td><td>实现：vLLM 基座 + paged chunk prefill + FlashAttention v2/FlashInfer（评测统一 FA 后端）+ NCCL + 遥测</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 9 页 §4.4、第 10 页 §4.4 末段</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-10</td><td>官方仓库 github.com/microsoft/sarathi-serve；vLLM fork、科研原型非功能对等、/sarathi、/csrc、/osdi-experiments、/data、osdi-sarathi-serve 分支、CUDA 12.1 + A100/A40</td><td><span class="badge evidence-badge b-r">R</span></td><td>第 1 页 §1 末段、第 10 页 §4.4 末段、第 18 页附录 A</td><td>已核验（PDF 原页；链接逐字取自论文原文，实时可用性未联网复核）</td></tr>
+              <tr><td class="mono">EV-11</td><td>四模型 GPU 配置（表 1）+ Azure NC96ads v4 / 两两 NVLINK / 100 Gbps 以太网 / 8×A40 单机</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 10 页表 1 及 Models and Environment 段</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-12</td><td>两数据集长度分布（openchat 1730/5696、输出 415/834；arxiv 7059/12985、输出 208/371）；泊松到达；8192/16384 截断</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 10 页表 2 及 Workloads、Metrics 段</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-13</td><td>SLO 口径：5×/25× 无干扰 decode 迭代基时（4k prefill、batch 32）；表 3 绝对值；中位排队延迟 ≤2s 判稳；中位 TTFT / P99 TBT；Capacity 定义</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 10 页 §5.1 开头、表 3、Metrics 段；Capacity 定义见第 4 页 §2.4</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-14</td><td>strict 容量：最高 4.0× vs Orca、3.7× vs vLLM（Yi-34B，openchat）；PP 场景 6.3×/4.3×（LLaMA2-70B，openchat）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 11 页 §5.1 与图 10、图 11</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-15</td><td>结论口径：2.6×（Mistral-7B 单 A100）/ 3.7×（Yi-34B 2×A100）/ 5.6×（Falcon-180B；图 11a 柱标 5.62×，§7 表述为 8×A100 上 5.6×）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页摘要、第 3 页 §1、第 11 页图 11(a)、第 14 页 §7</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-16</td><td>budget 2048/512（LLaMA2-70B relaxed 1536）；3.5×（strict 100ms，正文为 Mistral-7B）/1.65×（relaxed 1s，Yi-34B）；vLLM 容量对 max batch 32/64/128 不敏感</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 11 页 §5.1 末段、第 12 页 §5.2 与图 12 及其图注</td><td>已核验（PDF 原页；含论文图注与正文表述不一致的记录，以正文为准）</td></tr>
+              <tr><td class="mono">EV-17</td><td>Falcon-180B：TP-8 跨节点中位 TBT ≈/＞2× 于 TP4-PP2；strict 较 vLLM TP-only 4.3×、较混合并行 3.6×；relaxed 较混合并行 1.48×</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 12 页 §5.3 与图 13(a)(b)</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-18</td><td>chunk 开销：512 块 ≤约 25%、2048 块近零（Yi-34B TP-2，相对不切块归一化）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 13 页 §5.4.1 与图 14</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-19</td><td>消融表 4：仅组合同时改善 TTFT 与 TBT（0.76/0.14s，openchat；arxiv 3.90/0.17s）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 13 页 §5.4.2 与表 4</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-20</td><td>气泡动机：Falcon-180B 4k prefill ≈1150ms vs decode-32 ≈200ms → ≈950ms 气泡；三类气泡 PB1/PB2/PB3</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7 页 §3.3、Takeaway-4 与图 8</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-21</td><td>线性层占两阶段总时间 80%+；约 200 token（理论）/500–600（高 TP 实测）进入计算受限；TP 每层两次 all-reduce、PP 点对点</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §3.1 与图 3/图 4、第 6 页图 5/图 6 与脚注 2、第 4 页 §2.3</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-22</td><td>vs disaggregation（SplitWise/DistServe/TetriInfer）：定性讨论，定量对比明确留白</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 13 页 §6；分类见第 2 页脚注 1</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-23</td><td>生态：APIServe 采纳 chunked prefills；公平性调度与 FastServe 为互补方向</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 13 页 §6</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">EV-24</td><td>云上映射：论文硬件（NC96ads v4 / NVLink / 100 Gbps 以太网 / 8×A40）→ 通用 GPU 实例 / NVLink 域内 TP / 以太网 PP（示例仅示意）</td><td><span class="badge evidence-badge b-e">E</span></td><td>论文硬件见第 10 页 Models and Environment 段；云产品对应为各厂商公开实例目录（本次未联网核价）</td><td>部分核验（硬件为 PDF 原页；云产品映射未联网核验）</td></tr>
+              <tr><td class="mono">EV-25</td><td>动态 token 预算为论文明确留白的未来工作；生产调参风险与运维建议为编辑推断</td><td><span class="badge evidence-badge b-i">I</span></td><td>论文留白见第 11 页 §5.1 末段；风险与建议为编辑分析</td><td>编辑标注完成</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <nav class="pager" aria-label="上一篇下一篇">
+        <a href="01-distserve.html" rel="prev">← 上一篇：DistServe</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="../index.html">返回分类：推理服务与资源调度</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="03-mooncake.html" rel="next">下一篇：Mooncake →</a>
+      </nav>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <p>来源声明：本页全部性能数字与机制描述均取自论文《Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve》（arXiv 2403.02310v3）正文与附录，以及论文给出的官方仓库说明；编辑推断与部署建议已用 I 标注。许可提醒：论文内容版权归原作者与出版方所有，引用以论文原文为准。本地生成：2026-09-13，2026-09-14 按逐页 PDF 版式提取全量复核（证据定位升级为真实页码+章节）· 输入 PDF <span class="mono">02_Sarathi-Serve_2403.02310.pdf</span> · 证据 <span class="mono">sources/sarathi-serve.evidence.json</span>。</p>
+  </footer>
+  <script src="../assets/js/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 690" role="img" aria-labelledby="f01-svg-title f01-svg-desc" lang="zh-CN" xml:lang="zh-CN" font-family="'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif">
+  <title id="f01-svg-title">Transformer 数据路径（基础论文 F01，编辑重绘）：源 token 序列 → 词嵌入与位置编码 → 编码器栈（全位置并行）→ 编码器输出 z；解码器输入（右移一位）→ 掩码自注意力 → 编码-解码注意力（K/V 来自 z）→ 逐位置 FFN → Linear+Softmax → 下一个 token 概率，并经自回归反馈回到解码器输入</title>
+  <desc id="f01-svg-desc">按序编号的数据通路示意图，共 8 步加一条反馈环。第 1 步：源 token 序列 x1…xn 进入模型。第 2 步：词嵌入与位置编码相加。第 3 步：编码器栈（N=6 层，每层为多头自注意力加逐位置前馈网络，各子层残差连接后层归一化），n 个位置一次并行计算（论文表 1：顺序操作 O(1)）。第 4 步：编码器输出序列 z，作为后续编码-解码注意力的 key/value 记忆。第 5 步：解码器输入为已生成的 token 序列（整体右移一位）加词嵌入与位置编码。第 6 步：解码器栈（N=6 层，每层为掩码多头自注意力——禁止关注未来位置、编码-解码注意力——query 来自解码器、K/V 来自编码器输出 z、逐位置前馈网络，各子层残差加层归一化），每步执行一次、步间串行。第 7 步：线性层与 softmax（与两个嵌入层共享权重矩阵）。第 8 步：得到下一个 token 的概率分布，按论文推理设置 beam=4、长度惩罚 α=0.6 选出 token。虚线反馈环：新 token 追加进解码器输入并重复第 5–8 步，直到产生结束符，输出完整序列。本图为编辑依据论文第 2–6 页重绘的语义示意，不是论文图 1 的复制；颜色仅作辅助编码，蓝=编码器侧、紫=解码器侧、青=共享嵌入与输出层、灰=外部输入输出、琥珀虚线=自回归反馈。</desc>
+
+  <defs>
+    <marker id="f01-m-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#333333"/>
+    </marker>
+    <marker id="f01-m-kv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#14385c"/>
+    </marker>
+    <marker id="f01-m-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#92400e"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="960" height="690" fill="#ffffff"/>
+
+  <text x="20" y="30" font-size="17" font-weight="bold" fill="#111111">Transformer 数据路径（基础论文 F01 · 编辑依据论文 §3 重绘，非论文图 1 复制）</text>
+
+  <!-- ============ 编码器行（第 1–4 步） ============ -->
+
+  <!-- 第 1 步：源 token 序列 -->
+  <g>
+    <rect x="20" y="64" width="140" height="70" rx="8" fill="#f3f4f6" stroke="#4b5563" stroke-width="1.5"/>
+    <circle cx="38" cy="82" r="11" fill="#4b5563"/>
+    <text x="38" y="86.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">1</text>
+    <text x="90" y="104" text-anchor="middle" font-size="13.5" font-weight="600" fill="#10233f">源 token 序列</text>
+    <text x="90" y="122" text-anchor="middle" font-size="11" fill="#45566e">x₁ … xₙ（输入句子）</text>
+  </g>
+  <line x1="160" y1="99" x2="180" y2="99" stroke="#333333" stroke-width="2" marker-end="url(#f01-m-data)"/>
+
+  <!-- 第 2 步：词嵌入 + 位置编码 -->
+  <g>
+    <rect x="184" y="64" width="140" height="70" rx="8" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.5"/>
+    <circle cx="202" cy="82" r="11" fill="#0e7490"/>
+    <text x="202" y="86.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">2</text>
+    <text x="254" y="104" text-anchor="middle" font-size="13.5" font-weight="600" fill="#10233f">词嵌入 + 位置编码</text>
+    <text x="254" y="122" text-anchor="middle" font-size="10.5" fill="#45566e">维度 512（第 5–6 页）</text>
+  </g>
+  <line x1="324" y1="99" x2="344" y2="99" stroke="#333333" stroke-width="2" marker-end="url(#f01-m-data)"/>
+
+  <!-- 第 3 步：编码器栈 -->
+  <g>
+    <rect x="348" y="56" width="250" height="140" rx="8" fill="#eef3fa" stroke="#14385c" stroke-width="1.5"/>
+    <circle cx="366" cy="74" r="11" fill="#14385c"/>
+    <text x="366" y="78.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">3</text>
+    <text x="473" y="78" text-anchor="middle" font-size="14" font-weight="700" fill="#14385c">编码器栈 × N=6</text>
+    <rect x="362" y="90" width="222" height="30" rx="5" fill="#ffffff" stroke="#14385c" stroke-width="1"/>
+    <text x="473" y="109" text-anchor="middle" font-size="12" fill="#10233f">多头自注意力（h=8）</text>
+    <rect x="362" y="126" width="222" height="30" rx="5" fill="#ffffff" stroke="#14385c" stroke-width="1"/>
+    <text x="473" y="145" text-anchor="middle" font-size="12" fill="#10233f">逐位置前馈网络（d_ff=2048）</text>
+    <text x="473" y="173" text-anchor="middle" font-size="11" fill="#45566e">各子层：残差 + 层归一化</text>
+    <text x="473" y="189" text-anchor="middle" font-size="11" fill="#45566e">n 个位置一次并行（表 1，第 6 页）</text>
+  </g>
+  <line x1="598" y1="99" x2="618" y2="99" stroke="#333333" stroke-width="2" marker-end="url(#f01-m-data)"/>
+
+  <!-- 第 4 步：编码器输出 z -->
+  <g>
+    <rect x="622" y="64" width="150" height="70" rx="8" fill="#eef3fa" stroke="#14385c" stroke-width="1.5"/>
+    <circle cx="640" cy="82" r="11" fill="#14385c"/>
+    <text x="640" y="86.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">4</text>
+    <text x="697" y="104" text-anchor="middle" font-size="13.5" font-weight="600" fill="#10233f">编码器输出 z</text>
+    <text x="697" y="122" text-anchor="middle" font-size="11" fill="#45566e">解码注意力的 K/V 记忆</text>
+  </g>
+
+  <!-- K/V 连接线：第 4 步 → 第 6 步编码-解码注意力 -->
+  <path d="M 697 134 L 697 236 L 480 236 L 480 274" fill="none" stroke="#14385c" stroke-width="2" marker-end="url(#f01-m-kv)"/>
+  <text x="708" y="230" font-size="11.5" fill="#14385c">K / V（记忆 z，第 5 页 §3.2.3）</text>
+
+  <!-- ============ 解码器行（第 5–8 步） ============ -->
+
+  <!-- 第 5 步：解码器输入 -->
+  <g>
+    <rect x="20" y="300" width="170" height="96" rx="8" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.5"/>
+    <circle cx="38" cy="318" r="11" fill="#6d28d9"/>
+    <text x="38" y="322.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">5</text>
+    <text x="105" y="326" text-anchor="middle" font-size="13.5" font-weight="600" fill="#10233f">解码器输入</text>
+    <text x="105" y="346" text-anchor="middle" font-size="11.5" fill="#45566e">已生成 token（右移一位）</text>
+    <text x="105" y="364" text-anchor="middle" font-size="11.5" fill="#45566e">＋ 词嵌入 + 位置编码</text>
+    <text x="105" y="384" text-anchor="middle" font-size="11" fill="#45566e">（第 3 页 §3.1）</text>
+  </g>
+  <line x1="190" y1="340" x2="210" y2="340" stroke="#333333" stroke-width="2" marker-end="url(#f01-m-data)"/>
+
+  <!-- 第 6 步：解码器栈 -->
+  <g>
+    <rect x="214" y="280" width="280" height="180" rx="8" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.5"/>
+    <circle cx="232" cy="298" r="11" fill="#6d28d9"/>
+    <text x="232" y="302.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">6</text>
+    <text x="354" y="302" text-anchor="middle" font-size="14" font-weight="700" fill="#6d28d9">解码器栈 × N=6</text>
+    <rect x="228" y="312" width="252" height="30" rx="5" fill="#ffffff" stroke="#6d28d9" stroke-width="1"/>
+    <text x="354" y="331" text-anchor="middle" font-size="12" fill="#10233f">掩码多头自注意力（禁看未来，−∞）</text>
+    <rect x="228" y="348" width="252" height="30" rx="5" fill="#ffffff" stroke="#6d28d9" stroke-width="1"/>
+    <text x="354" y="367" text-anchor="middle" font-size="12" fill="#10233f">编码-解码注意力（Q←解码器，K/V←z）</text>
+    <rect x="228" y="384" width="252" height="30" rx="5" fill="#ffffff" stroke="#6d28d9" stroke-width="1"/>
+    <text x="354" y="403" text-anchor="middle" font-size="12" fill="#10233f">逐位置前馈网络</text>
+    <text x="354" y="434" text-anchor="middle" font-size="11" fill="#45566e">各子层：残差 + 层归一化</text>
+    <text x="354" y="450" text-anchor="middle" font-size="11" fill="#45566e">每步一次、步间串行（第 2–3 页）</text>
+  </g>
+  <line x1="494" y1="340" x2="514" y2="340" stroke="#333333" stroke-width="2" marker-end="url(#f01-m-data)"/>
+
+  <!-- 第 7 步：Linear + Softmax -->
+  <g>
+    <rect x="518" y="300" width="140" height="80" rx="8" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.5"/>
+    <circle cx="536" cy="318" r="11" fill="#0e7490"/>
+    <text x="536" y="322.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">7</text>
+    <text x="588" y="350" text-anchor="middle" font-size="13" font-weight="600" fill="#10233f">Linear + Softmax</text>
+    <text x="588" y="370" text-anchor="middle" font-size="10.5" fill="#45566e">共享嵌入权重（第 5 页）</text>
+  </g>
+  <line x1="658" y1="340" x2="678" y2="340" stroke="#333333" stroke-width="2" marker-end="url(#f01-m-data)"/>
+
+  <!-- 第 8 步：下一个 token 概率 -->
+  <g>
+    <rect x="682" y="300" width="200" height="80" rx="8" fill="#f3f4f6" stroke="#4b5563" stroke-width="1.5"/>
+    <circle cx="700" cy="318" r="11" fill="#4b5563"/>
+    <text x="700" y="322.5" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">8</text>
+    <text x="782" y="336" text-anchor="middle" font-size="13.5" font-weight="600" fill="#10233f">下一个 token 概率</text>
+    <text x="782" y="356" text-anchor="middle" font-size="11" fill="#45566e">beam=4、长度惩罚 α=0.6</text>
+    <text x="782" y="372" text-anchor="middle" font-size="11" fill="#45566e">（论文推理设置，第 8 页 §6.1）</text>
+  </g>
+
+  <!-- 自回归反馈环（虚线）：第 8 步 → 第 5 步，绕行于解码器栈下方 -->
+  <path d="M 782 380 L 782 486 L 105 486 L 105 400" fill="none" stroke="#92400e" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#f01-m-loop)"/>
+  <text x="443" y="508" text-anchor="middle" font-size="12" font-weight="600" fill="#92400e">自回归反馈：新 token 追加进解码器输入，重复第 5–8 步直至结束符（第 2–3 页）</text>
+
+  <!-- ============ 图例与说明 ============ -->
+  <g>
+    <rect x="20" y="530" width="920" height="140" rx="8" fill="#fafafa" stroke="#cccccc"/>
+    <text x="36" y="554" font-size="13" font-weight="bold" fill="#111111">图例与说明</text>
+    <line x1="36" y1="572" x2="78" y2="572" stroke="#333333" stroke-width="2" marker-end="url(#f01-m-data)"/>
+    <text x="88" y="576" font-size="12" fill="#333333">实线箭头：前向数据流（步骤 1 → 8）</text>
+    <line x1="330" y1="572" x2="372" y2="572" stroke="#92400e" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#f01-m-loop)"/>
+    <text x="382" y="576" font-size="12" fill="#333333">虚线箭头：自回归反馈环</text>
+    <text x="36" y="600" font-size="12" fill="#555555">颜色辅助编码（文字始终在场）：蓝=编码器侧 · 紫=解码器侧 · 青=共享嵌入/输出层 · 灰=模型外输入输出 · 琥珀=反馈环</text>
+    <text x="36" y="622" font-size="12" fill="#555555">注 1：本图为编辑依据论文 §3（第 2–6 页）重绘的语义示意图（编辑推断 I），不是论文图 1/图 2 的复制或描摹；组件取舍与布局由编辑决定。</text>
+    <text x="36" y="642" font-size="12" fill="#555555">注 2：N=6、d_model=512、h=8、d_ff=2048 为 base 配置（第 3、5 页正文；表 3 第 9 页）；「n 个位置一次并行、顺序操作 O(1)」出自表 1（第 6 页）。</text>
+    <text x="36" y="662" font-size="12" fill="#555555">注 3：论文训练硬件为单机 8×P100（第 7 页 §5.2），图中不刻画 GPU 拓扑与显存层级；beam=4、α=0.6 为论文自述推理设置（第 8 页）。</text>
+  </g>
+</svg>

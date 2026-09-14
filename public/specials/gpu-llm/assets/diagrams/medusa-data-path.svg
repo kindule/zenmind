@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 820" role="img" aria-labelledby="medusa-svg-title medusa-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="medusa-svg-title">Medusa 数据路径图：多解码头并行预测、候选树构建、树注意力并行验证与典型接受的单轮解码闭环</title>
+  <desc id="medusa-svg-desc">流程方向为自上而下再循环：输入提示与已生成 token 的 KV 缓存进入主干模型一次前向得到最后隐藏状态；隐藏状态同时送入原始语言模型头（预测下一个 token）和最多五个 Medusa 解码头（各自预测更靠后的位置并取高概率候选）；各头候选组合为候选树，树结构按校准集估计的各头 top-1 准确率贪心构建，优化后的稀疏树可以优于更大规模的密集树；随后用树注意力在一次前向中并行验证整棵候选树，每个候选只关注自己的祖先；接受判定采用典型接受——在原模型分布下合理即接受、不要求精确分布匹配，接受最长有效前缀；被接受的 token 追加进序列并更新 KV 缓存后进入下一轮解码。右侧面板给出训练形态（Medusa-1 冻结骨干、Medusa-2 联合训练配合差分学习率与预热、自蒸馏约十万样本与 LoRA 适配器）、硬件视角（解码受显存带宽限制、Medusa 提高操作强度；大批量或长序列时收益收窄）与质量风险（典型接受不保证分布一致、朴素联合微调会降低 Vicuna-7B 质量）。实线为数据流，虚线为控制流/判定与训练配置，紫色为 KV 缓存等存储对象，琥珀色为质量与风险点；编号一至六对应正文数据路径步骤。依据为论文工具摘要（sources/medusa.summary.json）与摘要级结论，PDF 原页复核受限，详见页面证据台账。</desc>
+  <defs>
+    <marker id="msa-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="msa-arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/>
+    </marker>
+    <marker id="msa-arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f3a5f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="820" fill="#ffffff"/>
+  <text x="30" y="34" font-size="19" font-weight="700" fill="#14385c">Medusa：多解码头推测式解码数据路径（单模型、无独立草稿模型）</text>
+  <text x="30" y="56" font-size="12" fill="#4b5563">方向：输入/KV 缓存 → 主干前向 + 多头预测 → 候选树 → 树注意力并行验证 → 典型接受 → 追加 token 循环　｜　依据：论文摘要与工具摘要（arXiv:2401.10774）</text>
+
+  <!-- 图例 -->
+  <g font-size="11.5" fill="#374151">
+    <rect x="30" y="70" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="49" y="81">GPU 前向 / 数据流（实线）</text>
+    <rect x="226" y="70" width="14" height="14" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="245" y="81">控制流 / 判定与训练配置（虚线）</text>
+    <rect x="452" y="70" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="471" y="81">KV 缓存 / 存储对象（紫）</text>
+    <rect x="648" y="70" width="14" height="14" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+    <text x="667" y="81">质量与风险点（琥珀）</text>
+  </g>
+
+  <!-- ① 输入与 KV 缓存 -->
+  <rect x="50" y="104" width="580" height="66" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="62" y="126" font-size="12.5" font-weight="700" fill="#5b21b6">① 输入与上下文（KV 缓存）</text>
+  <text x="62" y="144" font-size="10.5" fill="#374151">提示 + 已生成 token 序列；已确认 token 的 KV 缓存常驻显存</text>
+  <text x="62" y="160" font-size="10.5" fill="#374151">候选树验证的新增 KV 只来自树内候选（验证后保留被接受前缀）</text>
+
+  <line x1="340" y1="170" x2="340" y2="196" stroke="#334155" stroke-width="2.5" marker-end="url(#msa-arr)"/>
+
+  <!-- ② 主干前向 + 双路头 -->
+  <rect x="50" y="200" width="580" height="122" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="222" font-size="12.5" font-weight="700" fill="#155e75">② 主干模型一次前向 → 最后隐藏状态（共享）</text>
+  <rect x="66" y="236" width="264" height="72" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+  <text x="198" y="256" font-size="11.5" font-weight="700" text-anchor="middle" fill="#155e75">原始 LM 头</text>
+  <text x="78" y="276" font-size="10.5" fill="#374151">预测下一个 token（位置 t+1）</text>
+  <text x="78" y="292" font-size="10.5" fill="#374151">行为与原模型解码一致</text>
+  <rect x="352" y="236" width="262" height="72" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+  <text x="483" y="256" font-size="11.5" font-weight="700" text-anchor="middle" fill="#155e75">Medusa 解码头 × k（训练至多 5 个）</text>
+  <text x="364" y="276" font-size="10.5" fill="#374151">各自预测更靠后的位置（t+2、t+3、…）</text>
+  <text x="364" y="292" font-size="10.5" fill="#374151">每头取高概率 top 候选；头为轻量层</text>
+
+  <line x1="340" y1="322" x2="340" y2="348" stroke="#334155" stroke-width="2.5" marker-end="url(#msa-arr)"/>
+
+  <!-- ③ 候选树构建 -->
+  <rect x="50" y="352" width="580" height="92" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="374" font-size="12.5" font-weight="700" fill="#155e75">③ 候选树构建（跨头组合为多条候选续写）</text>
+  <text x="62" y="392" font-size="10.5" fill="#374151">用校准集估计每个头的 top-1 预测准确率，贪心加入期望贡献</text>
+  <text x="62" y="408" font-size="10.5" fill="#374151">（期望被接受长度）最大的节点，形成树结构而非逐头拼接</text>
+  <text x="62" y="424" font-size="10.5" fill="#374151">优化稀疏树可优于更大密集树：64 节点稀疏树胜过 256 节点密集配置</text>
+  <text x="62" y="438" font-size="10.5" fill="#374151">推理常用 3-4 个头参与树注意力（消融口径）</text>
+
+  <line x1="340" y1="444" x2="340" y2="470" stroke="#334155" stroke-width="2.5" marker-end="url(#msa-arr)"/>
+  <text x="352" y="462" font-size="10.5" fill="#334155">整棵候选树</text>
+
+  <!-- ④ 树注意力并行验证 -->
+  <rect x="50" y="474" width="580" height="86" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="496" font-size="12.5" font-weight="700" fill="#155e75">④ 树注意力：一次前向并行验证整棵候选树</text>
+  <text x="62" y="514" font-size="10.5" fill="#374151">掩码使每个候选 token 只注意自己的祖先路径（树内依赖）</text>
+  <text x="62" y="530" font-size="10.5" fill="#374151">把「每 token 一次前向」改为「整树一次前向」，提高 GPU 操作强度</text>
+  <text x="62" y="546" font-size="10.5" fill="#374151">验证开销（overhead）来自候选数增加后的额外计算</text>
+
+  <line x1="340" y1="560" x2="340" y2="586" stroke="#334155" stroke-width="2.5" marker-end="url(#msa-arr)"/>
+
+  <!-- ⑤ 典型接受判定 -->
+  <rect x="50" y="590" width="580" height="96" rx="6" fill="#eef3fa" stroke="#1f3a5f" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="62" y="612" font-size="12.5" font-weight="700" fill="#1f3a5f">⑤ 接受判定（控制流）：典型接受 → 最长有效前缀</text>
+  <text x="62" y="630" font-size="10.5" fill="#374151">候选 token 只要在原模型分布下「合理」即接受，不要求精确分布匹配</text>
+  <text x="62" y="646" font-size="10.5" fill="#374151">区别于推测解码的拒绝采样：温度 &gt; 0 时收益更明显、实现更简单</text>
+  <rect x="446" y="652" width="172" height="26" rx="4" fill="#fef3c7" stroke="#92400e" stroke-width="1.4"/>
+  <text x="456" y="669" font-size="10" fill="#92400e">风险：不保证与原分布逐点一致</text>
+
+  <line x1="340" y1="686" x2="340" y2="712" stroke="#334155" stroke-width="2.5" marker-end="url(#msa-arr)"/>
+
+  <!-- ⑥ 追加与循环 -->
+  <rect x="50" y="716" width="580" height="76" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="738" font-size="12.5" font-weight="700" fill="#155e75">⑥ 追加被接受的 token（最长有效前缀）→ 更新 KV 缓存 → 下一轮</text>
+  <text x="62" y="756" font-size="10.5" fill="#374151">一步解码产出多个 token；被接受长度决定单轮加速比</text>
+  <text x="62" y="772" font-size="10.5" fill="#374151">大批量、长序列时线性层趋向计算受限、注意力成本上升，相对收益收窄</text>
+
+  <!-- 循环箭头 -->
+  <path d="M50 754 C 16 754, 16 137, 44 137" fill="none" stroke="#6d28d9" stroke-width="2.2" stroke-dasharray="6 4" marker-end="url(#msa-arr-purple)"/>
+  <text x="8" y="450" font-size="10.5" fill="#6d28d9" transform="rotate(-90 20 450)">下一解码轮（循环）</text>
+
+  <!-- 右侧面板 1：训练形态 -->
+  <rect x="650" y="104" width="300" height="220" rx="8" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="664" y="126" font-size="13" font-weight="700" fill="#1f3a5f">训练形态（何时学什么）</text>
+  <rect x="662" y="138" width="276" height="52" rx="5" fill="#ffffff" stroke="#1f3a5f" stroke-width="1.2"/>
+  <text x="672" y="156" font-size="11" font-weight="700" fill="#1f3a5f">Medusa-1：冻结骨干</text>
+  <text x="672" y="172" font-size="10" fill="#374151">只训头（按位置加权的交叉熵）；</text>
+  <text x="672" y="186" font-size="10" fill="#374151">省显存、可配量化骨干、原模型不变</text>
+  <rect x="662" y="198" width="276" height="60" rx="5" fill="#ffffff" stroke="#1f3a5f" stroke-width="1.2"/>
+  <text x="672" y="216" font-size="11" font-weight="700" fill="#1f3a5f">Medusa-2：联合训练</text>
+  <text x="672" y="232" font-size="10" fill="#374151">骨干+头联合优化：组合损失、差分学习率、</text>
+  <text x="672" y="246" font-size="10" fill="#374151">预热（先训头或逐步引入骨干损失）；</text>
+  <text x="672" y="258" font-size="10" fill="#374151">朴素直接联合微调会降低 Vicuna-7B 质量</text>
+  <rect x="662" y="266" width="276" height="50" rx="5" fill="#ffffff" stroke="#1f3a5f" stroke-width="1.2"/>
+  <text x="672" y="284" font-size="11" font-weight="700" fill="#1f3a5f">自蒸馏（原始数据不可得时）</text>
+  <text x="672" y="300" font-size="10" fill="#374151">种子提示 → 目标模型自生成约 10 万样本；</text>
+  <text x="672" y="312" font-size="10" fill="#374151">按原模型概率分布蒸馏；LoRA 免双模型驻留</text>
+
+  <!-- 右侧面板 2：硬件视角 -->
+  <rect x="650" y="340" width="300" height="128" rx="8" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.8"/>
+  <text x="664" y="362" font-size="13" font-weight="700" fill="#155e75">硬件视角（附录分析）</text>
+  <text x="664" y="382" font-size="10.5" fill="#374151">自回归解码受显存带宽限制：</text>
+  <text x="664" y="398" font-size="10.5" fill="#374151">每步反复把权重从 HBM 搬入计算核</text>
+  <text x="664" y="414" font-size="10.5" fill="#374151">Medusa 一次前向处理多个候选 token，</text>
+  <text x="664" y="430" font-size="10.5" fill="#374151">提高操作强度、摊薄权重搬运成本</text>
+  <text x="664" y="446" font-size="10.5" fill="#374151">候选过多也有最优区间：过少欠利用、</text>
+  <text x="664" y="460" font-size="10.5" fill="#374151">过多开销反噬（仿真结论）</text>
+
+  <!-- 右侧面板 3：质量与风险 -->
+  <rect x="650" y="484" width="300" height="150" rx="8" fill="#fef3c7" stroke="#92400e" stroke-width="1.8"/>
+  <text x="664" y="506" font-size="13" font-weight="700" fill="#92400e">质量与风险（上线前必读）</text>
+  <text x="664" y="526" font-size="10.5" fill="#78350f">典型接受 ≠ 精确分布匹配：</text>
+  <text x="664" y="542" font-size="10.5" fill="#78350f">输出与原分布存在偏差，需质量评估</text>
+  <text x="664" y="558" font-size="10.5" fill="#78350f">联合训练必须用论文配方（差分学习率/</text>
+  <text x="664" y="574" font-size="10.5" fill="#78350f">预热），否则骨干质量下降</text>
+  <text x="664" y="590" font-size="10.5" fill="#78350f">加速数字仅在 Vicuna + MT-Bench + </text>
+  <text x="664" y="606" font-size="10.5" fill="#78350f">batch 1 语境成立；大批量/长序列收窄</text>
+  <text x="664" y="622" font-size="10.5" fill="#78350f">回退：卸载 Medusa 头 → 标准解码</text>
+
+  <!-- 底注 -->
+  <text x="30" y="808" font-size="10.5" fill="#6b7280">依据：论文摘要与工具长摘要（web-report/sources/medusa.summary.json，由本地 PDF 生成）；PDF 原页逐页复核受限（提取文件不可读），引用前请回 PDF 复核（arXiv:2401.10774）。</text>
+</svg>

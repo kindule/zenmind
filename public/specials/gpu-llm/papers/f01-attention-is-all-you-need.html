@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attention Is All You Need（Transformer）基础论文 F01 解读（arXiv v7）</title>
+<meta name="description" content="基于本地论文 PDF（17_Attention-Is-All-You-Need_1706.03762.pdf，arXiv:1706.03762v7）的中文基础论文解读：Transformer 编码器-解码器架构、缩放点积/多头注意力、WMT 2014 结果（含 41.8 与 41.0 的文内差异照录）、arXiv v7 与 NIPS 2017 两条发表记录辨析、已归档的 Tensor2Tensor 历史官方实现，以及与后续 GPU/LLM 系统工作的证据边界。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+:root{
+  --bg:#ffffff; --fg:#1f2937; --muted:#4b5563; --line:#d4d9e0;
+  --primary:#14385c; --primary-weak:#eef3fa;
+  --cyan:#0e7490; --cyan-weak:#e6f7fb;
+  --purple:#6d28d9; --purple-weak:#f3ecfd;
+  --orange:#c2410c; --orange-weak:#fdeada;
+  --amber:#92400e; --amber-weak:#fef3c7;
+  --red:#b91c1c; --red-weak:#fee2e2;
+  --code-bg:#f3f4f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#10161f; --fg:#e5eaf2; --muted:#b6c0ce; --line:#3a4657;
+    --primary:#c7d9ee; --primary-weak:#1b2a3d;
+    --cyan:#7dd3e8; --cyan-weak:#0d2a33;
+    --purple:#c9b2f5; --purple-weak:#241a3d;
+    --orange:#f3b58a; --orange-weak:#3a2113;
+    --amber:#fbd88a; --amber-weak:#33270e;
+    --red:#f5a9a9; --red-weak:#3a1414;
+    --code-bg:#1a2230;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:16px; line-height:1.7;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:1.6em; line-height:1.35; color:var(--primary); margin:1.2em 0 .4em}
+h2{font-size:1.28em; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:.25em; margin-top:2.2em}
+h3{font-size:1.05em; margin-top:1.6em}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.92em}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:.6em 1em; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:.5em 1.5em; justify-content:space-between; align-items:baseline; padding:.7em 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:1.2em}
+.breadcrumb{padding:.6em 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:.3em; margin:0; padding:0; font-size:.92em}
+.breadcrumb li+li::before{content:"/"; margin-right:.3em; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:8px; background:var(--primary-weak); padding:.9em 1.1em; margin:1.2em 0}
+.fact-card h3{margin:.2em 0 .5em}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:.5em; padding:0; margin:.4em 0 .8em}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:.05em .8em; font-size:.88em}
+.ev{display:inline-block; border:1.5px solid var(--muted); border-radius:5px; padding:0 .45em; font-size:.82em; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:6px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:.8em 1em; margin:1.1em 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:1.1em 0}
+table{border-collapse:collapse; width:100%; font-size:.92em}
+caption{caption-side:top; text-align:left; font-weight:700; padding:.3em 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:.45em .6em; text-align:left; vertical-align:top}
+thead th{background:var(--primary-weak); color:var(--primary)}
+tbody th{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:.9em; margin:1.1em 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:8px; padding:.8em 1em; background:var(--bg)}
+.tradeoff-grid h3{margin:.1em 0 .4em; font-size:1em; color:var(--primary)}
+.fit-list li{margin:.7em 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:1em 0}
+.decision-checklist ul{list-style:none; padding-left:.2em}
+.decision-checklist ul li{margin:.35em 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:.4em}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:.6em; justify-content:space-between; margin:1.4em 0}
+.pager a{display:inline-block; min-height:44px; padding:.45em 1em; border:1px solid var(--line); border-radius:8px; background:var(--bg); text-decoration:none}
+.pager a:hover{background:var(--primary-weak)}
+.architecture-diagram{border:1px solid var(--line); border-radius:8px; padding:.8em; margin:1.2em 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:.88em; color:var(--muted); margin-top:.6em}
+.toc{border:1px solid var(--line); border-radius:8px; padding:.6em 1em; margin:1.2em 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:.4em 0; padding-left:1.4em; columns:2; column-gap:2em}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:1.02em; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:.8em 1em; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.9em}
+.site-footer{border-top:1px solid var(--line); padding:1em 16px 2em; font-size:.88em; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html#foundation">奠基论文（非 16 篇核心合集）</a></li>
+    <li aria-current="page">Attention Is All You Need（F01）</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>Attention Is All You Need（Transformer）：完全基于注意力的序列转导模型（基础论文 F01）</h1>
+<p class="lede">本页为<strong>基础论文 F01</strong>，独立于本站 16 篇核心合集（2024–2025 年 GPU/LLM 系统论文）单列发布。全部定量内容取自本地论文 PDF <code>17_Attention-Is-All-You-Need_1706.03762.pdf</code>（arXiv:1706.03762<strong>v7</strong>，2023-08-02 修订版），并逐条标注 PDF 页码与章节。本论文是 2017 年的模型结构论文，本身不研究 GPU 服务或训练系统。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>类别：2017 年模型结构论文（非 GPU 系统论文）</li>
+    <li>形态：编码器-解码器序列转导</li>
+    <li>论文实验硬件：单机 8 × NVIDIA P100（训练）</li>
+    <li>核心资源：算力（注意力复杂度 O(n²·d)）</li>
+    <li>证据状态：P + R + E + I</li>
+    <li>收录方式：奠基论文单列，不进入核心 16 篇卡片、筛选、选型矩阵与统计</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-14">2026-09-14</time>（本地 PDF 第 1–10 页经渲染原页逐项目检；第 11–15 页参考文献与注意力可视化图经文本提取交叉核对；仓库与 arXiv 记录在线核验）。</p>
+  <p><strong>证据完整度：</strong>关键定量结论均带 PDF 页码/表号与完整测试条件，未获取的字段一律写明「论文未明确披露」；Tensor2Tensor 仓库经在线核验（R，已归档）；arXiv 版本记录经在线核验（E，仅用于版本核对）；收录判断、工程解读与数字口径分析为编辑推断（I）。本页不设任何评分。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev evidence-badge ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev evidence-badge ev-r" title="论文明确链接且经核验的官方仓库">R＝官方仓库</span>
+    <span class="ev evidence-badge ev-e" title="论文之外的公开外部来源，仅用于版本/记录核对">E＝外部资料</span>
+    <span class="ev evidence-badge ev-i" title="编辑推断/建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="../index.html#foundation" rel="prev">上一篇：返回首页「奠基论文」说明</a>
+  <a href="../index.html" rel="next">返回：16 篇核心合集论文目录</a>
+</nav>
+
+<details class="toc" open>
+  <summary>页内目录（13 节，锚点固定）</summary>
+  <nav aria-label="页内目录">
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </nav>
+</details>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<table class="table-scroll">
+  <caption>论文元数据</caption>
+  <tbody>
+    <tr><th scope="row">英文题名</th><td>Attention Is All You Need</td></tr>
+    <tr><th scope="row">中文题名（编辑译）<span class="ev evidence-badge ev-i">I</span></th><td>注意力就是你所需的一切（Transformer）</td></tr>
+    <tr><th scope="row">作者与机构</th><td>Ashish Vaswani、Noam Shazeer、Niki Parmar、Jakob Uszkoreit、Llion Jones、Aidan N. Gomez、Łukasz Kaiser、Illia Polosukhin；脚注注明*等同贡献、署名顺序随机；Gomez 入职时属 Google Brain、Polosukhin 入职时属 Google Research <span class="ev evidence-badge ev-p">P</span> 第 1 页</td></tr>
+    <tr><th scope="row">会议发表记录</th><td>31st Conference on Neural Information Processing Systems（<strong>NIPS 2017</strong>），Long Beach, CA, USA——第 1 页页脚逐字印明 <span class="ev evidence-badge ev-p">P</span>（NeurIPS 前身沿用 NIPS 名称时期）</td></tr>
+    <tr><th scope="row">arXiv 版本记录</th><td>本地 PDF 左缘水印逐字为 <strong>arXiv:1706.03762v7 [cs.CL] 2 Aug 2023</strong>，即 arXiv 第 7 版（2023-08-02 修订）。<strong>arXiv v7（2023 年修订版）与 NIPS 2017 会议正式版是两条不同的发表记录</strong>；本页全部页码均指该 v7 PDF，未与会议正式版逐字比对 <span class="ev evidence-badge ev-p">P</span>（第 1 页水印）</td></tr>
+    <tr><th scope="row">论文给出的代码</th><td>第 10 页 §7 逐字给出 <code>https://github.com/tensorflow/tensor2tensor</code>；2026-09-14 核验：可达但<strong>已归档（archived，只读）</strong>，属<strong>官方历史实现</strong>，不得表述为活跃维护 <span class="ev evidence-badge ev-r">R</span>（详见 <a href="#links">#links</a>）</td></tr>
+    <tr><th scope="row">本地输入 PDF</th><td><code>17_Attention-Is-All-You-Need_1706.03762.pdf</code>（15 页；本页证据来源，不随站点公开分发）</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <strong>一句话判断：</strong>这是提出 Transformer 的 2017 年模型结构论文：完全以堆叠的自注意力与逐位置全连接层取代循环与卷积，在 WMT 2014 英德/英法翻译上以更短训练时间取得当时新 SOTA（英德 big 28.4 BLEU；英法摘要/表 2 印 41.8、§6.1 正文印 41.0，两值在本 PDF 内并存）<span class="ev evidence-badge ev-p">P</span>（第 1、8 页）；它是本站 16 篇 GPU/LLM 系统论文共同的机制源头，但论文本身不含任何服务系统、显存管理或 GPU kernel 内容 <span class="ev evidence-badge ev-p">P</span>（全篇）＋<span class="ev evidence-badge ev-i">I</span>（收录判断）。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>循环模型沿符号位置串行计算，训练时无法在样本内并行；卷积模型（ConvS2S、ByteNet）可并行但跨距离关联所需的操作数仍随距离增长 <span class="ev evidence-badge ev-p">P</span>（第 1–2 页 §1–2）。</li>
+  <li><strong>方案：</strong>Transformer 沿用编码器-解码器整体结构，但完全以注意力构成：编码器与解码器各 N=6 层，每层为多头自注意力＋逐位置前馈网络（解码器另插入对编码器输出的交叉注意力），各子层残差连接后层归一化，d_model=512 <span class="ev evidence-badge ev-p">P</span>（第 2–3 页 §3、图 1）。</li>
+  <li><strong>为什么可行：</strong>自注意力每层复杂度 O(n²·d)、最少顺序操作 O(1)、任意两位置路径长度 O(1)；当 n&lt;d 时每层计算量还低于循环层 <span class="ev evidence-badge ev-p">P</span>（第 6–7 页 §4 表 1）。</li>
+  <li><strong>结果：</strong>WMT 2014 英德 big 28.4 BLEU（超此前最好结果含集成 2.0 以上）；英法建立单模型 SOTA（摘要/表 2 为 41.8；§6.1 为 41.0——差异照录不调和）；训练仅需 8 块 P100 上 12 小时（base）/3.5 天（big）；并迁移到英文成分句法分析（WSJ §23 仅 WSJ 训练 91.3 F1）<span class="ev evidence-badge ev-p">P</span>（第 1、8–10 页；完整条件见 <a href="#experiments">#experiments</a>）。</li>
+  <li><strong>边界：</strong>论文不研究 GPU 服务/训练系统——无吞吐/TTFT/TPOT、无显存管理、无 kernel、无集群内容 <span class="ev evidence-badge ev-p">P</span>（全篇）＋<span class="ev evidence-badge ev-i">I</span>（边界归纳）；decoder-only 模型、RoPE、RMSNorm、GQA、FlashAttention、现代 KV-cache 服务等均为论文之后的工作，与本论文无关 <span class="ev evidence-badge ev-i">I</span>。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文声称的主要结果（头条数字及其完整条件）</caption>
+    <thead>
+      <tr>
+        <th scope="col">结论/数字</th><th scope="col">指标定义</th><th scope="col">硬件</th><th scope="col">模型/规模</th><th scope="col">精度</th><th scope="col">批量/并发</th><th scope="col">数据/长度</th><th scope="col">基线</th><th scope="col">论文定位</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>WMT 2014 英德 28.4 BLEU，超此前最好结果（含集成）2.0 以上；base 27.3 亦超所有已发表单模型与集成</td>
+        <td>BLEU（newstest2014 测试集，越高越好）</td>
+        <td>单机 8 × NVIDIA P100（论文未披露 8 卡间并行/切分方案）</td>
+        <td>Transformer big（213M 参数，表 3 口径）；base 65M</td>
+        <td>论文未明确披露（当时为单精度训练时代，论文未写明数值精度字段）</td>
+        <td>每批约 25000 源 token + 25000 目标 token（按近似长度组批）</td>
+        <td>WMT 2014 英德约 450 万句对，BPE 共享词表约 37000</td>
+        <td>此前已报告最好结果（含 GNMT+RL、ConvS2S、MoE 及各集成）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 1 页摘要；第 8 页表 2、§6.1</td>
+      </tr>
+      <tr>
+        <td>WMT 2014 英法单模型 SOTA——<strong>摘要/表 2 印 41.8，§6.1 正文印 41.0（同一 PDF 内不一致，照录不调和）</strong></td>
+        <td>BLEU（newstest2014）</td>
+        <td>同上 8 × P100；big 训练 3.5 天</td>
+        <td>Transformer big（英法版 dropout=0.1 而非 0.3）</td>
+        <td>同上</td>
+        <td>同上</td>
+        <td>WMT 2014 英法 3600 万句，32000 word-piece 词表</td>
+        <td>此前已发表单模型（英法 41.0 口径）；此前最好结果（41.8 口径表述为「new single-model state-of-the-art」）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 1 页摘要（41.8）；第 8 页表 2（41.8）；第 8 页 §6.1（41.0）</td>
+      </tr>
+      <tr>
+        <td>训练成本：base 3.3×10¹⁸ / big 2.3×10¹⁹ FLOPs（估计）；英法 big 训练成本不足此前 SOTA 的 1/4</td>
+        <td>FLOPs 估计 = 训练时间 × GPU 数 × 单精度持续算力（脚注 5 给出各 GPU 假设）</td>
+        <td>8 × P100（9.5 TFLOPS/卡假设）等</td>
+        <td>base / big</td>
+        <td>单精度（脚注 5 口径）</td>
+        <td>—</td>
+        <td>—</td>
+        <td>表 2 各基线行</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 8 页表 2、§6.1、脚注 5</td>
+      </tr>
+      <tr>
+        <td>英文成分句法分析：WSJ §23 仅 WSJ 训练 91.3 F1；半监督 92.7 F1</td>
+        <td>constituency parsing F1（WSJ §23）</td>
+        <td>论文未明确披露（§6.3 未给出评测硬件）</td>
+        <td>4 层 Transformer、d_model=1024</td>
+        <td>论文未明确披露</td>
+        <td>—</td>
+        <td>WSJ Penn Treebank 约 4 万句（16K 词表）；半监督约 1700 万句（32K 词表）</td>
+        <td>除 RNNG 93.3（生成式）外优于所有此前已报告结果；仅 WSJ 训练即超 Berkeley Parser（90.4）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 1、9–10 页 §6.3、表 4</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<h3>序列转导的三条既有路线</h3>
+<ul>
+  <li><strong>循环（RNN/LSTM/GRU）：</strong>沿符号位置串行计算，训练时样本内无法并行；隐状态压缩历史，长程依赖路径长度 O(n) <span class="ev evidence-badge ev-p">P</span>（第 1–2 页 §1）。</li>
+  <li><strong>卷积（ByteNet、ConvS2S）：</strong>可并行计算，但关联任意两个位置所需的操作数随距离增长——ByteNet 为对数、ConvS2S 为线性，远距离依赖学习困难 <span class="ev evidence-badge ev-p">P</span>（第 2 页 §2）。</li>
+  <li><strong>注意力增强的混合模型：</strong>当时表现最好的模型也以注意力连接编码器与解码器，但仍以循环/卷积为主体 <span class="ev evidence-badge ev-p">P</span>（第 1–2 页 §1–2）。</li>
+</ul>
+
+<h3>Transformer 的目标</h3>
+<p>作者提出一个完全基于注意力、彻底去掉循环与卷积的转导架构，追求：更高的训练并行度（顺序操作最少）、更短的训练时间、任意位置间的常数次操作关联 <span class="ev evidence-badge ev-p">P</span>（第 2 页 §2）。作者称据其所知，Transformer 是首个完全依赖自注意力的转导模型，以多头注意力抵消注意力平均化带来的有效分辨率下降 <span class="ev evidence-badge ev-p">P</span>（第 2 页 §2）。引言中给出的量化目标：在 8 块 P100 上训练 12 小时即达到新 SOTA <span class="ev evidence-badge ev-p">P</span>（第 2 页 §1）。</p>
+
+<h3>基线与任务</h3>
+<p>任务为 WMT 2014 英德与英法翻译（newstest2014 测试集）；基线为此前已报告的单模型与集成结果（GNMT+RL、ConvS2S、ByteNet、MoE、Deep-Att+PosUnk 等，完整数字见 <a href="#experiments">#experiments</a> 表 2 复刻）<span class="ev evidence-badge ev-p">P</span>（第 8 页表 2）。另有英文成分句法分析迁移实验（WSJ）验证泛化 <span class="ev evidence-badge ev-p">P</span>（第 9–10 页 §6.3）。</p>
+
+<div class="callout callout-inference">
+  <strong><span class="ev evidence-badge ev-i">I</span> 编辑定位：</strong>与本站 16 篇核心合集（2024–2025 年 GPU/LLM 系统论文）相比，本文回答的是「序列转导应该用什么计算结构」，而不是「如何在 GPU 集群上高效训练/服务该结构」。后者正是核心合集各篇的对象；阅读顺序上，本篇可作为合集的机制前置读物（收录定性见 <a href="#evidence">#evidence</a> I01）。
+</div>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>整体架构（编码器-解码器，纯注意力堆叠）</h3>
+<ul>
+  <li><strong>编码器：</strong>N=6 个相同层，每层两个子层——多头自注意力、逐位置全连接前馈网络；每个子层做残差连接后接层归一化：<code>LayerNorm(x + Sublayer(x))</code>；所有子层与嵌入层输出维度 d_model=512 <span class="ev evidence-badge ev-p">P</span>（第 3 页 §3.1）。</li>
+  <li><strong>解码器：</strong>亦 N=6 层，插入第三个子层——对编码器输出的多头注意力；自注意力加掩码防止位置关注其后继位置；输出嵌入右移一位，保证位置 i 的预测只依赖小于 i 的已知输出（自回归性质）<span class="ev evidence-badge ev-p">P</span>（第 3 页 §3.1）。</li>
+</ul>
+
+<h3>缩放点积注意力与多头注意力</h3>
+<div class="formula">
+Attention(Q, K, V) = softmax(QK<sup>T</sup> / √d<sub>k</sub>) V　（式 1，第 4 页）<br>
+MultiHead(Q, K, V) = Concat(head₁, …, head<sub>h</sub>) W<sup>O</sup>，其中 head<sub>i</sub> = Attention(QW<sub>i</sub><sup>Q</sup>, KW<sub>i</sub><sup>K</sup>, VW<sub>i</sub><sup>V</sup>)
+</div>
+<ul>
+  <li><strong>缩放的动机：</strong>大 d<sub>k</sub> 时点积幅值增大，把 softmax 推入梯度极小区域；脚注 4 给出 q·k 方差为 d<sub>k</sub> 的推导，故除以 √d<sub>k</sub>。点积注意力可用高度优化的矩阵乘法实现，比加性注意力更快更省空间 <span class="ev evidence-badge ev-p">P</span>（第 4 页 §3.2.1、脚注 4）。</li>
+  <li><strong>多头：</strong>对 Q/K/V 各做 h 次不同学习线性投影后并行执行注意力再拼接投影。实验取 h=8、d<sub>k</sub>=d<sub>v</sub>=d_model/h=64；各头降维使总计算量与全维单头相近；多头让模型可在不同表示子空间、不同位置联合关注，单头平均会抑制这一点 <span class="ev evidence-badge ev-p">P</span>（第 4–5 页 §3.2.2）。</li>
+  <li><strong>三种用法：</strong>编码器自注意力（全位置互看）；解码器掩码自注意力（把 softmax 输入中非法连接置 −∞，保持自回归）；编码器-解码器注意力（query 来自解码器上一层，key/value 来自编码器输出）<span class="ev evidence-badge ev-p">P</span>（第 5 页 §3.2.3）。</li>
+</ul>
+
+<h3>前馈网络、嵌入与位置编码</h3>
+<ul>
+  <li><strong>逐位置 FFN：</strong><code>FFN(x) = max(0, xW₁+b₁)W₂+b₂</code>，等价两个 1×1 卷积；内层维度 d_ff=2048，参数逐层不同 <span class="ev evidence-badge ev-p">P</span>（第 5 页 §3.3）。</li>
+  <li><strong>嵌入共享：</strong>两个嵌入层与 pre-softmax 线性变换共享同一权重矩阵；嵌入层中权重乘以 √d_model <span class="ev evidence-badge ev-p">P</span>（第 5 页 §3.4）。</li>
+  <li><strong>正弦位置编码：</strong>PE(pos,2i)=sin(pos/10000^(2i/d_model))、PE(pos,2i+1)=cos(同式)，波长从 2π 到 10000·2π 几何级数；作者假设任意固定偏移 k 的 PE(pos+k) 可表示为 PE(pos) 的线性函数，正弦版可能外推到更长序列；学习式位置嵌入结果几乎相同（表 3 行 E）<span class="ev evidence-badge ev-p">P</span>（第 6 页 §3.5、第 9 页表 3）。</li>
+</ul>
+<div class="callout callout-warning">
+  <strong><span class="ev evidence-badge ev-i">I</span> 常见误引警示：</strong>论文的位置编码是<strong>固定正弦/余弦函数</strong>（或可选的学习式绝对位置嵌入，两者效果几乎相同）。后续工作提出的 <strong>RoPE（旋转位置编码）</strong>、<strong>RMSNorm</strong>（替代 LayerNorm）、<strong>GQA</strong>（分组查询注意力）、<strong>decoder-only 结构</strong>、<strong>FlashAttention</strong>（IO 感知精确注意力 kernel）与<strong>现代 KV-cache 服务系统</strong>均不是本论文的内容，引用时不得归于本文。
+</div>
+
+<h3>为什么用自注意力（表 1 的三个考量）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>三类每层计算结构的复杂度对比 <span class="ev evidence-badge ev-p">P</span>（第 6–7 页 §4 表 1；「受限自注意力」行为论文列出的变体）</caption>
+    <thead>
+      <tr><th scope="col">层类型</th><th scope="col">每层计算复杂度</th><th scope="col">最少顺序操作</th><th scope="col">最大路径长度</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">自注意力</th><td class="num">O(n² · d)</td><td class="num">O(1)</td><td class="num">O(1)</td></tr>
+      <tr><th scope="row">循环</th><td class="num">O(n · d²)</td><td class="num">O(n)</td><td class="num">O(n)</td></tr>
+      <tr><th scope="row">卷积</th><td class="num">O(k · n · d²)</td><td class="num">O(1)</td><td class="num">O(log<sub>k</sub>(n))</td></tr>
+      <tr><th scope="row">受限自注意力（邻域 r）</th><td class="num">O(r · n · d)</td><td class="num">O(1)</td><td class="num">O(n/r)</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>当序列长度 n 小于表示维度 d 时，自注意力每层计算量低于循环层；可分离卷积复杂度为 O(k·n·d + n·d²)；限制邻域 r 的受限自注意力列为未来工作 <span class="ev evidence-badge ev-p">P</span>（第 6–7 页 §4）。作者另指出自注意力带来可解释性收益（附录可视化，见 <a href="#experiments">#experiments</a>）<span class="ev evidence-badge ev-p">P</span>（第 7 页 §4）。</p>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/attention-is-all-you-need-data-path.svg"
+       alt="Transformer 数据路径示意图：源 token 序列经词嵌入与位置编码进入编码器栈（N=6 层，每层多头自注意力加逐位置前馈网络，各子层残差连接后层归一化），n 个位置一次并行计算，输出编码器记忆序列 z；解码器输入为已生成 token 右移一位，经掩码自注意力与以 z 为 key/value 的编码-解码注意力、逐位置前馈网络后，由 Linear+Softmax 给出下一个 token 的概率分布，并经自回归反馈回到解码器输入。" width="960" height="690">
+  <figcaption>图 1：Transformer 前向数据路径（基础论文 F01，编辑重绘）。编号 ①–⑧ 对应下方文字序列，含一条自回归反馈环。依据论文第 2–3 页图 1 与 §3 绘制 <span class="ev evidence-badge ev-p">P</span>，步骤划分为编辑标注 <span class="ev evidence-badge ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 源输入：</strong>源语言 token 序列 x₁…xₙ 进入模型 <span class="ev evidence-badge ev-p">P</span>（第 2–3 页图 1）。</li>
+  <li><strong>② 嵌入与位置编码：</strong>token 映射为 d_model=512 维嵌入并乘 √d_model，逐元素加上正弦位置编码 <span class="ev evidence-badge ev-p">P</span>（第 5–6 页 §3.4–3.5）。</li>
+  <li><strong>③ 编码器栈：</strong>N=6 层，每层多头自注意力（h=8，全位置互看）＋逐位置 FFN（d_ff=2048），各子层残差连接后层归一化；n 个位置一次并行计算（表 1：顺序操作 O(1)）<span class="ev evidence-badge ev-p">P</span>（第 3、5–6 页 §3.1–3.3；第 6–7 页表 1）。</li>
+  <li><strong>④ 编码器输出 z：</strong>最终层输出序列 z 作为「记忆」，供解码器交叉注意力使用（key/value 来自 z）<span class="ev evidence-badge ev-p">P</span>（第 3、5 页 §3.1、§3.2.3）。</li>
+  <li><strong>⑤ 解码器输入：</strong>已生成的输出 token 序列<strong>右移一位</strong>后做嵌入与位置编码，保证位置 i 只能看到 &lt;i 的输出 <span class="ev evidence-badge ev-p">P</span>（第 3 页 §3.1）。</li>
+  <li><strong>⑥ 解码器栈：</strong>掩码自注意力（非法连接置 −∞）→ 交叉注意力（query 来自解码器、key/value 来自 z）→ 逐位置 FFN，同样残差＋层归一化 <span class="ev evidence-badge ev-p">P</span>（第 3、5 页 §3.1–3.2.3、§3.3）。</li>
+  <li><strong>⑦ 输出层：</strong>pre-softmax 线性变换（与嵌入共享权重）＋softmax 给出下一个 token 的概率分布 <span class="ev evidence-badge ev-p">P</span>（第 5 页 §3.4）。</li>
+  <li><strong>⑧ 自回归反馈：</strong>选出的 token 拼回解码器输入，重复 ⑤–⑦ 直到终止符；推理时按 beam size 4、长度惩罚 α=0.6 解码，最大输出长度=输入长度+50 <span class="ev evidence-badge ev-p">P</span>（第 3 页 §3.1、第 8 页 §6.1）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与容量事实（论文口径）</caption>
+    <thead>
+      <tr><th scope="col">数值/事实</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="num">512 / 2048</td><td>d_model 与 d_ff（base 配置）</td><td><span class="ev evidence-badge ev-p">P</span> 第 3、5 页 §3.1、§3.3</td></tr>
+      <tr><td class="num">6 / 8 / 64</td><td>层数 N、注意力头数 h、每头维度 d_k=d_v（base）</td><td><span class="ev evidence-badge ev-p">P</span> 第 3、4 页 §3.1–3.2.2</td></tr>
+      <tr><td class="num">65M / 213M</td><td>base / big 参数量（表 3 口径）</td><td><span class="ev evidence-badge ev-p">P</span> 第 9 页表 3</td></tr>
+      <tr><td class="num">≈25000+25000</td><td>每批源/目标 token 数（按近似长度组批）</td><td><span class="ev evidence-badge ev-p">P</span> 第 7 页 §5.1</td></tr>
+      <tr><td class="num">0.4 秒/步 ×100000 步 ≈ 12 小时</td><td>base 训练，单机 8 × P100</td><td><span class="ev evidence-badge ev-p">P</span> 第 7 页 §5.2</td></tr>
+      <tr><td class="num">1.0 秒/步 ×300000 步 ≈ 3.5 天</td><td>big 训练，单机 8 × P100</td><td><span class="ev evidence-badge ev-p">P</span> 第 7 页 §5.2</td></tr>
+      <tr><td class="num">O(n²·d) / O(1)</td><td>自注意力每层复杂度 / 顺序操作（表 1）</td><td><span class="ev evidence-badge ev-p">P</span> 第 6–7 页表 1</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong><span class="ev evidence-badge ev-i">I</span> 数据路径的常见错误延伸：</strong>论文<strong>没有</strong> KV cache、增量解码缓存管理、GPU kernel 或任何服务指标（吞吐/TTFT/TPOT）的内容——上图 ⑧ 的自回归反馈只描述「每步消费此前输出」的模型行为，不构成任何缓存或系统设计。把 decoder-only 结构、RoPE、RMSNorm、GQA、FlashAttention 或现代 KV-cache 服务方案归于本论文均属错误引用（详见 <a href="#evidence">#evidence</a> I02）。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+<ul class="tradeoff-grid">
+  <li>
+    <h3>并行度—生成串行</h3>
+    <p><strong>得：</strong>训练时自注意力顺序操作 O(1)，全位置可并行，8 卡 12 小时（base）即达 SOTA <span class="ev evidence-badge ev-p">P</span>（第 2 页 §1、第 6–7 页表 1）。<br><strong>失：</strong>解码仍自回归逐 token 生成；论文未改变这一点，也未讨论推理加速 <span class="ev evidence-badge ev-p">P</span>（第 3 页 §3.1）＋<span class="ev evidence-badge ev-i">I</span>（边界归纳）。</p>
+  </li>
+  <li>
+    <h3>表达力—计算量</h3>
+    <p><strong>得：</strong>任意两位置常数次操作关联，长程依赖易学习；n&lt;d 时每层计算低于循环层 <span class="ev evidence-badge ev-p">P</span>（第 2、6–7 页）。<br><strong>失：</strong>自注意力每层 O(n²·d)，计算与注意力权重随序列长度平方增长；论文把「局部、受限注意力」列为未来工作 <span class="ev evidence-badge ev-p">P</span>（第 6–7 页 §4、第 10 页 §7）。</p>
+  </li>
+  <li>
+    <h3>多头—单头</h3>
+    <p><strong>得：</strong>多头在不同子空间不同位置联合关注；消融中单头（h=1）比最优设置差 0.9 BLEU <span class="ev evidence-badge ev-p">P</span>（第 4–5 页 §3.2.2；第 9 页表 3 A）。<br><strong>失：</strong>头数过多亦变差（h=32 为 25.4）；各头降维后单头表达能力受限（同表）<span class="ev evidence-badge ev-p">P</span>（第 9 页表 3）。</p>
+  </li>
+  <li>
+    <h3>质量口径—正则强度</h3>
+    <p><strong>得：</strong>标签平滑 ε_ls=0.1 提升 BLEU；dropout 明显防过拟合（0.0 → 24.6 BLEU vs 0.1 → 25.8）<span class="ev evidence-badge ev-p">P</span>（第 7–8 页 §5.4；第 9 页表 3 D）。<br><strong>失：</strong>标签平滑「伤困惑度、提 BLEU」（ε_ls=0.0 时 PPL 4.67 更低）<span class="ev evidence-badge ev-p">P</span>（第 7–8 页 §5.4；第 9 页表 3 D）。</p>
+  </li>
+  <li>
+    <h3>正弦—学习式位置编码</h3>
+    <p><strong>得：</strong>正弦版无参数、理论上可能外推到更长序列 <span class="ev evidence-badge ev-p">P</span>（第 6 页 §3.5）。<br><strong>失：</strong>实际收益未见——学习式位置嵌入结果几乎相同（表 3 行 E：4.92/25.7 vs base 25.8）<span class="ev evidence-badge ev-p">P</span>（第 9 页表 3）。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+<div class="callout callout-inference">
+  <p><strong><span class="ev evidence-badge ev-i">I</span> 本节边界声明：</strong>论文不包含任何云部署、实例选型、网络拓扑或编排内容；本页也不引用任何云厂商页面。以下映射全部为编辑推断，说明<strong>论文的哪些结论</strong>后来成为云上 LLM 平台设计时的机制前提，供架构师建立「论文 ↔ 系统工作」的对应关系；每条都不构成论文自身的结论。</p>
+</div>
+<div class="table-scroll">
+  <table>
+    <caption>论文结论 → 后续系统设计关注点（全部为编辑推断 <span class="ev evidence-badge ev-i">I</span>，非论文内容）</caption>
+    <thead>
+      <tr><th scope="col">论文结论（<span class="ev evidence-badge ev-p">P</span>）</th><th scope="col">云上平台视角的延伸关注（<span class="ev evidence-badge ev-i">I</span>）</th><th scope="col">对应本站核心合集主题</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">自注意力顺序操作 O(1)，训练全位置并行（表 1）</th>
+        <td>大 batch 数据并行与算子级并行在 Transformer 上可行，是现代训练平台吞吐模型的前提之一</td>
+        <td>训练并行与集群（MegaScale、TorchTitan）</td>
+      </tr>
+      <tr>
+        <th scope="row">解码自回归、每步消费此前输出（§3.1 输出右移）</th>
+        <td>推理服务的逐 token 调度、批处理与时延指标（TTFT/TPOT）由此结构而来；论文本身未讨论</td>
+        <td>推理服务与资源调度（DistServe、Sarathi-Serve 等）</td>
+      </tr>
+      <tr>
+        <th scope="row">每层 O(n²·d) 注意力计算（表 1）</th>
+        <td>长上下文下注意力计算/访存成为瓶颈，催生 kernel 与显存管理工作；论文未涉及</td>
+        <td>GPU Kernel 与显存（FlashAttention-3、vAttention、FlashInfer）</td>
+      </tr>
+      <tr>
+        <th scope="row">编码器-解码器结构（本论文形态）</th>
+        <td>后续主流 LLM 多采用 decoder-only 等其他形态，属论文之后的发展，<strong>不得反向归于本论文</strong></td>
+        <td>合集各篇的模型背景</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<p><strong>实例/网络/存储/编排等具体云映射：</strong>论文未明确披露，本页亦不作猜测——需要云上落地细节时，请直接阅读核心合集对应详情页（其云上映射同样遵循 P/R/E/I 标注）。</p>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>论文实际给出的成本口径</h3>
+<div class="table-scroll">
+  <table>
+    <caption>训练成本与效率口径（全部含论文出处）</caption>
+    <thead>
+      <tr><th scope="col">指标</th><th scope="col">定义</th><th scope="col">口径/单位</th><th scope="col">出处</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">训练成本（FLOPs 估计）</th><td>训练时间 × GPU 数 × 单精度持续算力</td><td>FLOPs；表 2 中 Transformer base/big 行各印一个横跨英德/英法两列的值：3.3×10¹⁸ 与 2.3×10¹⁹（未按语言分别给出）</td><td><span class="ev evidence-badge ev-p">P</span> 第 8 页表 2、脚注 5</td></tr>
+      <tr><th scope="row">单精度持续算力假设</th><td>脚注 5 给出的各 GPU 持续 TFLOPS 假设</td><td>K80 2.8、K40 3.7、M40 6.0、P100 9.5 TFLOPS</td><td><span class="ev evidence-badge ev-p">P</span> 第 8 页脚注 5</td></tr>
+      <tr><th scope="row">训练时长</th><td>base 0.4 秒/步 ×100000 步 ≈ 12 小时；big 1.0 秒/步 ×300000 步 ≈ 3.5 天</td><td>单机 8 × P100</td><td><span class="ev evidence-badge ev-p">P</span> 第 7 页 §5.2</td></tr>
+      <tr><th scope="row">相对成本结论</th><td>英法 big 训练成本不足此前 SOTA 的 1/4；摘要称「a small fraction of the training costs of the best models from the literature」</td><td>相对表 2 各基线行的 FLOPs 估计</td><td><span class="ev evidence-badge ev-p">P</span> 第 1、8 页摘要、§6.1</td></tr>
+      <tr><th scope="row">BLEU</th><td>机器翻译质量指标（越高越好），newstest2014</td><td>表 2 复刻见 <a href="#experiments">#experiments</a></td><td><span class="ev evidence-badge ev-p">P</span> 第 8 页表 2</td></tr>
+      <tr><th scope="row">PPL（dev）</th><td>开发集 newstest2013 困惑度，<strong>per-wordpiece 口径</strong></td><td>论文表 3 说明明确不可与 per-word PPL 比较</td><td><span class="ev evidence-badge ev-p">P</span> 第 9 页表 3 说明</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-inference">
+  <p><strong><span class="ev evidence-badge ev-i">I</span> 数字口径注意（编辑推断）：</strong>表 2 的 FLOPs 是按脚注 5 假设的<strong>粗估</strong>而非计量值；41.8（摘要/表 2）与 41.0（§6.1）的差异在本 PDF 内无任何解释（可能原因如不同检查点/评测轮次或笔误，论文未披露），本页保持两值并存，不做「选出正确值」的合并（见 <a href="#evidence">#evidence</a> I03）。</p>
+</div>
+
+<h3>容量规划变量与明确缺口</h3>
+<ul>
+  <li>可从论文复用的容量变量：模型规模（65M/213M 参数）、批 token 预算（25000+25000）、步时与步数（0.4s×100k、1.0s×300k）、GPU 单精度持续算力假设 <span class="ev evidence-badge ev-p">P</span>（第 7–8 页 §5、脚注 5）。</li>
+  <li><strong>明确缺口：</strong>论文无任何推理成本、服务吞吐、时延（TTFT/TPOT）或 SLO 数据——这些是后续推理服务系统论文的对象，不属于本论文 <span class="ev evidence-badge ev-p">P</span>（全篇无此内容）＋<span class="ev evidence-badge ev-i">I</span>（边界归纳）。本页不提供参数化云成本公式，以免给出论文之外的伪精确数字 <span class="ev evidence-badge ev-i">I</span>。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+<div class="table-scroll">
+  <table>
+    <caption>安全与运维清单（「论文事实」列均标出处；「复现/运维提示」列为编辑推断 <span class="ev evidence-badge ev-i">I</span>）</caption>
+    <thead>
+      <tr><th scope="col">维度</th><th scope="col">论文事实</th><th scope="col">复现/运维提示（编辑推断）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">多租户/数据驻留</th>
+        <td>论文不涉及任何多租户、鉴权或数据驻留问题（模型研究论文语境）<span class="ev evidence-badge ev-p">P</span>（全篇）＝论文未明确披露</td>
+        <td>如将相关模型用于生产服务，租户隔离、数据驻留与残留清理需按服务系统设计另行解决（见核心合集各篇「安全与可运维性」章节）</td>
+      </tr>
+      <tr>
+        <th scope="row">代码供应链</th>
+        <td>论文第 10 页给出唯一代码链接 tensor2tensor；该仓库 2026-09-14 核验为 <strong>archived=true（只读归档）</strong>、Apache-2.0、最后 push 2023-06-02 <span class="ev evidence-badge ev-p">P</span>（第 10 页 §7）＋<span class="ev evidence-badge ev-r">R</span></td>
+        <td>归档仓库不再接收补丁；复现需自行评估其依赖（TensorFlow 1.x 时代代码）的安全更新与替代实现，锁定 commit（bafdc1b67730430d38d6ab802cbd51f9d053ba2e）后再使用</td>
+      </tr>
+      <tr>
+        <th scope="row">数据集合规</th>
+        <td>论文使用 WMT 2014 与 WSJ Penn Treebank 等公开语料，未讨论使用许可细节 <span class="ev evidence-badge ev-p">P</span>（第 7、9 页 §5.1、§6.3）</td>
+        <td>复现前自行核对各语料当前的分发/使用条款</td>
+      </tr>
+      <tr>
+        <th scope="row">可复现性</th>
+        <td>论文给出完整超参（Adam β₁=0.9/β₂=0.98/ε=1e-9、warmup 4000、dropout、标签平滑 0.1、checkpoint 平均、beam 4、α=0.6）<span class="ev evidence-badge ev-p">P</span>（第 7–8 页 §5.3–5.4、§6.1）</td>
+        <td>超参齐备但论文未披露 8 卡并行/切分方案与数值精度字段；复现结果可能因实现差异偏离，引用数字时保留论文口径</td>
+      </tr>
+      <tr>
+        <th scope="row">升级/回滚</th>
+        <td>论文无版本化运维概念（研究论文语境）＝论文未明确披露</td>
+        <td>以 arXiv 版本号与 commit 锁定引用口径；注意 v7（2023）与 NIPS 2017 会议版是两条记录，混用页码会造成引用错误</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（各含触发条件与理由）</h3>
+<ul class="fit-list">
+  <li><strong>阅读本站 16 篇核心合集前的机制准备：</strong>触发条件——需要理解注意力/多头/编码器-解码器等被后续系统论文反复引用的原始定义。理由——合集各篇的机制术语均源于本文，先读本文可避免二手转述偏差 <span class="ev evidence-badge ev-i">I</span>（站点组织判断；机制内容以论文为准 <span class="ev evidence-badge ev-p">P</span>）。</li>
+  <li><strong>序列转导/机器翻译研究复现：</strong>触发条件——需要 2017 年原版 Transformer 的精确结构、超参与基线数字。理由——论文给出全部公式、配置表与 WMT 2014 完整结果表，且作者在 §7 给出代码链接（归档仓库，见 <a href="#links">#links</a>）<span class="ev evidence-badge ev-p">P</span>（第 3–10 页）＋<span class="ev evidence-badge ev-r">R</span>。</li>
+  <li><strong>架构评审/教学中的原始出处引用：</strong>触发条件——需要引用「缩放点积注意力、多头注意力、自注意力复杂度表」等概念的原始定义与页码。理由——本文是这些概念的原始文献，本页证据台账给出逐条页码 <span class="ev evidence-badge ev-p">P</span>（第 4–7 页）。</li>
+  <li><strong>注意力复杂度的量级估算：</strong>触发条件——评估序列长度与维度对注意力计算/路径长度的影响方向。理由——表 1 给出自注意力/循环/卷积三类结构的复杂度与路径长度对照 <span class="ev evidence-badge ev-p">P</span>（第 6–7 页表 1）。</li>
+</ul>
+
+<h3>不适用（各含触发条件与理由）</h3>
+<ul class="fit-list">
+  <li><strong>作为 GPU 服务/训练系统的证据来源：</strong>触发条件——为吞吐、显存、kernel、集群或 SLO 结论寻找依据。理由——论文全篇不含任何系统内容，此类问题请查核心合集 <span class="ev evidence-badge ev-p">P</span>（全篇）＋<span class="ev evidence-badge ev-i">I</span>（收录判断）。</li>
+  <li><strong>与其他论文的性能数字横向比较：</strong>触发条件——把本文 BLEU/FLOPs 与 2024–2025 系统论文数字并列。理由——任务（翻译质量 vs 服务/训练指标）、硬件（8×P100 vs 现代 GPU）、口径（BLEU vs tokens/s/TTFT/TPOT/MFU）完全不同，不可比 <span class="ev evidence-badge ev-i">I</span>（本站「跨论文比较警告」约定）。</li>
+  <li><strong>把现代模型/系统改进归于本文：</strong>触发条件——需要在引用中说明 decoder-only、RoPE、RMSNorm、GQA、FlashAttention、KV-cache 服务的出处。理由——这些均为论文之后的工作，本文的位置编码是固定正弦函数、归一化是 LayerNorm、结构是编码器-解码器 <span class="ev evidence-badge ev-p">P</span>（第 3、5–6 页）＋<span class="ev evidence-badge ev-i">I</span>（辨析）。</li>
+  <li><strong>需要活跃维护的官方代码库：</strong>触发条件——期望从论文链接的仓库获得持续更新或安全补丁。理由——tensor2tensor 已归档只读（archived=true，2026-09-14 核验），属历史实现 <span class="ev evidence-badge ev-r">R</span>。</li>
+</ul>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>实验环境与数据</h3>
+<div class="table-scroll">
+  <table>
+    <caption>论文实验设置 <span class="ev evidence-badge ev-p">P</span>（第 7 页 §5.1–5.2、第 9–10 页 §6.3）</caption>
+    <thead>
+      <tr><th scope="col">项</th><th scope="col">取值</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">硬件</th><td>单机 8 × NVIDIA P100 GPU；论文未披露 8 卡间并行/切分方案，也未披露数值精度字段</td></tr>
+      <tr><th scope="row">训练日程</th><td>base：0.4 秒/步、100000 步（约 12 小时）；big：1.0 秒/步、300000 步（约 3.5 天）</td></tr>
+      <tr><th scope="row">英德数据</th><td>WMT 2014 约 450 万句对；BPE 共享源目标词表约 37000 token</td></tr>
+      <tr><th scope="row">英法数据</th><td>WMT 2014 3600 万句；32000 word-piece 词表</td></tr>
+      <tr><th scope="row">组批</th><td>按近似长度组批，每批约 25000 源 token + 25000 目标 token</td></tr>
+      <tr><th scope="row">优化器与调度</th><td>Adam（β₁=0.9、β₂=0.98、ε=1e-9）；lrate = d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step·warmup⁻¹·⁵)，warmup_steps=4000</td></tr>
+      <tr><th scope="row">正则</th><td>残差 dropout（base P_drop=0.1）＋嵌入与位置编码之和的 dropout；标签平滑 ε_ls=0.1；英法 big 用 dropout 0.1 而非 0.3（§6.1）</td></tr>
+      <tr><th scope="row">推理设置</th><td>base 平均最后 5 个检查点（10 分钟间隔）、big 平均最后 20 个；beam size 4、长度惩罚 α=0.6（开发集调参）；最大输出长度=输入长度+50，尽可能提前终止</td></tr>
+      <tr><th scope="row">句法分析设置</th><td>4 层、d_model=1024；WSJ 约 4 万句（16K 词表）/半监督约 1700 万句（32K 词表）；推理最大输出=输入+300、beam 21、α=0.3</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>主结果：WMT 2014 翻译（论文表 2 复刻）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>newstest2014 翻译结果与训练成本 <span class="ev evidence-badge ev-p">P</span>（第 8 页表 2；FLOPs 列为论文估计口径，Transformer 行一个值横跨两种语言列）</caption>
+    <thead>
+      <tr><th scope="col">模型</th><th scope="col">英德 BLEU</th><th scope="col">英法 BLEU</th><th scope="col">训练成本（FLOPs）</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">ByteNet</th><td class="num">23.75</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Deep-Att + PosUnk</th><td>—</td><td class="num">39.2</td><td class="num">1.0×10²⁰</td></tr>
+      <tr><th scope="row">GNMT + RL</th><td class="num">24.6</td><td class="num">39.92</td><td class="num">2.3×10¹⁹ / 1.4×10²⁰</td></tr>
+      <tr><th scope="row">ConvS2S</th><td class="num">25.16</td><td class="num">40.46</td><td class="num">9.6×10¹⁸ / 1.5×10²⁰</td></tr>
+      <tr><th scope="row">MoE</th><td class="num">26.03</td><td class="num">40.56</td><td class="num">2.0×10¹⁹ / 1.2×10²⁰</td></tr>
+      <tr><th scope="row">Deep-Att + PosUnk 集成</th><td>—</td><td class="num">40.4</td><td class="num">8.0×10²⁰</td></tr>
+      <tr><th scope="row">GNMT + RL 集成</th><td class="num">26.30</td><td class="num">41.16</td><td class="num">1.8×10²⁰ / 1.1×10²¹</td></tr>
+      <tr><th scope="row">ConvS2S 集成</th><td class="num">26.36</td><td class="num">41.29</td><td class="num">7.7×10¹⁹ / 1.2×10²¹</td></tr>
+      <tr><th scope="row">Transformer（base）</th><td class="num">27.3</td><td class="num">38.1</td><td class="num">3.3×10¹⁸</td></tr>
+      <tr><th scope="row">Transformer（big）</th><td class="num">28.4</td><td class="num"><strong>41.8</strong>（§6.1 正文为 41.0，见下方专项说明）</td><td class="num">2.3×10¹⁹</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong><span class="ev evidence-badge ev-p">P</span> 英法 BLEU 文内差异（原样保留，不调和）：</strong>同一份 PDF 内，<strong>摘要与表 2（Transformer big 行）印 41.8</strong>（摘要原句：「our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs」），而 <strong>§6.1 正文写「our big model achieves a BLEU score of 41.0」</strong>（优于所有此前已发表单模型、成本不足此前 SOTA 的 1/4）。论文未解释该差异；引用英法结果时必须注明出处位置（摘要/表 2 → 41.8；§6.1 → 41.0），禁止二选一后当作唯一值（编辑约定 <span class="ev evidence-badge ev-i">I</span>）。
+</div>
+
+<h3>架构消融（表 3 摘录）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>开发集 newstest2013 消融（PPL 为 per-wordpiece 口径，论文明确不可与 per-word PPL 比较）<span class="ev evidence-badge ev-p">P</span>（第 9 页表 3）</caption>
+    <thead>
+      <tr><th scope="col">行</th><th scope="col">变化</th><th scope="col">PPL (dev)</th><th scope="col">BLEU (dev)</th><th scope="col">参数量</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">base</th><td>基准配置（h=8、d_k=64、N=6、d_model=512、d_ff=2048、P_drop=0.1、ε_ls=0.1）</td><td class="num">4.92</td><td class="num">25.8</td><td class="num">65M</td></tr>
+      <tr><th scope="row">(A)</th><td>h=1 / 4 / 16 / 32</td><td class="num">5.29 / 5.00 / 4.91 / 5.01</td><td class="num">24.9 / 25.5 / 25.8 / 25.4</td><td class="num">65M</td></tr>
+      <tr><th scope="row">(B)</th><td>d_k=16 / 32</td><td class="num">5.16 / 5.01</td><td class="num">25.1 / 25.4</td><td class="num">58M / 60M</td></tr>
+      <tr><th scope="row">(C)</th><td>N=2 / 4 / 8</td><td class="num">6.11 / 5.19 / 4.88</td><td class="num">23.7 / 25.3 / 25.5</td><td class="num">36M / 50M / 80M</td></tr>
+      <tr><th scope="row">(C)</th><td>d_model=256 / 1024</td><td class="num">5.75 / 4.66</td><td class="num">24.5 / 26.0</td><td class="num">28M / 168M</td></tr>
+      <tr><th scope="row">(C)</th><td>d_ff=1024 / 4096</td><td class="num">5.12 / 4.75</td><td class="num">25.4 / 26.2</td><td class="num">53M / 90M</td></tr>
+      <tr><th scope="row">(D)</th><td>P_drop=0.0 / 0.2</td><td class="num">5.77 / 4.95</td><td class="num">24.6 / 25.5</td><td class="num">65M</td></tr>
+      <tr><th scope="row">(D)</th><td>ε_ls=0.0 / 0.2</td><td class="num">4.67 / 5.47</td><td class="num">25.3 / 25.7</td><td class="num">65M</td></tr>
+      <tr><th scope="row">(E)</th><td>学习式位置嵌入（替代正弦）</td><td class="num">4.92</td><td class="num">25.7</td><td class="num">65M</td></tr>
+      <tr><th scope="row">big</th><td>基准 big 配置</td><td class="num">4.33</td><td class="num">26.4</td><td class="num">213M</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>消融结论（论文口径）：单头比最优差 0.9 BLEU、头数过多亦降；减小 d_k 变差；模型更大更好（N、d_model、d_ff 增大均提升）；dropout 明显防过拟合；标签平滑伤 PPL 但提 BLEU；学习式位置嵌入与正弦版几乎相同 <span class="ev evidence-badge ev-p">P</span>（第 9 页表 3、§6.2）。</p>
+
+<h3>迁移实验：英文成分句法分析（表 4）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>WSJ §23 成分句法分析 F1 <span class="ev evidence-badge ev-p">P</span>（第 10 页表 4；4 层、d_model=1024）</caption>
+    <thead>
+      <tr><th scope="col">模型/设置</th><th scope="col">F1</th><th scope="col">备注</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Transformer（仅 WSJ 训练，约 4 万句）</th><td class="num">91.3</td><td>仅 WSJ 训练即超过 Berkeley Parser（90.4）（论文 §6.3）；表 4 另列 Dyer et al.（2016）判别式 91.7，高于 91.3。</td></tr>
+      <tr><th scope="row">Transformer（半监督，约 1700 万句）</th><td class="num">92.7</td><td>优于除生成式 RNNG（93.3）外的所有此前已报告结果</td></tr>
+      <tr><th scope="row">RNNG（Dyer et al. 2016，生成式）</th><td class="num">93.3</td><td>论文表 4 引用的对比项</td></tr>
+      <tr><th scope="row">Berkeley Parser</th><td class="num">90.4</td><td>论文表 4 引用的对比项</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>注意力可视化（附录）</h3>
+<p>附录图 3–5 给出第 5/6 层编码器自注意力示例：多个头追踪长距离依赖（如 making…more difficult）、两个头似涉及代词消解（its）、多数头表现出与句子结构相关的行为；作者以此作为自注意力可解释性的佐证 <span class="ev evidence-badge ev-p">P</span>（第 7 页 §4、第 13–15 页图 3–5；该 3 页经文本提取交叉核对，图内词网格提取乱序，以原页图为准）。</p>
+
+<h3>公平性限制与口径注意</h3>
+<ul>
+  <li>全部数字限于 WMT 2014 / WSJ 任务与 2017 年硬件（8×P100）语境，不可与本站其他 2024–2025 论文数字横向比较 <span class="ev evidence-badge ev-i">I</span>。</li>
+  <li>PPL 为 per-wordpiece 口径，论文明确不可与 per-word PPL 比较 <span class="ev evidence-badge ev-p">P</span>（第 9 页表 3 说明）。</li>
+  <li>表 2 FLOPs 为按脚注 5 假设的粗估，非计量值；Transformer 行一个值横跨英德/英法两列 <span class="ev evidence-badge ev-p">P</span>（第 8 页表 2、脚注 5）。</li>
+  <li>论文未披露 8 卡并行/切分方案与数值精度字段；复现时不得反推为论文结论 <span class="ev evidence-badge ev-p">P</span>（未披露）＋<span class="ev evidence-badge ev-i">I</span>。</li>
+  <li>英法 BLEU 41.8/41.0 文内不一致，照录不调和（见上方专项说明）。</li>
+</ul>
+
+<h3>建议复现步骤 <span class="ev evidence-badge ev-i">I</span></h3>
+<ol>
+  <li>从论文 §7 给出的仓库获取代码（<a href="#links">#links</a>，<span class="ev evidence-badge ev-r">R</span>）；先确认可接受「已归档只读、无后续补丁」的历史实现定位，并锁定 commit。</li>
+  <li>按 §5 准备 WMT 2014 英德/英法数据与词表（BPE 37000 / word-piece 32000），复现组批（25000+25000 token）。</li>
+  <li>按 base/big 配置与超参训练（Adam、warmup 4000、dropout、标签平滑、步数与检查点平均按论文口径）。</li>
+  <li>按 §6.1 推理设置（checkpoint 平均、beam 4、α=0.6）评测 newstest2014，引用结果时注明 41.8/41.0 的出处位置差异。</li>
+  <li>需要现代实现时，请另行核验活跃第三方实现（本页不猜测、不链接未核验仓库）。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">资源</th><th scope="col">链接 / 文件</th><th scope="col">可见域名/位置</th><th scope="col">级别</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文 arXiv 摘要页</th>
+        <td><a href="https://arxiv.org/abs/1706.03762" rel="noopener noreferrer">https://arxiv.org/abs/1706.03762</a></td>
+        <td>arxiv.org</td>
+        <td><span class="ev evidence-badge ev-e">E</span></td>
+        <td>2026-09-14 在线核验：Comments「15 pages, 5 figures」；Submission history v1（2017-06-12）至 v7（2023-08-02），v7 与本地 PDF 水印一致。编号本身取自 PDF 第 1 页水印（<span class="ev evidence-badge ev-p">P</span>）</td>
+      </tr>
+      <tr>
+        <th scope="row">论文给出的代码（Tensor2Tensor）</th>
+        <td><a href="https://github.com/tensorflow/tensor2tensor" rel="noopener noreferrer">https://github.com/tensorflow/tensor2tensor</a></td>
+        <td>github.com/tensorflow</td>
+        <td><span class="ev evidence-badge ev-r">R</span></td>
+        <td>论文第 10 页 §7 逐字给出。2026-09-14 在线核验：<strong>可达，但已归档（archived=true，只读）</strong>；git ls-remote HEAD=refs/heads/master=<code>bafdc1b67730430d38d6ab802cbd51f9d053ba2e</code>；GitHub API 显示 license=Apache-2.0、default_branch=master、最后 push 2023-06-02。<strong>定性：论文作者链接的官方历史实现，非活跃维护。</strong></td>
+      </tr>
+      <tr>
+        <th scope="row">本地论文 PDF</th>
+        <td><code>17_Attention-Is-All-You-Need_1706.03762.pdf</code>（仅作来源说明，不随站点公开）</td>
+        <td>本地文件</td>
+        <td><span class="ev evidence-badge ev-p">P</span></td>
+        <td>本页全部定量内容的一级证据（arXiv v7，15 页）</td>
+      </tr>
+      <tr>
+        <th scope="row">核心合集 16 篇</th>
+        <td><a href="../index.html">../index.html</a>（推理服务、解码加速与量化、训练与 Kernel 三条路径）</td>
+        <td>本站首页</td>
+        <td>—</td>
+        <td>与本篇互为机制背景与系统对象，不共享任何性能数字</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<p>构建证据文件：<code>sources/attention-is-all-you-need.txt</code>、<code>sources/attention-is-all-you-need.summary.json</code>、<code>sources/attention-is-all-you-need.evidence.json</code>（属于构建目录，不在公开导航中展示）。</p>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+<ul class="decision-checklist">
+  <li>
+    <strong>需求</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已明确阅读本文的目的：机制溯源/原始定义引用，而非寻找系统设计依据 <span class="ev evidence-badge ev-i">I</span>（收录判断）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已确认要解决的问题属于序列转导/注意力机制范畴，系统性能问题另查核心合集 <span class="ev evidence-badge ev-i">I</span></label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性（概念引用口径）</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 引用「缩放点积/多头注意力/表 1 复杂度」时已注明本文页码与章节 <span class="ev evidence-badge ev-p">P</span>（第 4–7 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 未将 decoder-only、RoPE、RMSNorm、GQA、FlashAttention、KV-cache 服务等后续工作归于本文 <span class="ev evidence-badge ev-i">I</span>（辨析见 <a href="#mechanism">#mechanism</a>）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>复现（PoC）</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已确认可接受论文链接仓库的「已归档只读」状态，并锁定 commit bafdc1b67730430d38d6ab802cbd51f9d053ba2e <span class="ev evidence-badge ev-r">R</span></label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已按 §5 配置数据/词表/超参，并按 §6.1 设置推理（beam 4、α=0.6、checkpoint 平均）<span class="ev evidence-badge ev-p">P</span>（第 7–8 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 容量估算使用论文口径变量：65M/213M 参数、25000+25000 token 批、0.4s/1.0s 步时、脚注 5 算力假设 <span class="ev evidence-badge ev-p">P</span>（第 7–8 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已注意表 1 的 O(n²·d)：序列长度平方增长会放大算力/访存需求（方向性判断）<span class="ev evidence-badge ev-p">P</span>＋<span class="ev evidence-badge ev-i">I</span>（第 6–7 页表 1）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>质量口径（本文无 SLO 概念）</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 引用英法结果时已注明 41.8（摘要/表 2）与 41.0（§6.1）两个出处位置 <span class="ev evidence-badge ev-p">P</span>（第 1、8 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 未将表 3 的 per-wordpiece PPL 与 per-word PPL 混用 <span class="ev evidence-badge ev-p">P</span>（第 9 页表 3 说明）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 训练成本引用保留「FLOPs 估计」口径（时间×卡数×持续算力），不当作实测能耗 <span class="ev evidence-badge ev-p">P</span>（第 8 页脚注 5）＋<span class="ev evidence-badge ev-i">I</span></label></li>
+      <li><label class="touch-target"><input type="checkbox"> 未将本文数字与 2024–2025 论文数字横向比较 <span class="ev evidence-badge ev-i">I</span>（本站跨论文比较警告）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 使用归档仓库前已做依赖与许可评估（Apache-2.0，最后 push 2023-06-02）<span class="ev evidence-badge ev-r">R</span></label></li>
+      <li><label class="touch-target"><input type="checkbox"> 数据集使用前已核对 WMT/WSJ 语料当前的许可条款 <span class="ev evidence-badge ev-i">I</span></label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维（引用维护）</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 引用已固定版本口径：arXiv v7（2023-08-02）页码；如需引用 NIPS 2017 会议版，另行核对会议版页码 <span class="ev evidence-badge ev-p">P</span>（第 1 页水印/页脚）＋<span class="ev evidence-badge ev-i">I</span></label></li>
+      <li><label class="touch-target"><input type="checkbox"> 团队内已同步「Tensor2Tensor＝官方历史实现，非活跃维护」的表述 <span class="ev evidence-badge ev-r">R</span></label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 复现受阻时可切换到经自行核验的活跃第三方实现（不使用本页未核验的链接）<span class="ev evidence-badge ev-i">I</span></label></li>
+      <li><label class="touch-target"><input type="checkbox"> 机制学习完成后，后续系统问题已规划转入核心合集对应详情页 <span class="ev evidence-badge ev-i">I</span>（见 <a href="#cloud-mapping">#cloud-mapping</a> 对照表）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与在线核验记录见构建文件 <code>sources/attention-is-all-you-need.evidence.json</code>。核验日期均为 <time datetime="2026-09-14">2026-09-14</time>。所有页码均指本地 arXiv v7 PDF；NIPS 2017 会议正式版未逐字比对。</p>
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">页码/章节</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名、8 位作者、*等同贡献与随机署名说明</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 1 页</td><td>已回原页核对</td></tr>
+      <tr><td>会议发表记录：NIPS 2017（第 1 页页脚逐字）</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 1 页页脚</td><td>已回原页核对</td></tr>
+      <tr><td>arXiv 水印：1706.03762v7 [cs.CL] 2 Aug 2023；v7 与 NIPS 2017 为两条记录</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 1 页水印</td><td>已回原页核对</td></tr>
+      <tr><td>摘要：28.4 BLEU（英德，超最好结果含集成 2 BLEU 以上）；英法 41.8 单模型 SOTA；3.5 天 8 GPU；句法分析迁移</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 1 页摘要</td><td>已回原页核对</td></tr>
+      <tr><td>编码器/解码器 N=6、残差+层归一化、d_model=512、输出右移一位</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 3 页 §3.1</td><td>已回原页核对</td></tr>
+      <tr><td>缩放点积注意力式 1、脚注 4 方差推导</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 4 页 §3.2.1</td><td>已回原页核对</td></tr>
+      <tr><td>多头注意力定义、h=8、d_k=d_v=64</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 4–5 页 §3.2.2</td><td>已回原页核对</td></tr>
+      <tr><td>三种注意力用法与掩码 −∞</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 5 页 §3.2.3</td><td>已回原页核对</td></tr>
+      <tr><td>FFN 定义与 d_ff=2048；嵌入共享权重、乘 √d_model</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 5 页 §3.3–3.4</td><td>已回原页核对</td></tr>
+      <tr><td>正弦位置编码公式与线性函数假设；学习式几乎相同（表 3 E）</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 6 页 §3.5、第 9 页表 3</td><td>已回原页核对</td></tr>
+      <tr><td>表 1 复杂度/顺序操作/路径长度对照；n&lt;d 时自注意力每层更低</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 6–7 页 §4 表 1</td><td>已回原页核对</td></tr>
+      <tr><td>数据：英德 450 万句对/BPE 37000；英法 3600 万句/word-piece 32000；批 25000+25000 token</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 7 页 §5.1</td><td>已回原页核对</td></tr>
+      <tr><td>硬件与日程：8×P100；base 0.4s×100k 步（12h）；big 1.0s×300k 步（3.5 天）；8 卡切分未披露</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 7 页 §5.2</td><td>已回原页核对</td></tr>
+      <tr><td>优化器、warmup 4000、dropout、标签平滑；英法 big dropout 0.1</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 7–8 页 §5.3–5.4、§6.1</td><td>已回原页核对</td></tr>
+      <tr><td>表 2 主结果全表（含各基线与集成）；Transformer base 27.3/38.1、big 28.4/41.8；FLOPs 3.3e18/2.3e19</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 8 页表 2</td><td>已回原页核对</td></tr>
+      <tr><td>§6.1 英法「41.0」原句；成本不足此前 SOTA 1/4——与摘要/表 2 的 41.8 并存不调和</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 8 页 §6.1</td><td>已回原页核对（两处均逐字）</td></tr>
+      <tr><td>推理设置：checkpoint 平均、beam 4、α=0.6、输出长度=输入+50</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 8 页 §6.1</td><td>已回原页核对</td></tr>
+      <tr><td>表 3 消融（h/d_k/N/d_model/d_ff/dropout/标签平滑/位置编码）与 per-wordpiece PPL 口径</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 9 页表 3、§6.2</td><td>已回原页核对</td></tr>
+      <tr><td>表 4 句法分析 91.3/92.7 F1；RNNG 93.3、Berkeley 90.4</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 9–10 页 §6.3、表 4</td><td>已回原页核对</td></tr>
+      <tr><td>§7 结论与未来工作；代码链接逐字给出 tensorflow/tensor2tensor</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 10 页 §7</td><td>已回原页核对</td></tr>
+      <tr><td>注意力可视化图 3–5 的头行为描述</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 13–15 页</td><td>文本提取交叉核对（以原页图为准）</td></tr>
+      <tr><td>Tensor2Tensor：可达但 archived=true、HEAD/master=bafdc1b67730430d38d6ab802cbd51f9d053ba2e、Apache-2.0、最后 push 2023-06-02——官方历史实现，非活跃维护</td><td><span class="ev evidence-badge ev-r">R</span></td><td>git ls-remote + GitHub API 在线核验</td><td>2026-09-14 在线核验</td></tr>
+      <tr><td>arXiv 摘要页：15 pages, 5 figures；v1–v7 提交历史，v7=2023-08-02 与本地 PDF 一致</td><td><span class="ev evidence-badge ev-e">E</span></td><td>arxiv.org/abs/1706.03762</td><td>2026-09-14 在线核验（仅版本记录核对）</td></tr>
+      <tr><td>收录定性：2017 年模型结构论文，不满足核心合集选题标准，作为 F01 单列</td><td><span class="ev evidence-badge ev-i">I</span></td><td>本页 <a href="#overview">#overview</a> / 首页「奠基论文」章节</td><td>编辑判断，非论文事实</td></tr>
+      <tr><td>工程解读：训练并行/解码串行不对称是后续服务系统工作出发点；现代概念不得归于本文</td><td><span class="ev evidence-badge ev-i">I</span></td><td>本页 <a href="#data-path">#data-path</a>、<a href="#cloud-mapping">#cloud-mapping</a></td><td>编辑推断，不含伪精确数字</td></tr>
+      <tr><td>数字口径：FLOPs 为粗估；41.8/41.0 差异论文未解释，两值并存</td><td><span class="ev evidence-badge ev-i">I</span></td><td>本页 <a href="#cost-slo">#cost-slo</a>、<a href="#experiments">#experiments</a></td><td>编辑推断</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="../index.html#foundation" rel="prev">上一篇：返回首页「奠基论文」说明</a>
+  <a href="../index.html" rel="next">返回：16 篇核心合集论文目录</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页全部论文事实基于本地 <code>17_Attention-Is-All-You-Need_1706.03762.pdf</code>（arXiv:1706.03762v7，2023-08-02）及论文明确引用的材料；arXiv 摘要页仅用于版本记录核对（E）；标注 I 的内容为编辑推断。本篇为奠基论文，独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；Tensor2Tensor 仓库代码许可为 Apache-2.0（以仓库当时声明为准，2026-09-14 核验时为已归档只读状态）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-14；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

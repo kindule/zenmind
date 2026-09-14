@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medusa：多解码头推测式解码加速（论文 07 解读）</title>
+<meta name="description" content="基于本地论文 PDF（07_Medusa_2401.10774.pdf，arXiv:2401.10774）的中文架构解读：Medusa 以附加解码头并行预测多个后续 token，配合候选树构建、树注意力一次前向并行验证与典型接受方案，在不引入独立草稿模型的前提下加速 LLM 解码；含数据路径、云上部署映射、成本/SLO、安全运维与决策清单。">
+<link rel="prev" href="06-eagle.html">
+<link rel="next" href="08-kivi.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:#1f2937; --muted:#4b5563; --line:#d4d9e0;
+  --primary:#14385c; --primary-weak:#eef3fa;
+  --cyan:#0e7490; --cyan-weak:#e6f7fb;
+  --purple:#6d28d9; --purple-weak:#f3ecfd;
+  --orange:#c2410c; --orange-weak:#fdeada;
+  --amber:#92400e; --amber-weak:#fef3c7;
+  --red:#b91c1c; --red-weak:#fee2e2;
+  --code-bg:#f3f4f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#10161f; --fg:#e5eaf2; --muted:#b6c0ce; --line:#3a4657;
+    --primary:#c7d9ee; --primary-weak:#1b2a3d;
+    --cyan:#7dd3e8; --cyan-weak:#0d2a33;
+    --purple:#c9b2f5; --purple-weak:#241a3d;
+    --orange:#f3b58a; --orange-weak:#3a2113;
+    --amber:#fbd88a; --amber-weak:#33270e;
+    --red:#f5a9a9; --red-weak:#3a1414;
+    --code-bg:#1a2230;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:16px; line-height:1.7;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:1.6em; line-height:1.35; color:var(--primary); margin:1.2em 0 .4em}
+h2{font-size:1.28em; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:.25em; margin-top:2.2em}
+h3{font-size:1.05em; margin-top:1.6em}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.92em}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:.6em 1em; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:.5em 1.5em; justify-content:space-between; align-items:baseline; padding:.7em 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:1.2em}
+.breadcrumb{padding:.6em 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:.3em; margin:0; padding:0; font-size:.92em}
+.breadcrumb li+li::before{content:"/"; margin-right:.3em; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:8px; background:var(--primary-weak); padding:.9em 1.1em; margin:1.2em 0}
+.fact-card h3{margin:.2em 0 .5em}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:.5em; padding:0; margin:.4em 0 .8em}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:.05em .8em; font-size:.88em}
+.ev{display:inline-block; border:1.5px solid var(--muted); border-radius:5px; padding:0 .45em; font-size:.82em; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:6px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:.8em 1em; margin:1.1em 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:1.1em 0}
+table{border-collapse:collapse; width:100%; font-size:.92em}
+caption{caption-side:top; text-align:left; font-weight:700; padding:.3em 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:.45em .6em; text-align:left; vertical-align:top}
+thead th{background:var(--primary-weak); color:var(--primary)}
+tbody th{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:.9em; margin:1.1em 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:8px; padding:.8em 1em; background:var(--bg)}
+.tradeoff-grid h3{margin:.1em 0 .4em; font-size:1em; color:var(--primary)}
+.fit-list li{margin:.7em 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:1em 0}
+.decision-checklist ul{list-style:none; padding-left:.2em}
+.decision-checklist ul li{margin:.35em 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:.4em}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:.6em; justify-content:space-between; margin:1.4em 0}
+.pager a{display:inline-block; min-height:44px; padding:.45em 1em; border:1px solid var(--line); border-radius:8px; background:var(--bg); text-decoration:none}
+.pager a:hover{background:var(--primary-weak)}
+.architecture-diagram{border:1px solid var(--line); border-radius:8px; padding:.8em; margin:1.2em 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:.88em; color:var(--muted); margin-top:.6em}
+.toc{border:1px solid var(--line); border-radius:8px; padding:.6em 1em; margin:1.2em 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:.4em 0; padding-left:1.4em; columns:2; column-gap:2em}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:1.02em; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:.8em 1em; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.9em}
+.site-footer{border-top:1px solid var(--line); padding:1em 16px 2em; font-size:.88em; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">解码加速与量化</a></li>
+    <li aria-current="page">Medusa</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>Medusa：多解码头并行预测 + 树注意力验证的推测式解码加速</h1>
+<p class="lede">本页为第 7 篇（解码加速与量化类），定量内容取自本地论文 PDF <code>07_Medusa_2401.10774.pdf</code>（arXiv:2401.10774）对应的工具长摘要（<code>sources/medusa.summary.json</code>，由该 PDF 生成）并逐条标注论文内定位；因本地提取文件编码不可读且本次无法解析 PDF 原页，页码级核验范围受限（见下方核验说明与 <a href="#evidence">#evidence</a>）。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：推理（LLM 解码加速）</li>
+    <li>形态：单模型扩展（附加解码头，无独立草稿模型）</li>
+    <li>目标硬件：GPU 推理实例；论文实验所用 GPU 型号/数量：论文未明确披露 †</li>
+    <li>核心资源：GPU 算力 · 显存带宽（权重搬运）· KV 缓存 · 树注意力算子</li>
+    <li>证据状态：P（摘要级 + 实验级，定位受限）+ R（仓库链接，本次未在线核验）+ E/I</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-14">2026-09-14</time>（核验方式与范围见下条）。</p>
+  <p><strong>证据完整度与核验范围声明：</strong>本页事实来源于 summarize 工具基于本地 PDF 生成的长摘要 <code>sources/medusa.summary.json</code>；本地提取文件 <code>sources/medusa.txt</code> 编码不可读（Read 与文本搜索工具均拒绝），且本次会话无法执行 PDF 解析，故仅「摘要位于第 1 页」属页码级定位，其余定位到论文结构（摘要/实验表/消融/附录）而<strong>未标注具体页码</strong>。所有「论文未明确披露 †」表示：本次可用证据源未载明该字段、且无法回 PDF 复核——不排除论文正文另有披露，引用前必须回原 PDF 核验。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文明确链接的仓库（本次未在线核验）">R＝仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="06-eagle.html" rel="prev">上一篇：06 EAGLE（文件可能尚未发布）</a>
+  <a href="08-kivi.html" rel="next">下一篇：08 KIVI（文件可能尚未发布）</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（题名与作者定位见 <a href="#evidence">#evidence</a>；作者/机构未能本次核验，不凭记忆补写）</caption>
+    <tbody>
+      <tr><th scope="row">题名</th><td>Medusa（框架名）：Simple LLM Inference Acceleration Framework with Multiple Decoding Heads（英文全题未能本次逐字核验；编辑译名：基于多解码头的大模型推理加速框架）</td></tr>
+      <tr><th scope="row">arXiv / 本地 PDF</th><td>arXiv:2401.10774（2024-01 提交；具体版本与总页数未能本次核验）；本地文件 <code>07_Medusa_2401.10774.pdf</code> <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">代码</th><td>论文明示官方仓库 <code>github.com/FMLYD/Medusa</code>（印于论文摘要脚注，第 1 页）；本次会话未解析 PDF 复核该脚注、也未在线核验可达性，使用前请复核（见 <a href="#links">#links</a>）<span class="ev ev-r">R</span></td></tr>
+      <tr><th scope="row">评估范围</th><td>Vicuna-7B / Vicuna-13B（ShareGPT 数据训练）；Medusa-2 自蒸馏实验含 Vicuna-33B 与 Zephyr-7B；评测为 MT-Bench 多轮对话生成；实验主要在批量 1（单请求交互）进行 <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">实验硬件与精度</th><td>论文未明确披露 †（GPU 型号/数量与推理精度均未能本次核验）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> Medusa 把「一次前向只产出一个 token」的串行解码改造为「一次前向并行预测并验证多个候选 token」：在原模型上加若干轻量解码头、把跨头候选组织成树、用树注意力一次前向验证、再以典型接受取最长有效前缀。它省去了独立草稿模型的训练/对齐/分发成本，是<strong>低并发交互式推理（批量 1）场景</strong>下性价比很高的加速路线；但收益随大批量与长序列收窄，且典型接受不保证输出分布与原模型逐点一致——选型时必须同时接受「训练头 + 质量评估」两项前置成本（见 <a href="#fit">#fit</a>、<a href="#tradeoffs">#tradeoffs</a>）。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>自回归解码每步只产出一个 token，且每步都要把全部权重从高带宽显存搬入计算核，解码受显存带宽限制；推测解码虽能减步，但需要额外训练、对齐、部署与分发一个草稿模型 <span class="ev ev-p">P</span>（摘要级、附录硬件分析）。</li>
+  <li><strong>方案：</strong>在原模型最后隐藏状态上接多个 Medusa 头（训练至多 5 个，推理常用 3-4 个），各头并行预测更靠后的 token 位置；跨头候选组成树，树注意力使整棵候选树可一次前向并行验证；接受判定用典型接受（在原模型分布下合理即可），取最长有效前缀并循环 <span class="ev ev-p">P</span>（§2 机制层）。</li>
+  <li><strong>论文声称的主要结果：</strong>Medusa-1（冻结骨干）加速超过 2.2× 且不损失生成质量；Medusa-2（联合训练）约 2.3×-2.8×；评测口径为 MT-Bench 生成墙钟加速比、批量 1：Vicuna-7B/13B 上 Medusa-1 为 2.18×/2.33×、Medusa-2 为 2.83×（两个模型）；类别级最高为信息抽取 3.62×、代码 3.29×（Vicuna-7B、Medusa-2）<span class="ev ev-p">P</span>（摘要 + 实验表；完整条件见 <a href="#experiments">#experiments</a>）。</li>
+  <li><strong>扩展：</strong>原始训练数据不可得或模型已经过 RLHF 对齐时，用自蒸馏（目标模型自生成约 10 万样本）训练头；Medusa-2 联合训练配合差分学习率与预热配方以避免降低骨干质量；自蒸馏实验（Vicuna-33B、Zephyr-7B）墙钟加速 2.35×-2.83× <span class="ev ev-p">P</span>（训练与自蒸馏章节 + 实验表）。</li>
+  <li><strong>主要限制：</strong>加速数字仅在 Vicuna + MT-Bench + 批量 1 语境成立；大批量/长序列下线性层趋向计算受限、相对收益收窄；典型接受不保证精确分布匹配；朴素直接联合微调会降低 Vicuna-7B 质量 <span class="ev ev-p">P</span>（消融与讨论）。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>解码瓶颈的硬件本质：</strong>自回归解码每一步只生成一个 token；论文附录的硬件分析指出，该过程受显存带宽限制——每一步都要把完整模型参数从高带宽显存（HBM）搬入加速器缓存，算力没有被喂饱 <span class="ev ev-p">P</span>（附录硬件分析）。<span class="ev ev-i">I</span> 对云架构师而言，这意味着批量 1 的交互式推理实例「按算力选型」通常是错配的，瓶颈在带宽与延迟而非 FLOPS。</p>
+
+<p><strong>既有路线与其代价：</strong>减少解码步数的既有路线包括 KV 缓存缩减、量化、批处理与推测解码 <span class="ev ev-p">P</span>（相关工作定位）。其中推测解码用草稿模型起草、原模型验证，可保证分布一致，但需要训练、对齐、serving 与分发一个额外模型，工程与运维成本高 <span class="ev ev-p">P</span>（摘要级对比）。</p>
+
+<p><strong>目标工作负载与约束：</strong>论文实验主要面向<strong>批量 1</strong> 的本地/交互式使用（多轮对话，MT-Bench 评测）<span class="ev ev-p">P</span>；约束是：不引入独立草稿模型、尽可能不牺牲生成质量、工程集成简单（头是模型内部的轻量层）<span class="ev ev-p">P</span>（摘要级主张）。</p>
+
+<p><strong>基线口径：</strong>全部加速数字的基线均为「未加速的原模型标准自回归解码」（同一模型逐 token 解码）<span class="ev ev-p">P</span>（加速比定义口径）；<span class="ev ev-i">I</span> 因此这些数字回答的是「Medusa 比原模型快多少」，而非「Medusa 与其他加速方案谁更快」。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 Medusa 解码头：一份隐藏状态，多个预测位置</h3>
+<p>在原模型最后隐藏状态上并接多个轻量解码头：原始语言模型头照常预测下一个 token（位置 t+1），每个 Medusa 头负责预测更靠后的位置（t+2、t+3、…），从而单次前向同时得到多个未来位置的预测 <span class="ev ev-p">P</span>（机制章节）。论文建议训练至多 5 个头；推理时经优化的树注意力常只用其中 3-4 个 <span class="ev ev-p">P</span>（消融/实现口径）。</p>
+
+<h3>3.2 候选树与树注意力：一次前向验证整棵树</h3>
+<ul>
+  <li><strong>候选组织为树：</strong>各头的 top 候选跨头组合成多条候选续写，结构上组织为一棵候选树，而非逐头独立成句 <span class="ev ev-p">P</span>。</li>
+  <li><strong>树注意力：</strong>验证时施加注意力掩码，使每个候选 token 只注意自己的祖先路径；整棵候选树可在一次前向中并行处理，被验证的是「每条候选续写的整体」<span class="ev ev-p">P</span>。</li>
+  <li><strong>树的构建：</strong>在校准数据集上估计每个头 top-1 预测的准确率，按「对期望被接受长度的贡献」贪心地加入节点 <span class="ev ev-p">P</span>（消融章节）。<span class="ev ev-i">I</span> 这是把「候选数量」从拍脑袋参数变成可校准指标的关键设计。</li>
+  <li><strong>稀疏优于密集：</strong>密集树候选多、被接受 token 率升高，但验证计算开销随之增加；按准确率优化的稀疏树可以胜过更大的密集树——64 节点稀疏树优于 256 节点密集配置 <span class="ev ev-p">P</span>（消融）。</li>
+</ul>
+
+<h3>3.3 两种训练模式与自蒸馏</h3>
+<div class="table-scroll">
+  <table>
+    <caption>训练形态对比（均为论文事实 <span class="ev ev-p">P</span>；「适用取舍」列为编辑整理 <span class="ev ev-i">I</span>）</caption>
+    <thead>
+      <tr><th scope="col">形态</th><th scope="col">训练方式</th><th scope="col">论文口径的质量与成本</th><th scope="col">适用取舍（I）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Medusa-1</th>
+        <td>冻结骨干，仅训练附加头；对多个未来位置使用加权交叉熵损失</td>
+        <td>不降低原模型质量（超过 2.2× 加速且质量不降）；显存高效，可配合量化骨干</td>
+        <td>原模型必须逐字保留时首选；加速上限低于 Medusa-2</td>
+      </tr>
+      <tr>
+        <th scope="row">Medusa-2</th>
+        <td>骨干与头联合训练：骨干+头组合损失、差分学习率、预热流程（先训头，或骨干损失权重逐步引入）</td>
+        <td>头准确率更高、加速更高（约 2.3×-2.8×）；但朴素直接联合微调会降低 Vicuna-7B 质量，必须用配方</td>
+        <td>允许微调骨干且追求加速上限时选用；需完整质量回归</td>
+      </tr>
+      <tr>
+        <th scope="row">自蒸馏（两者通用）</th>
+        <td>原始训练数据不可得或模型经 RLHF 对齐时：以种子提示让目标模型自生成数据集（约 10 万样本，种子取自 ShareGPT 或 UltraChat）；Medusa-2 场景再按原模型概率预测做蒸馏，使联合训练不损质量</td>
+        <td>使头匹配目标模型自身分布；LoRA 适配器使该流程无需在显存中同时驻留两个完整模型</td>
+        <td>商用闭源对齐模型、无原始预训练数据时的唯一路线；需承担生成 10 万样本的一次性成本</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>3.4 典型接受：替代拒绝采样的接受判定</h3>
+<p>推测解码经典验证采用拒绝采样，要求草稿与目标分布精确匹配才能保持输出分布严格一致。Medusa 提出典型接受作为替代：候选 token 只要在原模型分布下「合理（plausible）」即被接受，不要求精确分布匹配；这简化了实现并在采样温度非零时仍保持相近输出质量与速度收益 <span class="ev ev-p">P</span>（典型接受章节）。</p>
+
+<div class="callout callout-warning">
+  <strong><span class="ev ev-p">P</span> 质量边界：</strong>典型接受≠分布等价——被接受 token 只满足「合理」判据，输出分布与原模型存在偏差 <span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 对质量敏感业务，这意味着「Medusa 输出」与「原模型输出」必须作为两个不同产物分别做质量评估，不能默认等价。
+</div>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页为便于云上理解作如下划分：<strong>控制面</strong>=头数量与树结构配置、校准与贪心建树、接受判定策略（典型接受阈值/温度策略）；<strong>数据面</strong>=主干前向、多头并行预测、候选树 KV 缓存读写、树注意力验证前向、token 追加。该划分仅影响叙述方式，不改变论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/medusa-data-path.svg"
+       alt="Medusa 解码数据路径示意图：输入提示与已生成 token 的 KV 缓存进入主干模型一次前向，得到最后隐藏状态；隐藏状态同时送入原始语言模型头（预测下一个 token）与最多五个 Medusa 解码头（各自预测更靠后的位置并取高概率候选）；跨头候选按校准集估计的各头 top-1 准确率贪心构建候选树，优化的稀疏树可优于更大密集树；随后以树注意力在一次前向中并行验证整棵候选树，每个候选只关注自己的祖先；接受判定采用典型接受——在原模型分布下合理即接受、不要求精确分布匹配，接受最长有效前缀；被接受 token 追加进序列并更新 KV 缓存后进入下一轮。右侧面板列出训练形态（Medusa-1 冻结骨干、Medusa-2 联合训练配方、自蒸馏约十万样本与 LoRA）、硬件视角（解码受显存带宽限制、Medusa 提高操作强度、候选数量存在最优区间）与质量风险（典型接受不保证分布一致、朴素联合微调降质、大批量与长序列收益收窄、可回退为标准解码）。" width="980" height="820">
+  <figcaption>图 1：Medusa 单轮解码数据路径与训练配置。实线＝数据流（隐藏状态/候选 token/KV 缓存），虚线＝控制流（接受判定）与训练配置；紫色＝KV 缓存/存储对象；琥珀＝质量与风险点；编号 ①-⑥ 对应下方文字序列。依据论文摘要与工具长摘要（arXiv:2401.10774）绘制 <span class="ev ev-p">P</span>；平面划分与编号为编辑标注 <span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 输入与上下文：</strong>提示与已生成 token 构成当前序列；已确认 token 的 KV 缓存驻留显存。候选树验证产生的新 KV 只来自树内候选，验证完成后仅保留被接受前缀对应的 KV <span class="ev ev-p">P</span>（机制口径）+ <span class="ev ev-i">I</span>（KV 生命周期整理）。</li>
+  <li><strong>② 主干前向 + 多头预测：</strong>主干模型一次前向得到最后隐藏状态；原始 LM 头据此预测 t+1，每个 Medusa 头并行预测更靠后的位置（训练至多 5 头、推理常用 3-4 头），各头取高概率候选 <span class="ev ev-p">P</span>。</li>
+  <li><strong>③ 候选树构建：</strong>跨头候选组合为候选树；建树用校准集估计的各头 top-1 准确率，按期望被接受长度贡献贪心加节点；优化稀疏树可优于密集树（64 节点稀疏 &gt; 256 节点密集）<span class="ev ev-p">P</span>。</li>
+  <li><strong>④ 树注意力并行验证：</strong>整棵候选树经注意力掩码（候选只看祖先）在<strong>一次前向</strong>中并行验证；把「每 token 一次前向」改为「整树一次前向」，提高操作强度；验证开销随候选数增加 <span class="ev ev-p">P</span>。</li>
+  <li><strong>⑤ 接受判定：</strong>典型接受——候选只要在原模型分布下合理即接受（不要求精确分布匹配），从树中取最长有效前缀 <span class="ev ev-p">P</span>。</li>
+  <li><strong>⑥ 追加与循环：</strong>被接受的多个 token 一次追加进序列并更新 KV 缓存，进入下一轮解码；单轮产出 token 数（被接受长度）决定加速比；大批量/长序列时相对收益收窄 <span class="ev ev-p">P</span> + <span class="ev ev-i">I</span>（循环整理）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与事实（机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>训练至多 5 个解码头；推理常用 3-4 个头参与树注意力</td><td>头数量配置</td><td><span class="ev ev-p">P</span> 训练章节与消融（页码未能核验）</td></tr>
+      <tr><td>稀疏 64 节点候选树优于 256 节点密集树</td><td>树结构消融（候选规模权衡）</td><td><span class="ev ev-p">P</span> 消融章节（页码未能核验）</td></tr>
+      <tr><td>建树依据：校准集估计各头 top-1 准确率 × 期望被接受长度，贪心加节点</td><td>树构建算法</td><td><span class="ev ev-p">P</span> 消融章节（页码未能核验）</td></tr>
+      <tr><td>自蒸馏数据集约 10 万样本；种子取自 ShareGPT 或 UltraChat；LoRA 适配器避免双模型驻留</td><td>自蒸馏训练（Vicuna-33B、Zephyr-7B 实验所用）</td><td><span class="ev ev-p">P</span> 自蒸馏章节（页码未能核验）</td></tr>
+      <tr><td>无独立草稿模型：头在原模型内部，草稿与验证同栈完成</td><td>与推测解码的结构差异</td><td><span class="ev ev-p">P</span> 摘要（第 1 页）</td></tr>
+      <tr><td>实验硬件型号/数量、推理精度：论文未明确披露 †</td><td>数据路径运行环境</td><td><span class="ev ev-p">P</span>（本次证据源未载明）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong><span class="ev ev-p">P</span> 口径提醒（读数方式）：</strong>论文实验主要在<strong>批量 1</strong>（单请求）进行，评测集为 MT-Bench 多轮对话 <span class="ev ev-p">P</span>；论文亦指出大批量、长序列会收窄相对收益（线性层趋向计算受限、注意力成本上升）<span class="ev ev-p">P</span>。引用本页任何加速数字时必须携带这两个条件。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>步数减少 ↔ 验证开销（树规模）</h3>
+    <p><span class="ev ev-p">P</span> 候选树越大，被接受 token 率越高，但验证计算开销随之增加；候选数量存在最优区间——过少欠利用性能、过多开销反噬并最终降低加速 <span class="ev ev-p">P</span>（消融与仿真）。<span class="ev ev-i">I</span> 运维含义：树结构是部署后仍需持续调优的旋钮，应按业务负载校准而非照搬论文配置。</p>
+  </li>
+  <li>
+    <h3>无草稿模型 ↔ 必须训练头/适配</h3>
+    <p><span class="ev ev-p">P</span> 相比推测解码，Medusa 免去草稿模型的训练、对齐、serving 与分发 <span class="ev ev-p">P</span>；但代价是必须为每个目标模型训练解码头（Medusa-1/2/自蒸馏三选一），模型每升级一次就要重训 <span class="ev ev-i">I</span>。这是「一次性训练成本」与「长期双模型运维成本」的交换。</p>
+  </li>
+  <li>
+    <h3>速度 ↔ 质量/分布一致性</h3>
+    <p><span class="ev ev-p">P</span> Medusa-1 保持原模型不变但加速较低；Medusa-2 加速更高但需配方防降质（朴素联合微调会降低 Vicuna-7B 质量）；典型接受换取速度但放弃精确分布匹配 <span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 三档选择本质是同一根轴：离原模型分布多近，就牺牲多少速度。</p>
+  </li>
+  <li>
+    <h3>数据可得性 ↔ 自蒸馏成本</h3>
+    <p><span class="ev ev-p">P</span> 原始训练数据不可得或经 RLHF 对齐时，自蒸馏（目标模型自生成约 10 万样本 + 概率蒸馏）仍可训练头，且 LoRA 使其不必双模型驻留 <span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 代价是一次性的大规模生成推理成本与蒸馏质量依赖种子提示的代表性。</p>
+  </li>
+  <li>
+    <h3>批量 1 收益 ↔ 大批量/长序列衰减</h3>
+    <p><span class="ev ev-p">P</span> 解码的收益来自显存带宽瓶颈下的操作强度提升；大批量、长序列使线性层趋向计算受限、注意力成本上升，Medusa 相对收益收窄 <span class="ev ev-p">P</span>（附录分析）。<span class="ev ev-i">I</span> 容量规划必须按「目标并发区间」重新实测，不能把批量 1 的加速比外推到高并发吞吐场景。</p>
+  </li>
+  <li>
+    <h3>工程集成简单 ↔ 服务栈定制深度</h3>
+    <p><span class="ev ev-p">P</span> 头位于模型内部、无需独立草稿模型，集成面小 <span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 但树注意力算子、建树校准与接受逻辑都在推理框架的关键路径上，采用即意味着对推理栈的这些环节负责（版本、性能回归、监控），并非「零侵入」。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>Medusa 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算：批量 1 交互式解码，受显存带宽限制（附录分析）</th>
+        <td><span class="ev ev-e">E</span> 单卡推理实例即可承载 7B-33B 级模型（如各云 A10G/L4/A100 类实例；型号与显存按模型规模选择）</td>
+        <td>带宽受限机理为论文事实 <span class="ev ev-p">P</span>（附录）；实例规格为厂商目录示例 <span class="ev ev-e">E</span>；论文实验硬件论文未明确披露 †</td>
+      </tr>
+      <tr>
+        <th scope="row">服务形态：单模型 + 附加头；典型接受判定在采样路径上</th>
+        <td><span class="ev ev-e">E</span> 模型服务（自建 vLLM/TGI 类框架或云托管模型服务）承载「主干+头」打包产物；采样温度等参数随请求下发</td>
+        <td>单模型形态为论文事实 <span class="ev ev-p">P</span>；论文未绑定任何服务框架 <span class="ev ev-p">P</span>；框架选型为云实践 <span class="ev ev-e">E</span>/<span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">存储：主干权重 + Medusa 头/LoRA 适配器；无独立草稿模型制品</th>
+        <td><span class="ev ev-e">E</span> 模型制品库（对象存储/模型 registry）：权重与头版本配对存储、按 digest 拉取；KV 缓存驻留实例内存，无需外置</td>
+        <td>制品结构为论文机制 <span class="ev ev-p">P</span>（头是模型内部层、LoRA 免双模型）；制品管理为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">编排：头与主干的版本配对、发布与灰度</th>
+        <td><span class="ev ev-e">E</span> 推理服务发布流水线：模型制品版本 pin → 金丝雀实例 → 质量回归（MT-Bench 类评测）→ 全量</td>
+        <td>论文未涉及发布流程 <span class="ev ev-p">P</span>（超出论文范畴）；灰度与质量回归为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性：并发区间决定收益；卸载头可回退标准解码</th>
+        <td><span class="ev ev-e">E</span> 按并发/延迟 SLO 水平扩缩实例；「开关 Medusa 头」作为运行时降级开关（低并发开、高并发关）</td>
+        <td>大批量收益收窄为论文事实 <span class="ev ev-p">P</span>；回退开关的工程可行性源自「头是附加层」的机制 <span class="ev ev-p">P</span> + <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：被接受长度、验证开销、输出质量</th>
+        <td><span class="ev ev-e">E</span> 接入监控（每步被接受 token 数、每步墙钟时长、TPOT、质量抽评分数）；异常时回退标准解码并告警</td>
+        <td>论文以 MT-Bench 与加速比作为评测口径 <span class="ev ev-p">P</span>；监控指标设计为编辑建议 <span class="ev ev-i">I</span>、接入为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> ①交互式对话流量（低并发、短上下文）是 Medusa 收益最大的部署位；②高并发批量吞吐实例上应实测「开/关头」的差值后再决定启用范围；③同一服务内混合两类流量时，建议按路由分流而非在单实例内混跑，避免树验证开销拖累计算受限请求的尾延迟。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 推理场景的 SLO 口径</h3>
+<p><span class="ev ev-i">I</span> 交互式推理平台通常约束：①<strong>TTFT</strong>（首 token 延迟）；②<strong>TPOT</strong>（每 token 延迟/步时长）；③<strong>单请求吞吐</strong>（tokens/s）；④<strong>质量底线</strong>（MT-Bench 类评测分数或人工抽评通过率）。Medusa 直接作用于 ②③（一步多 token），对 ① 影响论文未明确披露 †；④ 必须自行设定阈值——论文口径是「质量变化小/不降质」，其评测集（MT-Bench）与业务分布未必一致 <span class="ev ev-p">P</span>（评测口径）+ <span class="ev ev-i">I</span>（SLO 框架）。</p>
+
+<h3>7.2 成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+单请求生成墙钟 ≈ 输出 token 数 ÷（每步被接受 token 数 × 步频）<br>
+单实例每小时产出 ≈ 并发请求数 × 每请求 tokens/s × 3600<br>
+每百万 token 成本 ≈ 实例时单价 ÷ 单实例每小时产出（记录单价查询日期）<br>
+启用 Medusa 的成本收益 ≈ 1 −（关头单请求墙钟 ÷ 开头单请求墙钟）×（开头与关头等质量的置信度折扣）
+</div>
+<p><span class="ev ev-i">I</span> 公式中可由论文参考的变量只有「每步被接受 token 数」带来的加速倍数（带完整条件，见 <a href="#experiments">#experiments</a>）；其余（单价、并发、输出长度分布、质量置信度）均需按部署实测填写，论文未披露、本页不给出伪精确数字。</p>
+
+<h3>7.3 敏感项排序（论文口径，条件互不可比）</h3>
+<p><span class="ev ev-p">P</span> 在各自条件下：任务类别差异最大（Vicuna-7B/Medusa-2：信息抽取 3.62×、代码 3.29×，高于整体 2.83×）＞训练方式差异（Medusa-1 2.18×/2.33× vs Medusa-2 2.83×）＞树结构差异（稀疏 64 优于密集 256）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 成本治理含义：先用类别级实测确定「哪些业务路由值得开头」，再定树结构；不同任务/训练方式/树结构的倍数<strong>不可相乘或横向比较</strong>。</p>
+
+<h3>7.4 数据缺口</h3>
+<ul>
+  <li>论文实验硬件（GPU 型号/数量）与推理精度：<span class="ev ev-p">P</span> 论文未明确披露 †——加速比无法换算为绝对时延或成本。</li>
+  <li>输入/输出长度分布、温度设置、批量 1 之外的实测曲线：<span class="ev ev-p">P</span> 论文未明确披露 †（大批量衰减仅有定性结论）。</li>
+  <li>云价格、能耗、树构建校准的一次性成本：<span class="ev ev-i">I</span> 论文未涉及，需部署时自测。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>模型资产保护：</strong><span class="ev ev-i">I</span> 「主干 + 头/LoRA 适配器」整体是模型 IP，制品库需按项目隔离、最小权限、静态加密与下载审计（云存储侧能力，<span class="ev ev-e">E</span>）。自蒸馏用的约 10 万条生成样本同样属敏感资产（可能含训练语料分布信息），访问要与权重同级管控 <span class="ev ev-p">P</span>（自蒸馏机制）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>供应链：</strong><span class="ev ev-r">R</span> 代码与训练权重来自论文明示仓库（<a href="#links">#links</a>）；<span class="ev ev-i">I</span> 引入时应按 digest/commit pin、扫描镜像与依赖、保留可回退版本。注意：本页对该仓库未做在线核验，接入前先人工复核归属与许可。</li>
+  <li><strong>多租户与缓存残留：</strong><span class="ev ev-i">I</span> KV 缓存驻留实例显存，实例在租户/会话间复用前必须重置，避免跨会话信息残留（通用推理服务要求，非 Medusa 特有）。</li>
+  <li><strong>输出风险：</strong><span class="ev ev-p">P</span> 论文明确 Medusa 继承底层模型的伦理、公平性、可解释性与误用风险；典型接受还引入与原分布的偏差 <span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 合规审查应以「Medusa 实际输出」为对象，而非以原模型报告代替。</li>
+</ul>
+
+<h3>8.2 可运维性（含恢复与回滚）</h3>
+<ul>
+  <li><strong>天然回退路径：</strong><span class="ev ev-i">I</span> 头是附加层——服务异常或质量回退时，可运行时卸载 Medusa 头、退回标准自回归解码（基线即回退态）。这是相对「独立草稿模型」方案的重要运维优势：回退不引入新部署物，只是关闭特性 <span class="ev ev-p">P</span>（机制推论）。</li>
+  <li><strong>故障恢复：</strong><span class="ev ev-i">I</span> 推理服务无训练态，故障恢复 = 实例重启 + 权重/头制品重新加载；检查点即模型制品本身。多实例无状态水平扩展，单实例故障由负载均衡摘除（云编排能力，<span class="ev ev-e">E</span>）。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 建议告警项：每步被接受 token 数的分布漂移（树/头失配信号）、TPOT 相对基线的变化、质量抽评分跌破阈值、验证开销占比异常上升。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-i">I</span> 主干与头版本必须配对 pin；升级走金丝雀 + 质量回归（MT-Bench 类评测 + 业务抽样），回滚 = 回退到「上一配对版本」或直接关头。模型升级（换骨干）必须重训头，发布计划要包含重训与再评测周期 <span class="ev ev-p">P</span>（头与模型绑定）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>验收基线：</strong><span class="ev ev-i">I</span> 上线前固定两组读数：关头（标准解码）与开头，各测吞吐/TPOT/质量，形成可复核的差值基线；此后任何变更以差值回归验收。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>批量 1 的交互式对话/Agent 单请求解码。</strong>触发：用户直接对话、单请求流式输出，延迟由逐 token 解码主导。理由：论文实验主口径即批量 1 + MT-Bench，加速 2.18×-2.83×（Vicuna 7B/13B）<span class="ev ev-p">P</span>（实验表）。</li>
+  <li><strong>不能接受独立草稿模型运维成本的团队。</strong>触发：想获得推测式加速、但不愿训练/对齐/分发/服务第二个模型。理由：Medusa 单模型内完成草稿与验证，头是轻量内部层 <span class="ev ev-p">P</span>（摘要级主张）。</li>
+  <li><strong>原模型必须逐字保留（Medusa-1）。</strong>触发：模型已对齐/已审计、不允许动骨干权重。理由：Medusa-1 冻结骨干只训头，质量不降、可配量化骨干 <span class="ev ev-p">P</span>（训练章节）。</li>
+  <li><strong>无原始训练数据的闭源/对齐模型（自蒸馏）。</strong>触发：只有模型 API/权重、无预训练语料。理由：自蒸馏用目标模型自生成约 10 万样本即可训头，LoRA 免双模型驻留；Vicuna-33B/Zephyr-7B 上墙钟加速 2.35×-2.83× <span class="ev ev-p">P</span>（自蒸馏章节与实验表）。</li>
+  <li><strong>解码占比高的代码/信息抽取类负载。</strong>触发：输出长、结构规整、头部预测命中率高的任务。理由：类别级加速更高（抽取 3.62×、代码 3.29×，Vicuna-7B/Medusa-2）<span class="ev ev-p">P</span>（实验表）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>高并发大批量吞吐场景为主。</strong>触发：持续批处理服务、批量越大越省成本的运营模式。理由：大批量下线性层趋向计算受限、注意力成本上升，Medusa 相对收益收窄 <span class="ev ev-p">P</span>（附录分析）。</li>
+  <li><strong>要求输出分布与原模型严格一致。</strong>触发：审计/合规要求「与基线模型输出同分布」。理由：典型接受只要求「合理」而非精确分布匹配 <span class="ev ev-p">P</span>；要严格一致需回到拒绝采样式方案 <span class="ev ev-i">I</span>。</li>
+  <li><strong>完全不能训练/改动模型的部署。</strong>触发：只拿现成权重做零改动推理，且无自蒸馏预算。理由：无论 Medusa-1/2 都要训练头，自蒸馏也需生成约 10 万样本的一次性推理成本 <span class="ev ev-p">P</span>。</li>
+  <li><strong>超长上下文主导的负载。</strong>触发：输入序列极长、注意力计算占比高。理由：注意力成本随序列上升会压缩 Medusa 相对收益 <span class="ev ev-p">P</span>（长序列衰减结论）。</li>
+  <li><strong>期望零调优即得论文加速比。</strong>触发：直接照搬论文头数/树结构上线。理由：树规模存在最优区间且需按负载校准（稀疏 64 优于密集 256 的结论依赖按准确率建树）<span class="ev ev-p">P</span>；加速数字仅限 Vicuna + MT-Bench + 批量 1 语境 <span class="ev ev-p">P</span>。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span></h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（†＝本次证据源未载明、提取不可读无法复核，引用前必须回 PDF 核验）</caption>
+    <tbody>
+      <tr><th scope="row">硬件</th><td>论文未明确披露 †（GPU 型号/数量/互联均未载明于本次证据源）</td></tr>
+      <tr><th scope="row">精度</th><td>论文未明确披露 †</td></tr>
+      <tr><th scope="row">模型与规模</th><td>Vicuna-7B、Vicuna-13B（ShareGPT 数据训练）；自蒸馏实验另含 Vicuna-33B、Zephyr-7B <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">批量/并发</th><td>实验主要在批量 1（单请求/交互式）进行 <span class="ev ev-p">P</span>；批量 1 之外的实测：论文未明确披露 †</td></tr>
+      <tr><th scope="row">输入/输出长度</th><td>评测集为 MT-Bench 多轮对话生成 <span class="ev ev-p">P</span>；具体输入/输出长度与温度设置：论文未明确披露 †</td></tr>
+      <tr><th scope="row">指标定义</th><td>「加速/speedup」＝相对基线的 MT-Bench 生成<strong>墙钟时间</strong>加速比 <span class="ev ev-p">P</span>；自蒸馏表另报告「加速率（acceleration rate）」与「开销（overhead）」，两者精确定义未能核验 †</td></tr>
+      <tr><th scope="row">基线</th><td>同一模型（Vicuna）未加速的标准自回归解码 <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">训练数据</th><td>主实验：ShareGPT；自蒸馏：种子取自 ShareGPT 或 UltraChat，约 10 万条生成样本 <span class="ev ev-p">P</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 论文实验结果（全量转录，条件逐条完整）</h3>
+<p>下表合并摘要级与实验级数字；所有加速比的基线均为同模型标准自回归解码，评测均为 MT-Bench 生成（批量 1）。不同行之间<strong>不可横向比较或相乘</strong>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文加速结果转录（均为 <span class="ev ev-p">P</span>；表号/页码未能核验 †，定位以论文结构为准）</caption>
+    <thead>
+      <tr>
+        <th scope="col">条目</th>
+        <th scope="col">模型 / 训练形态</th>
+        <th scope="col" class="num">加速比（墙钟，MT-Bench，批量 1）</th>
+        <th scope="col">其他条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">摘要级结论</th><td>通用口径：Medusa-1（冻结骨干）</td><td class="num">&gt;2.2×</td><td>声称不损失生成质量；硬件/精度 论文未明确披露 †</td></tr>
+      <tr><th scope="row">摘要级结论</th><td>通用口径：Medusa-2（联合训练）</td><td class="num">约 2.3×-2.8×</td><td>需防降质配方；硬件/精度 论文未明确披露 †</td></tr>
+      <tr><th scope="row">主实验</th><td>Vicuna-7B / Medusa-1</td><td class="num">2.18×</td><td>批量 1；MT-Bench；基线＝标准解码；质量不降（论文口径）</td></tr>
+      <tr><th scope="row">主实验</th><td>Vicuna-13B / Medusa-1</td><td class="num">2.33×</td><td>同上</td></tr>
+      <tr><th scope="row">主实验</th><td>Vicuna-7B / Medusa-2</td><td class="num">2.83×</td><td>同上；联合训练用论文配方</td></tr>
+      <tr><th scope="row">主实验</th><td>Vicuna-13B / Medusa-2</td><td class="num">2.83×</td><td>同上</td></tr>
+      <tr><th scope="row">类别级</th><td>Vicuna-7B / Medusa-2：信息抽取</td><td class="num">3.62×</td><td>类别级最高值，<strong>非整体加速</strong>；批量 1；MT-Bench</td></tr>
+      <tr><th scope="row">类别级</th><td>Vicuna-7B / Medusa-2：代码</td><td class="num">3.29×</td><td>同上</td></tr>
+      <tr><th scope="row">自蒸馏实验</th><td>Vicuna-33B、Zephyr-7B / Medusa-2 + 自蒸馏</td><td class="num">2.35×-2.83×（墙钟）</td><td>约 10 万条自生成样本（ShareGPT/UltraChat 种子）；质量变化小（论文口径）</td></tr>
+      <tr><th scope="row">自蒸馏实验（表内并列口径）</th><td>同上</td><td class="num">加速率 3.01-3.51；开销 1.18-1.27</td><td>两项指标的精确定义未能核验 †，不能与墙钟加速混用</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.3 消融与分析（论文口径）</h3>
+<ul>
+  <li><strong>树结构：</strong>树注意力重要但需谨慎配置；密集树提升被接受 token 率但增加验证开销；按准确率优化的稀疏树胜过更大密集树（64 节点 &gt; 256 节点密集）<span class="ev ev-p">P</span>（消融）。</li>
+  <li><strong>训练方式：</strong>朴素直接联合微调降低 Vicuna-7B 质量；Medusa-1 保持质量；Medusa-2 配方（组合损失/差分学习率/预热）在提速同时保持质量 <span class="ev ev-p">P</span>（消融）。</li>
+  <li><strong>候选数量仿真：</strong>候选 token 存在最优区间——过少欠利用、过多开销反噬并最终降低加速 <span class="ev ev-p">P</span>（附录仿真）。</li>
+  <li><strong>负载敏感性：</strong>更大批量、更长序列会收窄相对收益（线性层趋向计算受限、注意力成本上升）<span class="ev ev-p">P</span>。</li>
+</ul>
+
+<div class="table-scroll">
+  <table>
+    <caption>各结果的条件字段完整性与定位（† 见 10.1 脚注说明；缺项一律显式标注）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col">硬件</th><th scope="col">精度</th><th scope="col">批量/并发</th><th scope="col">IO（输入/输出）</th><th scope="col">基线</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">主实验（Medusa-1/2 加速）</th><td>论文未明确披露 †</td><td>论文未明确披露 †</td><td>批量 1</td><td>MT-Bench 多轮对话；长度 论文未明确披露 †</td><td>同模型标准自回归解码</td><td><span class="ev ev-p">P</span> 实验表（表号/页码未能核验 †）</td></tr>
+      <tr><th scope="row">类别级加速（抽取/代码）</th><td>论文未明确披露 †</td><td>论文未明确披露 †</td><td>批量 1</td><td>MT-Bench 对应类别子集 <span class="ev ev-p">P</span>；长度 论文未明确披露 †</td><td>同上</td><td><span class="ev ev-p">P</span> 实验表（表号/页码未能核验 †）</td></tr>
+      <tr><th scope="row">自蒸馏实验（33B/Zephyr）</th><td>论文未明确披露 †</td><td>论文未明确披露 †</td><td>批量 1（推断）</td><td>MT-Bench；生成样本约 10 万条（训练侧）</td><td>同上</td><td><span class="ev ev-p">P</span> 自蒸馏实验表（表号/页码未能核验 †）</td></tr>
+      <tr><th scope="row">树结构消融（64 vs 256）</th><td>论文未明确披露 †</td><td>论文未明确披露 †</td><td>论文未明确披露 †</td><td>论文未明确披露 †</td><td>表内密集/稀疏配置互比</td><td><span class="ev ev-p">P</span> 消融章节（页码未能核验）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①全部加速数字仅在「Vicuna 家族 + MT-Bench + 批量 1 + 同模型标准解码基线」语境成立，<strong>不可外推到其他模型、其他评测集或高并发场景</strong>，也<strong>不可与本站其他论文的数字直接比较</strong>；②类别级 3.62×/3.29× 是任务子集数字，不代表整体；③「加速率/开销」与「墙钟加速」是不同口径，禁止混用；④论文实验硬件与精度未能核验 †，数字无法换算绝对时延；⑤本页证据源为工具长摘要，<strong>所有数字引用前必须回原 PDF 复核</strong>（见 <a href="#evidence">#evidence</a>）。
+</div>
+
+<h3>10.4 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 回原 PDF 复核本页全部数字的表号/页码与实验硬件（本次未能完成的一步）。</li>
+  <li><span class="ev ev-i">I</span> 从论文明示仓库取代码与训练好的头（确认归属与许可后 pin commit/digest）。</li>
+  <li><span class="ev ev-i">I</span> 固定硬件与精度口径，先测关头基线：MT-Bench 同集、批量 1，记录吞吐/TPOT/质量分。</li>
+  <li><span class="ev ev-i">I</span> 开头复测同负载；再扫树规模（含稀疏/密集各一组）找到自身负载的最优区间。</li>
+  <li><span class="ev ev-i">I</span> 在目标并发区间（不只批量 1）重复差值测量，确定启用的流量路由范围。</li>
+  <li><span class="ev ev-i">I</span> 训练自己的头时：有数据走 Medusa-1/2 配方，无数据走自蒸馏；两种情况都做质量回归后再上线。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2401.10774" rel="noopener noreferrer">https://arxiv.org/abs/2401.10774</a></td>
+        <td><span class="ev ev-p">P</span> arXiv:2401.10774（2024-01 提交；具体版本本次未核验）；本地 PDF：<code>07_Medusa_2401.10774.pdf</code>（总页数未能本次核验；本次会话未能逐页复核，见 <a href="#evidence">#evidence</a>）</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/FMLYD/Medusa" rel="noopener noreferrer">https://github.com/FMLYD/Medusa</a></td>
+        <td><span class="ev ev-r">R</span> 论文明示（摘要脚注，第 1 页）。核验状态：本次会话既未解析 PDF 逐字复核该脚注、也未在线访问该 URL；「FMLYD/Medusa 为论文明示官方仓库」来自站外通识与论文记录，<strong>使用前必须人工复核归属、活跃度与许可</strong>。若复核不符，应按「未核验到官方仓库」处理，不得沿用本链接。</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库</th>
+        <td>不提供</td>
+        <td><span class="ev ev-i">I</span> 遵循本站「不猜测仓库」策略：论文摘要未明示且未经核验的第三方/镜像/集成仓库一律不链接。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验项，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 明确目标流量形态：批量 1 交互式为主（论文验证区间），还是高并发吞吐为主（收益收窄）（P：批量 1 实验口径与大批量衰减结论）</label></li>
+      <li><label><input type="checkbox"> 明确延迟目标（TPOT/端到端）与当前基线读数，确定加速需求是否真实存在（I）</label></li>
+      <li><label><input type="checkbox"> 明确质量底线与评测集（MT-Bench 类 + 业务抽样），写进验收标准（P：论文以 MT-Bench 为评测；I：阈值自定）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认目标模型可训练头（有权重/可微调）或可自蒸馏（可大规模生成样本）（P：三种训练形态的前提）</label></li>
+      <li><label><input type="checkbox"> 确认推理框架能承载树注意力与接受逻辑（或使用官方实现），并纳入版本管理（P：机制在关键路径上；I：工程前提）</label></li>
+      <li><label><input type="checkbox"> 核验官方仓库归属/许可/活跃度后再引入；本页链接未在线核验（R：核验责任在使用方）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 复测「关头 vs 开头」差值：同硬件、同评测集、批量 1，记录吞吐/TPOT/质量三分数（P：基线口径；I：方法）</label></li>
+      <li><label><input type="checkbox"> 扫描树结构（稀疏/密集、节点数）找自身负载最优区间，不照搬论文配置（P：64&gt;256 消融；I：扫描方法）</label></li>
+      <li><label><input type="checkbox"> 在目标并发区间复测，确认收益没有因批量化归零（P：大批量衰减；I：实测要求）</label></li>
+      <li><label><input type="checkbox"> 质量回归：整体分数 + 高风险业务抽样，确认典型接受的分布偏差可接受（P：典型接受≠分布一致）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label><input type="checkbox"> 显存预算＝主干权重 + 头/适配器 + KV 缓存（含树内候选的临时 KV 峰值）（P：候选树 KV；I：峰值估算）</label></li>
+      <li><label><input type="checkbox"> 实例选型按显存带宽/延迟而非峰值 FLOPS（P：带宽受限机理；I：选型建议）</label></li>
+      <li><label><input type="checkbox"> 自蒸馏路线预算一次性生成推理成本（约 10 万样本）与蒸馏数据治理（P：样本规模；I：成本项）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义 TPOT/单请求吞吐 SLO 并以「开头/关头」两组读数固化基线（I）</label></li>
+      <li><label><input type="checkbox"> 定义质量 SLO：MT-Bench 类分数 + 业务抽样通过率，跌破即回退（P：质量可测；I：阈值）</label></li>
+      <li><label><input type="checkbox"> 故障演练：实例重启恢复（重新加载权重+头）与运行时关头降级各演练一次（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以「当时单价 + 查询日期」估算每百万 token 成本差（I）</label></li>
+      <li><label><input type="checkbox"> 把「按流量路由开头」设计进去：只对高收益业务启用，避免全量摊薄失败（P：类别级差异大；I：路由策略）</label></li>
+      <li><label><input type="checkbox"> 计入一次性成本：头训练/自蒸馏、树校准、每轮模型升级的重训（P：头与模型绑定；I：成本项）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> 模型制品（权重+头+自蒸馏数据）入库：隔离、最小权限、静态加密、下载审计（E/I）</label></li>
+      <li><label><input type="checkbox"> 供应链 pin：仓库 commit/镜像 digest 锁定 + 扫描 + 可回退层（I；R：先完成仓库核验）</label></li>
+      <li><label><input type="checkbox"> 输出合规以「Medusa 实际输出」为审查对象（含典型接受偏差）（P：分布偏差与风险继承）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 主干与头版本配对 pin；发布走金丝雀 + 质量回归（I）</label></li>
+      <li><label><input type="checkbox"> 运行时「关头回退标准解码」开关就绪并有告警联动（P：头为附加层的机制推论；I：开关设计）</label></li>
+      <li><label><input type="checkbox"> 监控被接受长度分布漂移、TPOT、质量抽评（I）</label></li>
+      <li><label><input type="checkbox"> 回滚预案：上一配对版本制品 + 关头开关，两者都能独立执行（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 退出成本≈零：关闭特性即回到基线解码，无数据/格式迁移（P：基线即回退态；I：评估）</label></li>
+      <li><label><input type="checkbox"> 归档训练配方（数据、超参、树结构、校准集）与验收记录，保证可重建（I）</label></li>
+      <li><label><input type="checkbox"> 若转向其他推测式方案（含独立草稿模型），把双模型运维成本计入对比（P：无草稿模型是核心卖点；I：对比框架）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与核验记录见构建文件 <code>sources/medusa.evidence.json</code>。核验日期为 <time datetime="2026-09-14">2026-09-14</time>。</p>
+
+<div class="callout callout-warning">
+  <strong>核验范围声明：</strong>本页写作时，本地提取文件 <code>sources/medusa.txt</code> 编码不可读（工具拒绝解析）、且本次会话不能执行 PDF 解析，故事实来源为 summarize 工具基于该 PDF 生成的长摘要（<code>sources/medusa.summary.json</code>）。摘要属「二次提取物」，按本站规则不能单独作为事实来源——因此本页所有数字均标注「引用前必须回 PDF 复核」，页码级定位仅完成「摘要在第 1 页」一项。重跑 <code>summarize --extract</code> 恢复可读提取后，应补做逐页核验并更新本台账。
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>框架名 Medusa；arXiv:2401.10774；本地 PDF <code>07_Medusa_2401.10774.pdf</code></td><td><span class="ev ev-p">P</span></td><td>论文题名块（第 1 页）；arXiv 号另见文件名</td><td>部分核验（摘要内容已核；英文全题/作者/机构未能逐字核验）</td></tr>
+      <tr><td>机制：附加解码头并行预测多个后续 token；无独立草稿模型</td><td><span class="ev ev-p">P</span></td><td>摘要（第 1 页）+ 机制章节</td><td>已核验（工具摘要）；页码复核待补</td></tr>
+      <tr><td>解码受显存带宽限制；每步搬运全部权重；Medusa 提高操作强度</td><td><span class="ev ev-p">P</span></td><td>附录硬件分析</td><td>已核验（工具摘要）；页码复核待补</td></tr>
+      <tr><td>树注意力：候选只看祖先，整树一次前向验证；取最长有效前缀</td><td><span class="ev ev-p">P</span></td><td>机制章节</td><td>已核验（工具摘要）；页码复核待补</td></tr>
+      <tr><td>Medusa-1：冻结骨干、加权交叉熵、省显存、可配量化骨干、质量不降、&gt;2.2×</td><td><span class="ev ev-p">P</span></td><td>摘要（第 1 页）+ 训练章节；2.18×/2.33× 见实验表</td><td>已核验（工具摘要）；表号/页码复核待补</td></tr>
+      <tr><td>Medusa-2：联合训练（组合损失/差分学习率/预热）；约 2.3×-2.8×，实测 2.83×（7B/13B）；朴素联合微调降质</td><td><span class="ev ev-p">P</span></td><td>摘要（第 1 页）+ 训练章节 + 消融</td><td>已核验（工具摘要）；表号/页码复核待补</td></tr>
+      <tr><td>自蒸馏：目标模型自生成约 10 万样本（ShareGPT/UltraChat 种子）；概率蒸馏 + LoRA；33B/Zephyr 墙钟 2.35×-2.83×、加速率 3.01-3.51、开销 1.18-1.27</td><td><span class="ev ev-p">P</span></td><td>自蒸馏章节 + 实验表</td><td>已核验（工具摘要）；指标定义与表号复核待补</td></tr>
+      <tr><td>典型接受：原模型分布下合理即接受，非精确分布匹配；温度&gt;0 时有效</td><td><span class="ev ev-p">P</span></td><td>典型接受章节</td><td>已核验（工具摘要）；页码复核待补</td></tr>
+      <tr><td>类别级加速：抽取 3.62×、代码 3.29×（Vicuna-7B/Medusa-2）</td><td><span class="ev ev-p">P</span></td><td>实验表（类别级结果）</td><td>已核验（工具摘要）；表号/页码复核待补</td></tr>
+      <tr><td>树结构消融：稀疏 64 节点 &gt; 密集 256 节点；建树按校准 top-1 准确率贪心</td><td><span class="ev ev-p">P</span></td><td>消融章节</td><td>已核验（工具摘要）；页码复核待补</td></tr>
+      <tr><td>训练至多 5 头；推理常用 3-4 头；候选数量有最优区间（仿真）</td><td><span class="ev ev-p">P</span></td><td>训练/消融/附录仿真</td><td>已核验（工具摘要）；页码复核待补</td></tr>
+      <tr><td>大批量/长序列收窄相对收益（计算受限转向）</td><td><span class="ev ev-p">P</span></td><td>实验讨论/附录分析</td><td>已核验（工具摘要）；页码复核待补</td></tr>
+      <tr><td>官方仓库 <code>github.com/FMLYD/Medusa</code></td><td><span class="ev ev-r">R</span></td><td>论文摘要脚注（第 1 页）</td><td>未复核（本次未解析 PDF 复核脚注原文、未在线访问；使用前必须人工核验）</td></tr>
+      <tr><td>云实例/服务/存储/监控映射示例</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录与推理服务文档</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>成本公式、SLO/监控/回滚/清单等工程建议；控制面-数据面划分</td><td><span class="ev ev-i">I</span></td><td>本报告 §6-§9、§12</td><td>编辑标注完成；不含伪精确数字</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="06-eagle.html" rel="prev">上一篇：06 EAGLE（文件可能尚未发布）</a>
+  <a href="08-kivi.html" rel="next">下一篇：08 KIVI（文件可能尚未发布）</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页论文事实基于本地 <code>07_Medusa_2401.10774.pdf</code>（arXiv:2401.10774）经 summarize 工具生成的长摘要（<code>sources/medusa.summary.json</code>）；因本地提取文件不可读且本次会话无法解析 PDF，未完成逐页页码核验，所有数字引用前必须回原 PDF 复核。云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；官方仓库代码与权重许可以仓库当时声明为准（本页未在线核验，使用前先复核）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-14；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+</body>
+</html>

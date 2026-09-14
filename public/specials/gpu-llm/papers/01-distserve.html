@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DistServe：prefill/decode 分离的 goodput 优化服务（论文 01 解读）</title>
+<meta name="description" content="基于本地论文 PDF（01_DistServe_2401.09670.pdf，arXiv:2401.09670v3）的中文架构解读：DistServe 将预填与解码分离部署，面向 TTFT/TPOT 双 SLO 优化每 GPU goodput，含数据路径、云上映射、成本与决策清单。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+:root{
+  --bg:#ffffff; --fg:#1f2937; --muted:#4b5563; --line:#d4d9e0;
+  --primary:#14385c; --primary-weak:#eef3fa;
+  --cyan:#0e7490; --cyan-weak:#e6f7fb;
+  --purple:#6d28d9; --purple-weak:#f3ecfd;
+  --orange:#c2410c; --orange-weak:#fdeada;
+  --amber:#92400e; --amber-weak:#fef3c7;
+  --red:#b91c1c; --red-weak:#fee2e2;
+  --code-bg:#f3f4f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#10161f; --fg:#e5eaf2; --muted:#b6c0ce; --line:#3a4657;
+    --primary:#c7d9ee; --primary-weak:#1b2a3d;
+    --cyan:#7dd3e8; --cyan-weak:#0d2a33;
+    --purple:#c9b2f5; --purple-weak:#241a3d;
+    --orange:#f3b58a; --orange-weak:#3a2113;
+    --amber:#fbd88a; --amber-weak:#33270e;
+    --red:#f5a9a9; --red-weak:#3a1414;
+    --code-bg:#1a2230;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:16px; line-height:1.7;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:1.6em; line-height:1.35; color:var(--primary); margin:1.2em 0 .4em}
+h2{font-size:1.28em; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:.25em; margin-top:2.2em}
+h3{font-size:1.05em; margin-top:1.6em}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.92em}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:.6em 1em; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:.5em 1.5em; justify-content:space-between; align-items:baseline; padding:.7em 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:1.2em}
+.breadcrumb{padding:.6em 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:.3em; margin:0; padding:0; font-size:.92em}
+.breadcrumb li+li::before{content:"/"; margin-right:.3em; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:8px; background:var(--primary-weak); padding:.9em 1.1em; margin:1.2em 0}
+.fact-card h3{margin:.2em 0 .5em}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:.5em; padding:0; margin:.4em 0 .8em}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:.05em .8em; font-size:.88em}
+.ev{display:inline-block; border:1.5px solid var(--muted); border-radius:5px; padding:0 .45em; font-size:.82em; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:6px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:.8em 1em; margin:1.1em 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:1.1em 0}
+table{border-collapse:collapse; width:100%; font-size:.92em}
+caption{caption-side:top; text-align:left; font-weight:700; padding:.3em 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:.45em .6em; text-align:left; vertical-align:top}
+thead th{background:var(--primary-weak); color:var(--primary)}
+tbody th{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:.9em; margin:1.1em 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:8px; padding:.8em 1em; background:var(--bg)}
+.tradeoff-grid h3{margin:.1em 0 .4em; font-size:1em; color:var(--primary)}
+.fit-list li{margin:.7em 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:1em 0}
+.decision-checklist ul{list-style:none; padding-left:.2em}
+.decision-checklist ul li{margin:.35em 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:.4em}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:.6em; justify-content:space-between; margin:1.4em 0}
+.pager a{display:inline-block; min-height:44px; padding:.45em 1em; border:1px solid var(--line); border-radius:8px; background:var(--bg); text-decoration:none}
+.pager a:hover{background:var(--primary-weak)}
+.architecture-diagram{border:1px solid var(--line); border-radius:8px; padding:.8em; margin:1.2em 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:.88em; color:var(--muted); margin-top:.6em}
+.toc{border:1px solid var(--line); border-radius:8px; padding:.6em 1em; margin:1.2em 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:.4em 0; padding-left:1.4em; columns:2; column-gap:2em}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:1.02em; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:.8em 1em; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.9em}
+.site-footer{border-top:1px solid var(--line); padding:1em 16px 2em; font-size:.88em; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">推理服务与资源调度</a></li>
+    <li aria-current="page">DistServe</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>DistServe：面向 goodput 优化的 prefill / decode 分离式大模型服务系统</h1>
+<p class="lede">本页为第 01 篇（推理服务与资源调度类），全部定量内容取自本地论文 PDF <code>01_DistServe_2401.09670.pdf</code>（arXiv:2401.09670v3，2024-06-06），并逐条标注 PDF 页码与章节。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：推理服务</li>
+    <li>形态：分布式（多实例、多 GPU）</li>
+    <li>目标硬件：NVIDIA A100 80GB SXM（论文实验口径）</li>
+    <li>核心资源：GPU 算力 · HBM/KV Cache · 节点内/节点间网络带宽</li>
+    <li>证据状态：P + R（正文含 E/I 标签）</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-14">2026-09-14</time>（逐页核对 PDF 原页；官方仓库已在线核验）。</p>
+  <p><strong>证据完整度：</strong>关键定量结论均带 PDF 页码/表号与完整测试条件，未获取的字段一律写明「论文未明确披露」；仓库经在线核验（R）；云上产品映射为示例（E，未逐一核验规格与价格）；成本与运维建议为参数化推断（I）。本页不设任何评分。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev evidence-badge ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev evidence-badge ev-r" title="论文明确链接且经核验的官方仓库">R＝官方仓库</span>
+    <span class="ev evidence-badge ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev evidence-badge ev-i" title="编辑推断/建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="../index.html" rel="prev">上一篇：本篇为第 01 篇，返回论文目录</a>
+  <a href="02-sarathi-serve.html" rel="next">下一篇：02 Sarathi-Serve</a>
+</nav>
+
+<details class="toc" open>
+  <summary>页内目录（13 节，锚点固定）</summary>
+  <nav aria-label="页内目录">
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </nav>
+</details>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<table class="table-scroll">
+  <caption>论文元数据</caption>
+  <tbody>
+    <tr><th scope="row">英文题名</th><td>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving</td></tr>
+    <tr><th scope="row">中文题名（编辑译）<span class="ev evidence-badge ev-i">I</span></th><td>DistServe：面向 goodput 优化的大语言模型服务预填—解码分离系统</td></tr>
+    <tr><th scope="row">作者与机构</th><td>Yinmin Zhong、Shengyu Liu、Jianbo Hu、Xuanzhe Liu、Xin Jin（北京大学）；Junda Chen、Hao Zhang（ UC San Diego）；Yibo Zhu（StepFun）<span class="ev evidence-badge ev-p">P</span> 第 1 页</td></tr>
+    <tr><th scope="row">版本与日期</th><td>arXiv:2401.09670v3 [cs.DC]，2024-06-06 <span class="ev evidence-badge ev-p">P</span> 第 1 页；论文 PDF 未标注会议录用信息（截至该版本）</td></tr>
+    <tr><th scope="row">官方代码仓库</th><td>GitHub：LLMServe/DistServe（论文第 2 页脚注 2 给出；在线核验见 <a href="#links">#links</a>）<span class="ev evidence-badge ev-r">R</span></td></tr>
+    <tr><th scope="row">本地输入 PDF</th><td><code>01_DistServe_2401.09670.pdf</code>（本页证据来源，不随站点公开分发）</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <strong>一句话判断：</strong>在拥有多 GPU 集群、且业务对 TTFT 与 TPOT 同时设硬性 SLO 的在线 LLM 服务中，把预填（prefill）与解码（decoding）拆分到不同 GPU、并按各自负载联合优化资源分配与并行策略，能显著提高每 GPU goodput、降低满足 SLO 的单位查询成本 <span class="ev evidence-badge ev-p">P</span>（第 1–2、10–11 页）；但在单卡、无严格 SLO 或纯离线吞吐场景下收益有限，且系统要为双份权重显存、跨实例 KV 传输与故障传播付出代价 <span class="ev evidence-badge ev-p">P</span>（第 6–8、13 页）。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>现有系统把 prefill 与 decode 共置在同一批 GPU 上连续批处理，导致两阶段互相干扰、排队延迟叠加，且资源与并行策略被耦合绑定，为同时满足 TTFT/TPOT 两套 SLO 只能过度配置 GPU <span class="ev evidence-badge ev-p">P</span>（第 1、3–4 页）。</li>
+  <li><strong>关键观察：</strong>prefill 处理整段 prompt、偏算力受限；decode 每步只处理一个新 token、偏显存带宽受限；两类计算特性与延迟目标天然不同，本就不该共享同一份并行配置 <span class="ev evidence-badge ev-p">P</span>（第 3 页 §2.1）。</li>
+  <li><strong>方案：</strong>按「实例」（一份完整模型权重所在的资源单元）粒度拆出 prefill 实例与 decoding 实例；用「模拟器 + 枚举搜索」在部署前求出每阶段的并行策略、实例数与物理放置（高/低节点亲和两套算法），运行期用 FCFS 加最短队列派发、KV Cache「拉取」传输与周期性重规划 <span class="ev evidence-badge ev-p">P</span>（第 4、6–8 页）。</li>
+  <li><strong>结果：</strong>在 OPT-13B/66B/175B、FP16、A100-80GB 集群、ShareGPT/HumanEval/LongBench 三类负载上，相对 vLLM 与 DeepSpeed-MII，SLO 达标 90% 约束下最多多服务 7.4× 请求、或承受 12.6× 更紧的 SLO；KV 传输时延占比不足 0.1% <span class="ev evidence-badge ev-p">P</span>（第 1、10–11 页；完整条件见 <a href="#experiments">#experiments</a>）。</li>
+  <li><strong>边界：</strong>论文自述在单 GPU/资源受限环境设计空间严重受限、离线吞吐优先场景可能不如 chunked-prefill、未实现抢占与容错 <span class="ev evidence-badge ev-p">P</span>（第 8、13 页）；实验全部基于 OPT（MHA）与合成泊松到达，SLO 为经验设定 <span class="ev evidence-badge ev-p">P</span>（第 9 页）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文声称的主要结果（头条数字及其完整条件）</caption>
+    <thead>
+      <tr>
+        <th scope="col">结论/数字</th><th scope="col">指标定义</th><th scope="col">硬件</th><th scope="col">模型/规模</th><th scope="col">精度</th><th scope="col">批量/并发/到达</th><th scope="col">输入/输出长度</th><th scope="col">基线</th><th scope="col">论文定位</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>最多多服务 7.4× 请求，或承受 12.6× 更紧 SLO，且 &gt;90% 请求满足时延约束</td>
+        <td>SLO 达标率 90% 约束下的最大每 GPU 请求速率（goodput）；及可承受的最紧 SLO 倍数</td>
+        <td>4 节点 × 8 × NVIDIA SXM A100-80GB，节点内 NVLINK，跨节点 25 Gbps</td>
+        <td>OPT-13B/66B/175B（26/132/350 GB）</td>
+        <td>FP16</td>
+        <td>泊松合成到达、速率扫描；具体批量/并发数值：论文未明确披露</td>
+        <td>ShareGPT（输入均值 755.5 / 输出均值 200.3 token）等三数据集</td>
+        <td>vLLM（连续批处理 + PagedAttention）；DeepSpeed-MII（chunked-prefill）</td>
+        <td>第 1 页摘要；第 9 页 §6.1；第 10–11 页 §6.2（详表见 <a href="#experiments">#experiments</a>）</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<h3>双阶段计算与双延迟指标</h3>
+<p>LLM 服务一次请求分两段：<strong>prefill</strong> 一次性并行处理整段 prompt 生成首个 token；<strong>decoding</strong> 每步仅处理一个新 token、自回归地生成后续 token <span class="ev evidence-badge ev-p">P</span>（第 1 页 §1）。由此产生两个独立指标：<strong>TTFT</strong>（time to first token，prefill 阶段耗时）与 <strong>TPOT</strong>（time per output token，除首 token 外平均每 token 生成时间）；单请求总时延 = TTFT + TPOT × 解码 token 数 <span class="ev evidence-badge ev-p">P</span>（第 1–2 页，第 2 页脚注 1）。不同应用的侧重不同：实时聊天机器人重低 TTFT，TPOT 只要快于人的阅读速度（约 250 词/分钟）即可；文档摘要则重低 TPOT <span class="ev evidence-badge ev-p">P</span>（第 2 页）。</p>
+<p>计算特性上，prefill 对算力要求随 token 数超线性增长，长 prompt 时趋向<strong>算力受限</strong>（13B 模型处理 512 token 即可打满一张 A100）；decoding 每步访存量与 prefill 相当，趋向<strong>显存带宽受限</strong>；两阶段都要把权重与中间状态在 HBM 与 SRAM 间反复搬运，并把 KV Cache 留在显存中供后续解码复用 <span class="ev evidence-badge ev-p">P</span>（第 3 页 §2.1）。</p>
+
+<h3>共置（colocation）服务的三重问题</h3>
+<ol>
+  <li><strong>prefill–decode 干扰：</strong>一个 prefill 步远长于 decode 步；连续批处理把两者混入同一批，decode 步被拉长（TPOT 恶化），decode 任务也推高 prefill 完成时间（TTFT 恶化），干扰随输入长度增大而加剧 <span class="ev evidence-badge ev-p">P</span>（第 2 页 §1、第 4 页图 2）。</li>
+  <li><strong>调度难以奏效：</strong>即使分开排队，两阶段仍争抢 GPU；优先任何一方都会牺牲另一方，优先级调度失效 <span class="ev evidence-badge ev-p">P</span>（第 4 页 §2.3）。chunked-prefill 加 piggyback（把长 prefill 切块并捎带 decode）能缓解但不能消除干扰：切得过小 prefill 执行时间变长，切到接近饱和又捎带不上 decode，且 N 个分块导致 O(N²) 次 KV Cache 的 HBM→SRAM 重复加载（非分块为 O(N)）<span class="ev evidence-badge ev-p">P</span>（第 3–4 页 §2.2–2.3）。</li>
+  <li><strong>资源与并行策略耦合：</strong>共置迫使两阶段共享同一套资源分配与并行配置，只能迁就更苛刻的一侧，结果常常是对两侧都过度配置 <span class="ev evidence-badge ev-p">P</span>（第 4 页 §2.3）。</li>
+</ol>
+<p>论文用一组动机实验量化代价：13B 模型、输入 512 / 输出 64 token、单张 A100-80GB、合成摘要负载下，共置系统在 90% SLO 达标率下每 GPU 只能承载约 1.6 req/s，而独立服务的 prefill-only 与 decode-only 曲线分别达 5.6 与 10 req/s；按 2 卡 prefill + 1 卡 decode 组合可得整体 10 req/s（合 3.3 req/s/卡，2.1× 于共置）<span class="ev evidence-badge ev-p">P</span>（第 1–2 页图 1 及 §1；完整口径见 <a href="#experiments">#experiments</a> 表）。</p>
+
+<h3>目标工作负载与约束</h3>
+<p>目标是在<strong>在线、有严格 TTFT/TPOT 双 SLO</strong> 的场景下最大化<strong>每 GPU goodput</strong>——在 SLO 达标率目标（论文主口径 90%）内每张已配置 GPU 可承载的最大请求速率；goodput 越高，达标前提下的单查询成本越低 <span class="ev evidence-badge ev-p">P</span>（第 1–2 页）。基线系统为采用连续批处理与共置架构的 vLLM、以及 chunked-prefill 方案 DeepSpeed-MII <span class="ev evidence-badge ev-p">P</span>（第 10 页 §6.1）。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>实例化分离</h3>
+<p>论文以<strong>实例（instance）</strong>为基本单元：管理<strong>恰好一份完整模型权重</strong>的资源单元，应用模型并行时可横跨多张 GPU。分离后分为 <strong>prefill 实例</strong>（只做预填、产出首个 token 与 KV Cache）与 <strong>decoding 实例</strong>（承接 KV Cache 与首 token，做后续逐步解码）；因 decode 的 GPU 利用率低，常见配置是多台 prefill 实例对应一台 decoding 实例 <span class="ev evidence-badge ev-p">P</span>（第 4 页 §2.3）。</p>
+
+<h3>控制面与数据面职责</h3>
+<div class="table-scroll">
+  <table>
+    <caption>DistServe 组件的控制面/数据面职责（平面划分为编辑归纳 <span class="ev evidence-badge ev-i">I</span>，组件事实均出自论文）</caption>
+    <thead>
+      <tr><th scope="col">组件</th><th scope="col">平面</th><th scope="col">职责（论文口径）</th><th scope="col">证据</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">RESTful API 前端</th><td>控制面</td><td>OpenAI API 兼容接口，接收采样参数（最大输出长度、温度等）</td><td><span class="ev evidence-badge ev-p">P</span> 第 9 页 §5</td></tr>
+      <tr><th scope="row">集中控制器</th><td>控制面</td><td>FCFS 调度：请求派发给当前队列最短的 prefill 实例，随后派给负载最轻的 decoding 实例</td><td><span class="ev evidence-badge ev-p">P</span> 第 8 页 §4.3</td></tr>
+      <tr><th scope="row">编排层</th><td>控制面</td><td>管理 prefill/decoding 实例，负责请求派发、KV Cache 传输与结果回传</td><td><span class="ev evidence-badge ev-p">P</span> 第 9 页 §5</td></tr>
+      <tr><th scope="row">placement 算法模块 + 模拟器</th><td>控制面</td><td>部署前基于 FLOPs/访存延迟模型与历史负载分布，枚举并行配置并模拟 SLO 达标率，二分搜索最大 goodput，输出并行策略、实例数与放置</td><td><span class="ev evidence-badge ev-p">P</span> 第 7 页 §4.1、第 17 页附录 A</td></tr>
+      <tr><th scope="row">workload profiler / 重规划</th><td>控制面</td><td>周期监测平均输入/输出长度、到达率等；模式显著漂移时触发重跑放置算法（秒级求解，权重重载分钟级）</td><td><span class="ev evidence-badge ev-p">P</span> 第 8 页 §4.3、第 12 页 §6.5</td></tr>
+      <tr><th scope="row">prefill / decoding 实例（并行执行引擎）</th><td>数据面</td><td>Ray actor 实现的 GPU worker 执行推理并分布式管理 KV Cache；集成连续批处理、FlashAttention、PagedAttention；支持 OPT、LLaMA</td><td><span class="ev evidence-badge ev-p">P</span> 第 9 页 §5</td></tr>
+      <tr><th scope="row">KV Cache 传输</th><td>数据面</td><td>「拉取」式：decoding 实例按需取 KV，prefill 实例显存充当排队缓冲；节点内用异步 cudaMemcpy（NVLINK），跨节点用 NCCL</td><td><span class="ev evidence-badge ev-p">P</span> 第 8 页 §4.3、第 9 页 §5</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="callout callout-inference">
+  <strong><span class="ev evidence-badge ev-i">I</span> 编辑解释：</strong>论文原文按模块与职责描述系统（第 6–9 页），并未使用「控制面/数据面」一词；上表的平面划分是本页为方便云架构师对位编排与运行时组件所作的归纳，不改变论文事实本身。
+</div>
+
+<h3>每阶段的批处理与并行策略（离线分析）</h3>
+<ul>
+  <li><strong>prefill 批处理：</strong>先对目标模型+GPU 做性能画像，找出打满 GPU 的临界输入长度 <code>Lm</code>（13B 模型为 512 token / A100）；仅当请求输入短于 <code>Lm</code> 才合并批处理，否则逐请求调度，prefill 批量总体保持较小 <span class="ev evidence-badge ev-p">P</span>（第 4–5 页 §3.1、图 3(a)）。</li>
+  <li><strong>prefill 并行：</strong>分离后的 prefill 实例近似 M/D/1 排队（FCFS、单请求即饱和 GPU）。低到达率下执行时间占主导，算子内并行（intra-op，含速度系数 K，1&lt;K&lt;2）更优；高到达率下排队时延占主导，算子间流水（inter-op，可线性扩速率容量）更优；SLO 越紧、通信越好（K 越小）越偏向 intra-op <span class="ev evidence-badge ev-p">P</span>（第 5 页 §3.1、式 1–3、图 4）。</li>
+  <li><strong>decoding 批处理：</strong>单任务严重带宽受限，大批量是提高利用率的关键；分离后可用大批量而不牺牲 TPOT，批量上限受 KV Cache 显存约束，PagedAttention 与 GQA 等可进一步放大批量 <span class="ev evidence-badge ev-p">P</span>（第 5–6 页 §3.2、图 3(b)）。</li>
+  <li><strong>decoding 并行：</strong>TPOT SLO 紧时用 intra-op 压低单步时延（收益递减）；吞吐优先时用 inter-op 近线性扩容；模型能放进单卡时，多副本复制同样线性扩速率并降低排队时延，代价是多份权重显存 <span class="ev evidence-badge ev-p">P</span>（第 5–6 页 §3.2、图 5）。</li>
+  <li><strong>非均匀长度与气泡：</strong>真实负载输入长短不一，会使 inter-op 流水出现气泡；系统通过按「批内新 token 数」（批执行时间的可靠指标）平衡各流水批来缓解 <span class="ev evidence-badge ev-p">P</span>（第 6 页 §3.3、第 8 页 §4.3）。</li>
+</ul>
+
+<h3>两个放置算法（部署前求解）</h3>
+<ul>
+  <li><strong>高节点亲和（Alg.1）：</strong>面向跨节点高速网（如 InfiniBand）集群，prefill 与 decoding 可放任意节点。分别枚举两阶段并行配置、用模拟器评估 SLO 达标下的最大速率，再按 <code>n = ⌈R / goodput⌉</code> 复制到目标流量；复杂度 O(NM²)（N 为实例节点数上限，M 为每节点 GPU 数，如 8），最大设置下求解不足 1.3 分钟 <span class="ev evidence-badge ev-p">P</span>（第 7 页 §4.1、算法 1、第 12 页 §6.5）。</li>
+  <li><strong>低节点亲和（Alg.2）：</strong>面向跨节点带宽受限集群。利用 inter-op 把实例切成「段」，把同一 stage 的 prefill 段与 decoding 段共置于同一节点，强制中间状态只走节点内 NVLINK；每节点内枚举配置求最优后复制 <span class="ev evidence-badge ev-p">P</span>（第 7–8 页 §4.2、算法 2）。</li>
+  <li><strong>模拟器：</strong>基于附录 A 的 GEMM/attention 算力-访存模型（A100-80GB 上算术强度 &gt;156 判定算力受限）与历史 trace 拟合的负载分布重采样，预估 SLO 达标率；实测对比误差小于 2% <span class="ev evidence-badge ev-p">P</span>（第 7 页 §4.1、第 12 页表 2、第 17 页附录 A）。</li>
+</ul>
+
+<h3>在线调度要点</h3>
+<p>运行期保持简单 FCFS：集中控制器把请求派给最短队列的 prefill 实例，prefill 完成后交由负载最轻的 decoding 实例；prefill 按 <code>Lm</code> 凑批（多个短 prompt 合批或单个长 prompt 独占），decoding 以最大批量为凑批目标；KV Cache 用拉取式传输防止突发把 decoding 实例显存打爆 <span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3）。</p>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/distserve-data-path.svg"
+       alt="DistServe 数据路径示意图：客户端请求经控制面（RESTful API 前端、FCFS 集中控制器、编排层、placement 算法模块与模拟器、workload profiler）决策派发；数据面上 Prefill 实例在 GPU 上预填整段 prompt 并在 HBM 暂存 KV Cache，Decoding 实例以拉取方式经 NVLink 或 NCCL 取得 KV Cache 后逐 token 解码，token 流式返回客户端；模型权重由存储为每个实例各加载一份。" width="980" height="690">
+  <figcaption>图 1：DistServe 数据路径与控制面/数据面边界。实线＝数据面（请求 / KV Cache / token），虚线＝控制面（策略 / 监控 / 加载指令）；编号 ①–⑧ 对应下方文字序列。依据论文第 8 页图 6 与 §4–§5 绘制 <span class="ev evidence-badge ev-p">P</span>，平面着色为编辑标注 <span class="ev evidence-badge ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 请求接入：</strong>客户端调用 OpenAI 兼容的 RESTful API 提交 prompt 与采样参数（最大输出长度、温度等）<span class="ev evidence-badge ev-p">P</span>（第 9 页 §5）。</li>
+  <li><strong>② 派发：</strong>集中控制器按 FCFS 将请求派给当前队列最短的 prefill 实例 <span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3）。</li>
+  <li><strong>③ 预填执行：</strong>prefill 实例的 GPU worker 从 HBM 读权重与 prompt token，经 FlashAttention kernel 与 GEMM（HBM→SRAM 访存密集）整段并行计算，产出首个输出 token，并逐层写入该请求的 KV Cache <span class="ev evidence-badge ev-p">P</span>（第 3 页 §2.1、第 9 页 §5、第 17 页附录 A）。</li>
+  <li><strong>④ KV 传输：</strong>KV Cache 不立即搬运，而是留在 prefill 实例显存中充当排队缓冲；目标 decoding 实例按需「拉取」对应请求的 KV（同节点走 NVLINK 上的异步 cudaMemcpy，跨节点走 NCCL）<span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3、第 9 页 §5）。</li>
+  <li><strong>⑤ 逐 token 解码：</strong>decoding 实例将请求并入 continuous batching 批次，每步只喂入一个新 token（显存带宽受限），并把新增 KV 追加到 HBM；直至终止符 <span class="ev evidence-badge ev-p">P</span>（第 1 页 §1、第 5 页 §3.2、第 9 页 §5）。</li>
+  <li><strong>⑥ 流式返回：</strong>已生成 token 与结果由编排层回传、流式送达客户端 <span class="ev evidence-badge ev-p">P</span>（第 2 页 §2、第 9 页 §5）。</li>
+  <li><strong>⑦ 权重加载（控制面触发）：</strong>每台实例持有<strong>一份独享的完整权重副本</strong>，实例启动时从权重文件加载一次；prefill 与 decoding 实例各持一份 <span class="ev evidence-badge ev-p">P</span>（第 4 页 §2.3 实例定义、第 8 页 §4.3 权重重载）。</li>
+  <li><strong>⑧ 画像与重规划（控制面闭环）：</strong>workload profiler 持续监测平均输入/输出长度、到达率；检测到显著模式漂移即重跑放置算法（秒级）并重载权重（分钟级），完成扩缩容或策略切换 <span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3、第 12 页 §6.5）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键容量与配置事实（配置/容量口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">数值/事实</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="num">≈1.13 GB</td><td>单个 512-token 请求的 KV Cache，OPT-66B（MHA）</td><td><span class="ev evidence-badge ev-p">P</span> 第 6 页 §3.3</td></tr>
+      <tr><td class="num">≈90 Gbps</td><td>10 req/s 到达率下隐含的 KV 传输带宽需求（11.3 GB/s）</td><td><span class="ev evidence-badge ev-p">P</span> 第 6 页 §3.3</td></tr>
+      <tr><td class="num">600 GB/s</td><td>A100 节点内 NVLINK 峰值带宽（论文口径）</td><td><span class="ev evidence-badge ev-p">P</span> 第 6 页 §3.3</td></tr>
+      <tr><td class="num">800 Gbps</td><td>论文举例的现代 LLM 集群跨节点 InfiniBand 带宽</td><td><span class="ev evidence-badge ev-p">P</span> 第 6 页 §3.3</td></tr>
+      <tr><td class="num">25 Gbps</td><td>论文实验测试床的跨节点带宽（4 节点 × 8 × A100-80GB SXM）</td><td><span class="ev evidence-badge ev-p">P</span> 第 9 页 §6.1</td></tr>
+      <tr><td class="num">26 / 132 / 350 GB</td><td>OPT-13B / OPT-66B / OPT-175B 模型权重体积（FP16 口径）</td><td><span class="ev evidence-badge ev-p">P</span> 第 9 页表 1</td></tr>
+      <tr><td class="num">AI &gt; 156</td><td>A100-80GB 上 GEMM 判定算力受限的算术强度阈值；prefill 注意力 AI≈2b/3＝10.677（b=16）或 21.333（b=32），属显存受限</td><td><span class="ev evidence-badge ev-p">P</span> 第 17 页附录 A</td></tr>
+      <tr><td class="num">350 GB × 2 &gt; 640 GB</td><td>175B 模型一对 prefill+decoding 完整实例放不进 8×80GB 单节点，需 Alg.2 的分段同置</td><td><span class="ev evidence-badge ev-p">P</span> 第 7 页 §4.2</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong><span class="ev evidence-badge ev-p">P</span> 路径上的已知缺口：</strong>论文明确表示<strong>未实现</strong>抢占式调度与容错；FCFS 会产生「护航效应」（长请求阻塞短请求），且 prefill→decoding 的依赖边可能让单个 decoding 实例故障扩散到映射它的多台 prefill 实例 <span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3）。云上落地必须自行补齐（见 <a href="#security-ops">#security-ops</a>）。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+<ul class="tradeoff-grid">
+  <li>
+    <h3>吞吐—延迟</h3>
+    <p><strong>得：</strong>消除干扰后，两阶段可各自逼近 SLO 约束下的最大速率，per-GPU goodput 上升 <span class="ev evidence-badge ev-p">P</span>（第 2、10–11 页）。<br><strong>失：</strong>目标函数从「总 token 吞吐」改为「SLO 内 goodput」；若无 SLO，共置+chunked-prefill 的原始吞吐可能更高 <span class="ev evidence-badge ev-p">P</span>（第 13 页 §7）。</p>
+  </li>
+  <li>
+    <h3>算力—内存</h3>
+    <p><strong>得：</strong>prefill 用满算力、decoding 用大批量摊薄带宽受限，各自最优 <span class="ev evidence-badge ev-p">P</span>（第 4–6 页 §3.1–3.2）。<br><strong>失：</strong>两台实例各存一份完整权重，KV Cache 又要在 prefill 显存多驻留一段排队时间；大模型（175B＝350 GB）连单节点放一对实例都困难 <span class="ev evidence-badge ev-p">P</span>（第 4、7–8 页）。</p>
+  </li>
+  <li>
+    <h3>复杂度—收益</h3>
+    <p><strong>得：</strong>放置算法把「GPU 数 × 并行策略 × 复制数」的组合搜索自动化，单次求解不足 1.3 分钟，可随负载自动重规划 <span class="ev evidence-badge ev-p">P</span>（第 7、12 页）。<br><strong>失：</strong>相比单系统共置，多实例编排、KV 传输管理、画像与重规划显著抬高运维与排障复杂度 <span class="ev evidence-badge ev-i">I</span>（基于第 6–9 页组件面的编辑判断）。</p>
+  </li>
+  <li>
+    <h3>扩展性—故障域</h3>
+    <p><strong>得：</strong>两阶段独立复制、独立扩缩容，inter-op 近线性扩速率容量 <span class="ev evidence-badge ev-p">P</span>（第 3、5–6 页）。<br><strong>失：</strong>跨实例 KV 依赖把 prefill 与 decoding 绑成依赖图，单个 decoding 实例故障可能波及映射其上的全部 prefill 实例；跨节点带宽不足时扩展还受放置约束 <span class="ev evidence-badge ev-p">P</span>（第 6–8 页）。</p>
+  </li>
+  <li>
+    <h3>一致性/精度—效率</h3>
+    <p><strong>得：</strong>分离不改变计算图，输出与共置执行等价（论文以同样 FP16 口径评测质量负载）<span class="ev evidence-badge ev-p">P</span>（第 9 页 §6.1）。<br><strong>失：</strong>KV 传输量与精度和上下文长度直接挂钩：FP16 下 512-token/66B 单请求即 1.13 GB，长上下文线性放大传输压力（论文未涉及 KV 量化，此为编辑推断边界）<span class="ev evidence-badge ev-p">P</span>+<span class="ev evidence-badge ev-i">I</span>（第 6 页 §3.3；第 13 页 §7 长上下文讨论）。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+<p>以下映射厂商中立；具体产品<strong>仅作示例</strong>并标 <span class="ev evidence-badge ev-e">E</span>（规格与命名以各云厂商当时目录为准，本页未逐一在线核验）。云实例规格与论文硬件的一致性需在 PoC 中复核 <span class="ev evidence-badge ev-i">I</span>。</p>
+<div class="table-scroll">
+  <table>
+    <caption>论文组件/假设 → 云上对应能力</caption>
+    <thead>
+      <tr><th scope="col">维度</th><th scope="col">论文口径</th><th scope="col">云上映射（示例）</th><th scope="col">级别</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算实例</th>
+        <td>4 节点 × 8 × NVIDIA SXM A100-80GB，节点内 NVLINK <span class="ev evidence-badge ev-p">P</span>（第 9 页 §6.1）</td>
+        <td>8 卡 A100 80GB SXM 整机实例，如 AWS p4de.24xlarge、Google Cloud a2-ultragpu-8g、Azure ND A100 v4 系列；选用 H100 类实例属升级推断</td>
+        <td><span class="ev evidence-badge ev-e">E</span> 示例 + <span class="ev evidence-badge ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">GPU 拓扑/互联</th>
+        <td>节点内 NVLINK 峰值 600 GB/s；跨节点实验床 25 Gbps，理想 800 Gbps IB <span class="ev evidence-badge ev-p">P</span>（第 6、9 页）</td>
+        <td>优先同可用区 + 高带宽 RDMA/InfiniBand 实例组（如 AWS EFA/OFDN 网络）；跨节点带宽是选型硬约束</td>
+        <td><span class="ev evidence-badge ev-p">P</span> + <span class="ev evidence-badge ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">网络（KV 面）</th>
+        <td>KV 传输需求 ≈90 Gbps 量级（512-token/66B @10 rps）；低带宽集群须用 Alg.2 同节点分段 <span class="ev evidence-badge ev-p">P</span>（第 6–8 页）</td>
+        <td>prefill 与 decoding 同节点或同 NVLink 域部署；跨节点流量走专用 RDMA 网卡与独立子网，与用户流量隔离</td>
+        <td><span class="ev evidence-badge ev-p">P</span> + <span class="ev evidence-badge ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">存储</th>
+        <td>权重每实例加载一次；加载耗时「分钟级」 <span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3）；权重对象存储/共享盘形态：论文未明确披露</td>
+        <td>模型权重放共享文件系统/对象存储（如云厂商的并行文件存储），预热到节点本地 NVMe <span class="ev evidence-badge ev-i">I</span></td>
+        <td><span class="ev evidence-badge ev-p">P</span> + <span class="ev evidence-badge ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">编排</th>
+        <td>实例 = 一组 GPU（TP/PP 组合）；系统基于 Ray actor 管理工作进程 <span class="ev evidence-badge ev-p">P</span>（第 4、18 页、第 9 页 §5）</td>
+        <td>Kubernetes 上按实例建 Pod 组并绑定整卡资源（Gang scheduling）；控制器/编排层为独立无状态部署 <span class="ev evidence-badge ev-i">I</span></td>
+        <td><span class="ev evidence-badge ev-p">P</span> + <span class="ev evidence-badge ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性</th>
+        <td>按 goodput 比例复制实例扩容（n=⌈R/goodput⌉）；负载漂移触发重规划（秒级求解 + 分钟级生效） <span class="ev evidence-badge ev-p">P</span>（第 7–8、12 页）</td>
+        <td>以重规划结果驱动实例组的水平扩缩容；节点池预留 GPU 余量以吸收重规划窗口 <span class="ev evidence-badge ev-i">I</span></td>
+        <td><span class="ev evidence-badge ev-p">P</span> + <span class="ev evidence-badge ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测</th>
+        <td>论文把请求生命周期分为 prefill 排队/执行、传输、decoding 排队/执行五段，并输出 SLO 达标率 <span class="ev evidence-badge ev-p">P</span>（第 10–11 页 §6.1、§6.3）</td>
+        <td>按五段埋点接入指标系统（时延分布、SLO 达标率、队列深度、KV 传输量），对达标率跌破目标设告警 <span class="ev evidence-badge ev-i">I</span></td>
+        <td><span class="ev evidence-badge ev-p">P</span> + <span class="ev evidence-badge ev-i">I</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>指标口径（全部含论文出处）</caption>
+    <thead>
+      <tr><th scope="col">指标</th><th scope="col">定义</th><th scope="col">口径/单位</th><th scope="col">出处</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">TTFT</th><td>time to first token：prefill 阶段耗时（含排队）</td><td>秒；论文实验按 P90 或平均值报告（图 1 为 P90）</td><td><span class="ev evidence-badge ev-p">P</span> 第 1–2 页</td></tr>
+      <tr><th scope="row">TPOT</th><td>time per output token：除首 token 外，平均每输出 token 耗时</td><td>秒；P90 或平均口径</td><td><span class="ev evidence-badge ev-p">P</span> 第 1–2 页</td></tr>
+      <tr><th scope="row">单请求总时延</th><td>TTFT + TPOT × 解码 token 数</td><td>秒</td><td><span class="ev evidence-badge ev-p">P</span> 第 2 页脚注 1</td></tr>
+      <tr><th scope="row">SLO attainment</th><td>满足 TTFT 与 TPOT 双阈值约束的请求比例</td><td>百分比；论文主目标 90%，附录验证 99%</td><td><span class="ev evidence-badge ev-p">P</span> 第 1、10、18 页</td></tr>
+      <tr><th scope="row">goodput / per-GPU rate</th><td>SLO 达标率目标内，每张已配置 GPU 可承载的最大请求速率</td><td>req/s/GPU</td><td><span class="ev evidence-badge ev-p">P</span> 第 1–2 页</td></tr>
+      <tr><th scope="row">SLO Scale</th><td>把表 1 中两 SLO 同比线性缩放的系数，衡量可承受的最紧时延要求</td><td>无量纲倍数（越小越紧）</td><td><span class="ev evidence-badge ev-p">P</span> 第 10–11 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>容量规划变量</h3>
+<ul>
+  <li>到达率 R 与负载分布（输入/输出长度分布、到达过程；论文用泊松合成）<span class="ev evidence-badge ev-p">P</span>（第 7、9 页）。</li>
+  <li>临界输入长度 <code>Lm</code> 与 prefill 速度系数 K（依模型/带宽/放置而变，需画像）<span class="ev evidence-badge ev-p">P</span>（第 4–5 页）。</li>
+  <li>SLO 目标（TTFT/TPOT 阈值与达标率 90%/99%）——直接决定可行并行配置与实例数 <span class="ev evidence-badge ev-p">P</span>（第 9–10 页）。</li>
+  <li>实例数：<code>n = ⌈R / goodput(配置)⌉</code>，prefill 与 decoding 分列，再乘复制数 <span class="ev evidence-badge ev-p">P</span>（第 7 页算法 1）。</li>
+  <li>显存下限：每实例完整权重 ×2 类实例 + KV Cache（含 prefill 侧排队缓冲）；175B 一对完整实例即需 &gt;640 GB <span class="ev evidence-badge ev-p">P</span>（第 7 页 §4.2、第 9 页表 1）。</li>
+  <li>KV 传输带宽：随到达率 × 单请求 KV 体积（如 66B/512-token 为 1.13 GB）线性增长 <span class="ev evidence-badge ev-p">P</span>（第 6 页 §3.3）。</li>
+</ul>
+
+<h3>成本公式（参数化，编辑推断）</h3>
+<div class="callout callout-inference">
+<p><span class="ev evidence-badge ev-i">I</span> 论文未披露任何价格数据，以下仅为参数化估算框架（不写死即时云价）：</p>
+<div class="formula">
+单查询 GPU 成本 C_q ＝ ( N_pf × P_pf + N_dec × P_dec ) / ( R_slo × 3600 )<br>
+其中：N_pf、N_dec ＝ 两类实例 GPU 总卡数；P_pf、P_dec ＝ 单卡时价（元/卡·小时，<strong>按采购日查询并记录日期</strong>）；<br>
+R_slo ＝ 全系统在 SLO 达标率目标下的总 goodput（req/s）；GPU 时长利用率按重规划窗口折减。
+</div>
+<p><strong>敏感项：</strong>SLO 越紧 → 可行 goodput 下降 → 卡数上升（论文图 8 下排的 SLO Scale 实验）；输入越长 → prefill 时间与 KV 体积增大 → prefill 卡数与传输带宽上升；跨节点带宽不足 → 被迫同节点分段放置 → 可能升级整机规格；双份权重 → 大模型最低卡数抬升 <span class="ev evidence-badge ev-p">P</span>+<span class="ev evidence-badge ev-i">I</span>（数字事实出自第 6–11 页，方向性推断为编辑标注）。</p>
+<p><strong>明确缺口：</strong>token 级成本、功耗/制冷、多模型混部收益、云价波动——论文未明确披露，需以 PoC 实测与当期报价补齐。</p>
+</div>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+<div class="table-scroll">
+  <table>
+    <caption>安全与运维清单（「论文事实」列均标出处；「云上建议」列为编辑推断 <span class="ev evidence-badge ev-i">I</span>）</caption>
+    <thead>
+      <tr><th scope="col">维度</th><th scope="col">论文事实</th><th scope="col">云上建议（编辑推断）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">租户隔离</th>
+        <td>论文按单模型服务建模，未讨论多租户调度与配额 <span class="ev evidence-badge ev-p">P</span>（全篇无多租户机制）＝论文未明确披露</td>
+        <td>按实例组划分租户或业务线；控制器增加按租户的配额与准入；不同敏感级租户不共享 prefill/decoding 实例</td>
+      </tr>
+      <tr>
+        <th scope="row">数据驻留</th>
+        <td>KV Cache（含用户 prompt 中间态）驻留 GPU 显存，且拉取模式下 prefill 显存充当排队缓冲 <span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3）</td>
+        <td>明确 KV/Prompt 的驻留边界（显存、是否落盘、可用区），跨区/跨国服务需评估驻留合规</td>
+      </tr>
+      <tr>
+        <th scope="row">缓存残留</th>
+        <td>论文未披露实例回收/迁移时的显存清理机制 ＝论文未明确披露</td>
+        <td>实例销毁与重规划切换时执行显存清零/重置；把「残留 KV 清理」纳入重规划的切换步骤与验收项</td>
+      </tr>
+      <tr>
+        <th scope="row">镜像/供应链</th>
+        <td>技术栈含 Python 编排（6.5K 行）+ C++/CUDA 引擎（8.1K 行）、NCCL、Ray，集成 FlashAttention/PagedAttention；官方仓库以 SwiftTransformer 为后端 <span class="ev evidence-badge ev-p">P</span>（第 9 页 §5）+<span class="ev evidence-badge ev-r">R</span></td>
+        <td>锁定 CUDA/driver/NCCL/Ray/仓库 commit 的版本矩阵；镜像扫描与 SBOM；上游组件升级单独回归</td>
+      </tr>
+      <tr>
+        <th scope="row">权限</th>
+        <td>前端为 OpenAI 兼容 RESTful API，论文未描述鉴权 ＝论文未明确披露（第 9 页 §5）</td>
+        <td>API 网关统一认证授权、限流与审计；控制面接口（放置变更、扩缩容）单独最小权限管控</td>
+      </tr>
+      <tr>
+        <th scope="row">故障恢复</th>
+        <td>论文<strong>未实现</strong>容错；指出 prefill→decoding 依赖可致故障传播（单个 decoding 实例故障可能拖垮映射其上的多台 prefill 实例）<span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3）</td>
+        <td>健康检查 + 实例级自动重建；限制单 decoding 实例的 prefill 映射扇入；请求级重试与幂等；跨可用区冗余按 RTO/RPO 目标设计</td>
+      </tr>
+      <tr>
+        <th scope="row">升级回滚</th>
+        <td>重规划为常规操作：算法求解秒级、权重重载分钟级 <span class="ev evidence-badge ev-p">P</span>（第 8、12 页）；版本化回滚流程：论文未明确披露</td>
+        <td>放置方案与镜像版本均纳入版本管理；灰度切换（先部分流量）并保留上一版 placement 一键回退；回滚演练纳入例行运维</td>
+      </tr>
+      <tr>
+        <th scope="row">监控告警</th>
+        <td>论文提供五段时延分解（prefill 排队/执行、传输、decoding 排队/执行）与 SLO 达标率度量，模拟器误差 &lt;2% <span class="ev evidence-badge ev-p">P</span>（第 10–12 页）</td>
+        <td>五段时延分布 + SLO 达标率 + 队列深度 + KV 传输量/积压为核心看板；达标率逼近阈值、重规划频繁触发、传输积压设告警</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（各含触发条件与理由）</h3>
+<ul class="fit-list">
+  <li><strong>双 SLO 在线对话/编码助手：</strong>触发条件——TTFT 与 TPOT 均设硬阈值且要求 ≥90% 达标，集群有多台 80GB 级 GPU。理由——分离消除干扰并允许两阶段各自选并行策略，chatbot 场景相对 vLLM 可承载 2.0×–4.6× 速率 <span class="ev evidence-badge ev-p">P</span>（第 10 页 §6.2；条件见 <a href="#experiments">#experiments</a>）。</li>
+  <li><strong>长输入摘要/RAG 类负载：</strong>触发条件——输入显著长于输出（如 LongBench 均值 1738/91 token）、TPOT 紧而 TTFT 相对宽松。理由——长 prefill 不再拖累 decode，相对 vLLM 速率 4.3×、SLO 容忍 12.6× <span class="ev evidence-badge ev-p">P</span>（第 11 页 §6.2）。</li>
+  <li><strong>具备高带宽互连的集群：</strong>触发条件——节点内 NVLink 且跨节点 ≥ 数十 Gbps（RDMA/IB 更佳），或接受同节点分段放置。理由——带宽感知放置下 KV 传输占比 &lt;0.1%、95% 请求传输 &lt;30 ms <span class="ev evidence-badge ev-p">P</span>（第 11 页 §6.3、第 6–8 页 §3.3/§4.2）。</li>
+  <li><strong>负载模式随时间漂移的生产服务：</strong>触发条件——小时级输入/输出长度或到达率变化明显。理由——profiler + 周期重规划自动跟随（求解秒级、生效分钟级）<span class="ev evidence-badge ev-p">P</span>（第 8 页 §4.3）。</li>
+</ul>
+
+<h3>不适用（各含触发条件与理由）</h3>
+<ul class="fit-list">
+  <li><strong>单 GPU / 极少卡环境：</strong>触发条件——总共 1–2 张卡、无法同时容纳两类实例与双份权重。理由——论文自述此时设计空间严重受限，采用非分离系统更简单有效 <span class="ev evidence-badge ev-p">P</span>（第 13 页 §7）。</li>
+  <li><strong>无 SLO 的离线吞吐作业：</strong>触发条件——批处理式生成、只看总 token 吞吐。理由——goodput 优化目标退化；论文指出 chunked-prefill+piggyback 可能更优 <span class="ev evidence-badge ev-p">P</span>（第 13 页 §7）。</li>
+  <li><strong>跨节点带宽极低且无法同节点放置：</strong>触发条件——跨节点带宽远低于 KV 传输需求（66B/512-token@10 rps 即需 ≈90 Gbps）且显存放不下同节点分段。理由——传输开销不可忽略，放置约束无法满足 <span class="ev evidence-badge ev-p">P</span>（第 6–7 页 §3.3/§4.2）。</li>
+  <li><strong>极小流量且模型单卡可容：</strong>触发条件——低速率、单卡放得下模型。理由——多副本复制即可线性扩容并降排队，双实例编排的复杂度不划算 <span class="ev evidence-badge ev-p">P</span>+<span class="ev evidence-badge ev-i">I</span>（复制结论出自第 6 页 §3.2，成本判断为编辑推断）。</li>
+</ul>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>实验环境与负载</h3>
+<div class="table-scroll">
+  <table>
+    <caption>论文实验设置 <span class="ev evidence-badge ev-p">P</span>（第 9 页 §6.1、表 1、图 7）</caption>
+    <thead>
+      <tr><th scope="col">项</th><th scope="col">取值</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">集群</th><td>4 节点 × 8 × NVIDIA SXM A100-80GB，节点内 NVLINK，跨节点 25 Gbps；多数实验用低节点亲和放置（Alg.2）</td></tr>
+      <tr><th scope="row">模型与精度</th><td>OPT-13B（26 GB）/ OPT-66B（132 GB）/ OPT-175B（350 GB），全部 FP16；选 MHA 是为对 KV 传输施压（GQA 模型传输更小、对 DistServe 更有利）</td></tr>
+      <tr><th scope="row">应用与数据集</th><td>Chatbot—ShareGPT（输入均值 755.5 / 输出 200.3 token）；Code Completion—HumanEval（171.3 / 98.2）；Summarization—LongBench（1738.3 / 90.7，输入截断至 2048）</td></tr>
+      <tr><th scope="row">SLO（表 1）</th><td>Chatbot 13B：TTFT 0.25 s / TPOT 0.1 s；Chatbot 66B：2.5 / 0.15；Chatbot 175B：4.0 / 0.2；代码补全 66B：0.125 / 0.2；摘要 66B：15 / 0.15（经验设定，无业界标准）</td></tr>
+      <tr><th scope="row">到达过程</th><td>各数据集无时间戳，采用泊松分布合成到达、扫描请求速率</td></tr>
+      <tr><th scope="row">达标率目标</th><td>主实验 90%；附录 C 验证 99%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>基线</h3>
+<ul>
+  <li><strong>vLLM：</strong>连续批处理 + PagedAttention，共置两阶段；仅支持 intra-op，13B/66B/175B 分别设 intra-op=1/4/8 <span class="ev evidence-badge ev-p">P</span>（第 10 页 §6.1）。</li>
+  <li><strong>DeepSpeed-MII：</strong>chunked-prefill（切块预填 + 按预算凑批捎带），intra-op 与 vLLM 对齐；因 kernel 要求 vocab_size/intra-op 为 8 的倍数且 intra-op=4 会显存溢出，<strong>无法服务 OPT-175B（vocab 50272）</strong><span class="ev evidence-badge ev-p">P</span>（第 10 页 §6.1）。</li>
+</ul>
+
+<h3>主要定量结果（完整条件）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>性能数字与测试条件总表（「论文未明确披露」表示论文未给出该字段）</caption>
+    <thead>
+      <tr>
+        <th scope="col">结论/数字</th><th scope="col">指标定义</th><th scope="col">硬件</th><th scope="col">模型/规模</th><th scope="col">精度</th><th scope="col">批量/并发/到达</th><th scope="col">输入/输出长度</th><th scope="col">基线</th><th scope="col">论文定位</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Chatbot 速率 2.0×–4.6×（相对 vLLM）</td>
+        <td>90% SLO 达标下最大 per-GPU 速率之比（goodput）</td>
+        <td>4 节点 × 8 A100-80GB SXM；跨节点 25 Gbps</td>
+        <td>OPT-13B/66B/175B（26/132/350 GB）</td>
+        <td>FP16</td>
+        <td>泊松到达、速率扫描；批量/并发具体值：论文未明确披露</td>
+        <td>ShareGPT：755.5 / 200.3 token（均值）</td>
+        <td>vLLM（intra-op=1/4/8）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 10 页 §6.2 图 8 上排</td>
+      </tr>
+      <tr>
+        <td>Chatbot 速率 1.6×–7.4×（相对 MII）</td>
+        <td>同上口径</td>
+        <td>同上</td>
+        <td>同上（175B 侧 MII 缺席）</td>
+        <td>FP16</td>
+        <td>同上</td>
+        <td>同上</td>
+        <td>DeepSpeed-MII（chunked-prefill）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 10 页 §6.2 图 8 上排</td>
+      </tr>
+      <tr>
+        <td>可承受 SLO 更紧 1.8×–3.2×（vs vLLM）；1.7×–1.8×（vs MII）</td>
+        <td>SLO Scale：固定速率下两 SLO 同比缩小的可承受倍数</td>
+        <td>同上</td>
+        <td>OPT-13B/66B/175B</td>
+        <td>FP16</td>
+        <td>固定速率（具体值：论文未明确披露）</td>
+        <td>ShareGPT 同上</td>
+        <td>vLLM / DeepSpeed-MII</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 10–11 页 §6.2 图 8 下排</td>
+      </tr>
+      <tr>
+        <td>代码补全：速率 5.7×、SLO 1.4×（vs vLLM）；速率 1.6×、SLO 1.4×（vs MII）</td>
+        <td>90% 达标下最大速率比 / 最紧 SLO 倍数</td>
+        <td>同上</td>
+        <td>OPT-66B（132 GB）</td>
+        <td>FP16</td>
+        <td>泊松到达；批量：论文未明确披露</td>
+        <td>HumanEval：171.3 / 98.2 token（均值）</td>
+        <td>vLLM / DeepSpeed-MII</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 11 页 §6.2 图 9(a)</td>
+      </tr>
+      <tr>
+        <td>摘要：速率 4.3×、SLO 12.6×（vs vLLM）；速率 1.8×、SLO 2.6×（vs MII）</td>
+        <td>同上口径</td>
+        <td>同上</td>
+        <td>OPT-66B（132 GB）</td>
+        <td>FP16</td>
+        <td>泊松到达；批量：论文未明确披露</td>
+        <td>LongBench：1738.3 / 90.7 token（均值；输入截断至 2048）</td>
+        <td>vLLM / DeepSpeed-MII</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 11 页 §6.2 图 9(b)</td>
+      </tr>
+      <tr>
+        <td>KV 传输 &lt;0.1% 总时延；&gt;95% 请求传输 &lt;30 ms</td>
+        <td>五段时延分解中传输占比；传输时间 CDF</td>
+        <td>同集群（跨节点仅 25 Gbps）</td>
+        <td>OPT-175B（350 GB）</td>
+        <td>FP16</td>
+        <td>ShareGPT 泊松负载；速率：论文未明确披露</td>
+        <td>ShareGPT：755.5 / 200.3 token（均值）</td>
+        <td>自度量（无外部基线）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 11 页 §6.3 图 10</td>
+      </tr>
+      <tr>
+        <td>模拟器误差 &lt;2%</td>
+        <td>模拟与实测 SLO 达标率之差（速率 1.0–4.0 req/s 各档）</td>
+        <td>同集群实测 vs 模拟</td>
+        <td>OPT-66B（132 GB）</td>
+        <td>FP16</td>
+        <td>泊松到达速率扫描</td>
+        <td>ShareGPT 同上</td>
+        <td>vLLM 与 DistServe-Low 实测值</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 12 页 §6.4 表 2</td>
+      </tr>
+      <tr>
+        <td>99% 达标：速率 3×–8×、SLO 1.24×–6.67×（vs vLLM）；速率 1.32×–8×、SLO 1.20×–1.58×（vs MII）</td>
+        <td>99% 达标目标下同口径比值（模拟）</td>
+        <td>模拟（vLLM 无 inter-op、实验床带宽受限，故用模拟器）</td>
+        <td>OPT-13B/66B/175B</td>
+        <td>FP16</td>
+        <td>同 §6.2 负载设定</td>
+        <td>ShareGPT / HumanEval / LongBench</td>
+        <td>vLLM / DeepSpeed-MII</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 18 页附录 C 图 13–14</td>
+      </tr>
+      <tr>
+        <td>放置算法求解 &lt;1.3 分钟；随 GPU 数扩展、与模型大小无关；96 核上近线性并行加速</td>
+        <td>Alg.1/Alg.2 运行时间</td>
+        <td>AWS m5d.metal（96 vCPU，纯 CPU 模拟）</td>
+        <td>不适用（离散事件模拟）</td>
+        <td>不适用</td>
+        <td>论文未明确披露</td>
+        <td>论文未明确披露</td>
+        <td>自比（Alg.1 vs Alg.2，GPU 数 2–32）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 7 页 §4.1、第 12 页 §6.5 图 12</td>
+      </tr>
+      <tr>
+        <td>动机实验：共置 1.6 req/s；prefill-only 5.6；decode-only 10；2+1 卡组合 10 req/s（3.3/卡，2.1×）</td>
+        <td>P90 TTFT/TPOT 双约束下最大速率（goodput）</td>
+        <td>1 × NVIDIA A100-80GB（分离组合为 3 卡）</td>
+        <td>13B 参数 LLM</td>
+        <td>该图未标注（全文实验口径为 FP16）；论文未明确披露</td>
+        <td>合成摘要负载，速率扫描（rps=1.6/5.6/10 标注于图 1）</td>
+        <td>输入 512 / 输出 64 token</td>
+        <td>现有共置系统（引用 vLLM 一类 [32]）</td>
+        <td><span class="ev evidence-badge ev-p">P</span> 第 1–2 页 §1 图 1</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>DistServe 自选放置（附录 B 表 3）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>端到端实验中算法选出的并行配置：TP＝张量并行（intra-op），PP＝流水并行（inter-op） <span class="ev evidence-badge ev-p">P</span>（第 18 页表 3）</caption>
+    <thead>
+      <tr><th scope="col">模型</th><th scope="col">数据集</th><th scope="col">Prefill TP</th><th scope="col">Prefill PP</th><th scope="col">Decoding TP</th><th scope="col">Decoding PP</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">OPT-13B</th><td>ShareGPT</td><td class="num">2</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+      <tr><th scope="row">OPT-66B</th><td>ShareGPT</td><td class="num">4</td><td class="num">1</td><td class="num">2</td><td class="num">2</td></tr>
+      <tr><th scope="row">OPT-66B</th><td>LongBench</td><td class="num">4</td><td class="num">1</td><td class="num">2</td><td class="num">2</td></tr>
+      <tr><th scope="row">OPT-66B</th><td>HumanEval</td><td class="num">4</td><td class="num">1</td><td class="num">2</td><td class="num">2</td></tr>
+      <tr><th scope="row">OPT-175B</th><td>ShareGPT</td><td class="num">3</td><td class="num">3</td><td class="num">4</td><td class="num">3</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>公平性限制与口径注意</h3>
+<ul>
+  <li>SLO 阈值为作者按应用经验设定，无业界标准可依 <span class="ev evidence-badge ev-p">P</span>（第 9 页 §6.1）。</li>
+  <li>到达过程为泊松合成，非真实 trace 时序 <span class="ev evidence-badge ev-p">P</span>（第 9 页 §6.1）。</li>
+  <li>模型为 OPT（MHA、最大上下文 2048）；GQA 类模型会改变 KV 体积与传输结论的量级 <span class="ev evidence-badge ev-p">P</span>（第 9 页 §6.1）。</li>
+  <li>vLLM 不支持 inter-op，其消融对照（vLLM++）与 99% 达标组在模拟器中完成（模拟误差 &lt;2%）<span class="ev evidence-badge ev-p">P</span>（第 10、12、18 页）。</li>
+  <li>端到端实验的批量/并发具体数值论文未明确披露；复现时须以自己画像为准，禁止脱离条件摘取倍数。</li>
+</ul>
+
+<h3>建议复现步骤 <span class="ev evidence-badge ev-i">I</span></h3>
+<ol>
+  <li>从官方仓库（<a href="#links">#links</a>，<span class="ev evidence-badge ev-r">R</span>）获取代码；README 要求至少 2 块 GPU、依赖 Ray，后端为 SwiftTransformer，支持 GPT-2/OPT/LLaMA2。</li>
+  <li>按论文口径准备 OPT 模型与 ShareGPT/HumanEval/LongBench 抽样请求，设定表 1 的 SLO 与 90% 达标目标。</li>
+  <li>先跑放置算法得到并行配置与实例数（对照第 18 页表 3），再以泊松到达做速率扫描，记录五段时延与达标率。</li>
+  <li>与 vLLM（按论文设置 intra-op）和 DeepSpeed-MII 对齐硬件与负载后对比；所有倍数必须连同条件一起报告。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">资源</th><th scope="col">链接 / 文件</th><th scope="col">可见域名/位置</th><th scope="col">级别</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文 arXiv 摘要页</th>
+        <td><a href="https://arxiv.org/abs/2401.09670" rel="noopener noreferrer">https://arxiv.org/abs/2401.09670</a></td>
+        <td>arxiv.org</td>
+        <td><span class="ev evidence-badge ev-p">P</span></td>
+        <td>编号取自 PDF 第 1 页水印（v3，2024-06-06）</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/LLMServe/DistServe" rel="noopener noreferrer">https://github.com/LLMServe/DistServe</a></td>
+        <td>github.com/LLMServe</td>
+        <td><span class="ev evidence-badge ev-r">R</span></td>
+        <td>论文第 2 页脚注 2 给出；2026-09-14 在线核验可达，作者组织维护，Apache-2.0，后端 SwiftTransformer，依赖 Ray、至少 2 GPU</td>
+      </tr>
+      <tr>
+        <th scope="row">ShareGPT 数据集站点</th>
+        <td><a href="https://sharegpt.com/" rel="noopener noreferrer">https://sharegpt.com/</a></td>
+        <td>sharegpt.com</td>
+        <td><span class="ev evidence-badge ev-p">P</span></td>
+        <td>论文参考文献 [8] 原文给出（第 14 页）；本页未做在线可达性核验</td>
+      </tr>
+      <tr>
+        <th scope="row">本地论文 PDF</th>
+        <td><code>01_DistServe_2401.09670.pdf</code>（仅作来源说明，不随站点公开）</td>
+        <td>本地文件</td>
+        <td><span class="ev evidence-badge ev-p">P</span></td>
+        <td>本页全部定量内容的一级证据</td>
+      </tr>
+      <tr>
+        <th scope="row">基线系统 vLLM / DeepSpeed-MII 官方仓库</th>
+        <td>不提供链接——论文仅给文献编号，未给出 URL；为避免猜测仓库地址，此处标注「未核验到论文明确链接的官方仓库」</td>
+        <td>—</td>
+        <td>—</td>
+        <td>如需引用请自行按官方渠道核验后再加入</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<p>构建证据文件：<code>sources/distserve.txt</code>、<code>sources/distserve.summary.json</code>、<code>sources/distserve.evidence.json</code>（属于构建目录，不在公开导航中展示）。</p>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+<ul class="decision-checklist">
+  <li>
+    <strong>需求</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已写出业务的 TTFT、TPOT 阈值与达标率目标（如 90%/99%），并区分应用类型（对话/编码/摘要）<span class="ev evidence-badge ev-p">P</span>（表 1 口径，第 9 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已确认负载确实<strong>在线且双 SLO</strong>，而非纯离线吞吐（后者不应选本方案）<span class="ev evidence-badge ev-p">P</span>（第 13 页 §7）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 目标模型在支持列表内或已验证可移植（论文验证 OPT/LLaMA；仓库后端 SwiftTransformer 支持 GPT-2/OPT/LLaMA2）<span class="ev evidence-badge ev-r">R</span></label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已评估 KV 体积对传输的影响（MHA vs GQA）与上下文长度上限 <span class="ev evidence-badge ev-p">P</span>（第 6、9 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已用论文模拟器/放置算法离线预测本负载下的配置与 goodput，再上实验床验证 <span class="ev evidence-badge ev-p">P</span>（第 7、12 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> PoC 覆盖 90% 与 99% 两档达标率，并复测五段时延分解 <span class="ev evidence-badge ev-p">P</span>（第 10–11、18 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已核算双份权重 + KV Cache 显存（含 prefill 排队缓冲）与 <code>n=⌈R/goodput⌉</code> 卡数 <span class="ev evidence-badge ev-p">P</span>（第 4、7 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已验证节点内 NVLink 可用、跨节点带宽满足 KV 传输需求（或已采用同节点分段放置）<span class="ev evidence-badge ev-p">P</span>（第 6–8 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> TTFT/TPOT 口径（P90 或均值）已与业务方一致，并写入监控 <span class="ev evidence-badge ev-p">P</span>（第 1–2、10 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已确定 SLO 不满足时的降级策略（限流/排队/降配）<span class="ev evidence-badge ev-i">I</span></label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已按参数化公式估算单查询成本，记录查价日期，并识别敏感项（SLO 紧度、输入长度、跨节点带宽）<span class="ev evidence-badge ev-i">I</span>（框架见 <a href="#cost-slo">#cost-slo</a>）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已与共置基线（vLLM 类）在同一 SLO 口径下比较过单位成本，而非裸吞吐 <span class="ev evidence-badge ev-p">P</span>（第 2 页 goodput 动机）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已定义 KV/Prompt 数据驻留边界与实例回收时的显存清理流程 <span class="ev evidence-badge ev-i">I</span>（论文未披露，见 <a href="#security-ops">#security-ops</a>）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> API 与控制面鉴权、限流、审计已接入 <span class="ev evidence-badge ev-i">I</span></label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已针对「论文未实现容错/抢占」制定补偿：健康检查、实例重建、限制 decoding 故障扇入、请求重试 <span class="ev evidence-badge ev-p">P</span>+<span class="ev evidence-badge ev-i">I</span>（第 8 页 §4.3）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> 重规划阈值、版本化 placement 与一键回退已演练（求解秒级、权重重载分钟级窗口已纳入容量预案）<span class="ev evidence-badge ev-p">P</span>+<span class="ev evidence-badge ev-i">I</span>（第 8、12 页）</label></li>
+      <li><label class="touch-target"><input type="checkbox"> CUDA/NCCL/Ray/仓库 commit 版本矩阵已锁定并纳入镜像供应链管理 <span class="ev evidence-badge ev-r">R</span>+<span class="ev evidence-badge ev-i">I</span></label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label class="touch-target"><input type="checkbox"> 已验证可回退到共置系统（同硬件跑 vLLM 类基线）且权重格式/服务接口可迁移 <span class="ev evidence-badge ev-i">I</span></label></li>
+      <li><label class="touch-target"><input type="checkbox"> 已设定退出触发条件（如 SLO 长期达标且流量模式证明分离无收益、或集群带宽无法支撑）<span class="ev evidence-badge ev-p">P</span>+<span class="ev evidence-badge ev-i">I</span>（适用边界见 <a href="#fit">#fit</a>）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与在线核验记录见构建文件 <code>sources/distserve.evidence.json</code>。核验日期均为 <time datetime="2026-09-14">2026-09-14</time>。</p>
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">页码/章节</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>共置系统在 90% 达标下 goodput 约 1.6 req/s，独立两阶段分别为 5.6 与 10 req/s（2+1 卡组合 2.1×）</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 1–2 页 §1 图 1</td><td>已回原页核对</td></tr>
+      <tr><td>TTFT/TPOT/总时延与 goodput 定义</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 1–2 页 §1、脚注 1</td><td>已回原页核对</td></tr>
+      <tr><td>prefill 算力受限、decoding 带宽受限；KV Cache 存显存</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 3 页 §2.1</td><td>已回原页核对</td></tr>
+      <tr><td>干扰/调度失效/资源耦合三问题；chunked-prefill O(N²) 访存</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 3–4 页 §2.2–2.3</td><td>已回原页核对</td></tr>
+      <tr><td>实例定义（一份完整权重的资源单元）</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 4 页 §2.3</td><td>已回原页核对</td></tr>
+      <tr><td>关键长度 Lm、13B/512-token 打满 A100；M/D/1 分析与速度系数 K</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 4–5 页 §3.1 式 1–3</td><td>已回原页核对</td></tr>
+      <tr><td>KV 传输量化：1.13 GB/请求（66B、512 token）、90 Gbps、NVLink 600 GB/s、IB 800 Gbps</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 6 页 §3.3</td><td>已回原页核对</td></tr>
+      <tr><td>175B（350 GB）单节点放不下完整实例对 → Alg.2 同节点分段；Alg.1 复杂度 O(NM²)、&lt;1.3 分钟</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 7–8 页 §4.1–4.2</td><td>已回原页核对</td></tr>
+      <tr><td>运行时：FCFS+最短队列、Lm 凑批、KV 拉取传输、画像重规划（秒级求解/分钟级重载）</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 8 页 §4.3 图 6</td><td>已回原页核对</td></tr>
+      <tr><td>未实现抢占与容错；护航效应与故障传播风险</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 8 页 §4.3</td><td>已回原页核对</td></tr>
+      <tr><td>实现栈：6.5K Python + 8.1K C++/CUDA、NCCL、异步 cudaMemcpy、Ray、集成 FlashAttention/PagedAttention</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 9 页 §5</td><td>已回原页核对</td></tr>
+      <tr><td>实验设置：4×8 A100-80GB SXM、25 Gbps 跨节点、FP16、泊松到达、表 1 SLO、图 7 长度分布</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 9 页 §6.1 表 1 图 7</td><td>已回原页核对</td></tr>
+      <tr><td>基线设置：vLLM intra-op=1/4/8；MII 无法服务 OPT-175B（vocab 50272 约束）</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 10 页 §6.1</td><td>已回原页核对</td></tr>
+      <tr><td>端到端倍数：2.0–4.6×/1.6–7.4×、SLO 1.8–3.2×/1.7–1.8×、5.7×/4.3×/12.6× 等</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 10–11 页 §6.2 图 8–9</td><td>已回原页核对</td></tr>
+      <tr><td>传输占比 &lt;0.1%、95% 请求 &lt;30 ms；模拟器误差 &lt;2%</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 11–12 页 §6.3–6.4 图 10 表 2</td><td>已回原页核对</td></tr>
+      <tr><td>三类局限场景：离线吞吐/资源受限/长上下文结论</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 13 页 §7</td><td>已回原页核对</td></tr>
+      <tr><td>放置配置表（TP/PP）与 99% 达标倍数</td><td><span class="ev evidence-badge ev-p">P</span></td><td>第 18 页附录 B 表 3、附录 C</td><td>已回原页核对</td></tr>
+      <tr><td>官方仓库 github.com/LLMServe/DistServe（脚注 2）；Apache-2.0、SwiftTransformer、Ray、≥2 GPU</td><td><span class="ev evidence-badge ev-r">R</span></td><td>第 2 页脚注 2 + 在线核验</td><td>2026-09-14 在线核验可达</td></tr>
+      <tr><td>云实例型号示例（p4de/a2-ultragpu-8g/NDv4 等）</td><td><span class="ev evidence-badge ev-e">E</span></td><td>厂商公开目录（本页未逐一核验）</td><td>仅作映射示例，需按当时目录复核</td></tr>
+      <tr><td>成本公式、多租户/残留清理/回滚等运维建议、控制面-数据面平面划分</td><td><span class="ev evidence-badge ev-i">I</span></td><td>本页 <a href="#cost-slo">#cost-slo</a> / <a href="#security-ops">#security-ops</a> / <a href="#mechanism">#mechanism</a></td><td>编辑推断，不含伪精确数字</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="../index.html" rel="prev">上一篇：本篇为第 01 篇，返回论文目录</a>
+  <a href="02-sarathi-serve.html" rel="next">下一篇：02 Sarathi-Serve</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页全部论文事实基于本地 <code>01_DistServe_2401.09670.pdf</code>（arXiv:2401.09670v3）及论文明确引用的材料；云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；官方仓库代码许可为 Apache-2.0（以仓库当时声明为准）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-14；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

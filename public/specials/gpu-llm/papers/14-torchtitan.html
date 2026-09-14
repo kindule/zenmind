@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TorchTitan：PyTorch 原生 4D 并行预训练系统（论文 14 解读）</title>
+<meta name="description" content="基于本地论文 PDF（14_TorchTitan_2410.06511.pdf，arXiv:2410.06511v3）的中文架构解读：TorchTitan 以 DTensor/DeviceMesh 统一 FSDP2/HSDP、TP/SP、PP 流水线调度、CP 上下文并行、激活检查点、DCP 异步检查点与 Flight Recorder，含数据路径、云上映射、成本与决策清单。">
+<link rel="prev" href="13-megascale.html">
+<link rel="next" href="../index.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:#1f2937; --muted:#4b5563; --line:#d4d9e0;
+  --primary:#14385c; --primary-weak:#eef3fa;
+  --cyan:#0e7490; --cyan-weak:#e6f7fb;
+  --purple:#6d28d9; --purple-weak:#f3ecfd;
+  --orange:#c2410c; --orange-weak:#fdeada;
+  --amber:#92400e; --amber-weak:#fef3c7;
+  --red:#b91c1c; --red-weak:#fee2e2;
+  --code-bg:#f3f4f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#10161f; --fg:#e5eaf2; --muted:#b6c0ce; --line:#3a4657;
+    --primary:#c7d9ee; --primary-weak:#1b2a3d;
+    --cyan:#7dd3e8; --cyan-weak:#0d2a33;
+    --purple:#c9b2f5; --purple-weak:#241a3d;
+    --orange:#f3b58a; --orange-weak:#3a2113;
+    --amber:#fbd88a; --amber-weak:#33270e;
+    --red:#f5a9a9; --red-weak:#3a1414;
+    --code-bg:#1a2230;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:16px; line-height:1.7;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:1.6em; line-height:1.35; color:var(--primary); margin:1.2em 0 .4em}
+h2{font-size:1.28em; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:.25em; margin-top:2.2em}
+h3{font-size:1.05em; margin-top:1.6em}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.92em}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:.6em 1em; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:.5em 1.5em; justify-content:space-between; align-items:baseline; padding:.7em 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:1.2em}
+.breadcrumb{padding:.6em 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:.3em; margin:0; padding:0; font-size:.92em}
+.breadcrumb li+li::before{content:"/"; margin-right:.3em; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:8px; background:var(--primary-weak); padding:.9em 1.1em; margin:1.2em 0}
+.fact-card h3{margin:.2em 0 .5em}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:.5em; padding:0; margin:.4em 0 .8em}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:.05em .8em; font-size:.88em}
+.ev{display:inline-block; border:1.5px solid var(--muted); border-radius:5px; padding:0 .45em; font-size:.82em; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:6px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:.8em 1em; margin:1.1em 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:1.1em 0}
+table{border-collapse:collapse; width:100%; font-size:.92em}
+caption{caption-side:top; text-align:left; font-weight:700; padding:.3em 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:.45em .6em; text-align:left; vertical-align:top}
+thead th{background:var(--primary-weak); color:var(--primary)}
+tbody th{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:.9em; margin:1.1em 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:8px; padding:.8em 1em; background:var(--bg)}
+.tradeoff-grid h3{margin:.1em 0 .4em; font-size:1em; color:var(--primary)}
+.fit-list li{margin:.7em 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:1em 0}
+.decision-checklist ul{list-style:none; padding-left:.2em}
+.decision-checklist ul li{margin:.35em 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:.4em}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:.6em; justify-content:space-between; margin:1.4em 0}
+.pager a{display:inline-block; min-height:44px; padding:.45em 1em; border:1px solid var(--line); border-radius:8px; background:var(--bg); text-decoration:none}
+.pager a:hover{background:var(--primary-weak)}
+.architecture-diagram{border:1px solid var(--line); border-radius:8px; padding:.8em; margin:1.2em 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:.88em; color:var(--muted); margin-top:.6em}
+.toc{border:1px solid var(--line); border-radius:8px; padding:.6em 1em; margin:1.2em 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:.4em 0; padding-left:1.4em; columns:2; column-gap:2em}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:1.02em; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:.8em 1em; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.9em}
+.site-footer{border-top:1px solid var(--line); padding:1em 16px 2em; font-size:.88em; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">训练、并行与 GPU Kernel</a></li>
+    <li aria-current="page">TorchTitan</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>TorchTitan：面向生产级 LLM 预训练的一站式 PyTorch 原生方案</h1>
+<p class="lede">本页为第 14 篇（训练、并行与 GPU Kernel 类），全部定量内容取自本地论文 PDF <code>14_TorchTitan_2410.06511.pdf</code>（arXiv:2410.06511v3，cs.CL，2025-06-07 水印），并逐条标注 PDF 页码与章节；21 页已全部逐页核对。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：训练（LLM 预训练）</li>
+    <li>形态：分布式（单机 8 GPU → 512+ GPU，4D 并行）</li>
+    <li>目标硬件：NVIDIA H100 95 GiB（论文口径：非标准 HBM2e、低 TDP）；Float8/AsyncTP 需 H100+ 与节点内 NVSwitch</li>
+    <li>核心资源：GPU 算力 · HBM 显存 · 节点内 NVLink/NVSwitch · 节点间 RDMA · 检查点存储</li>
+    <li>证据状态：P + R（正文含 E/I 标签）</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-14">2026-09-14</time>（PDF 全部 21 页逐页核对；官方仓库已在线核验）。</p>
+  <p><strong>证据完整度：</strong>关键定量结论均带 PDF 页码/表号与完整测试条件，未获取的字段一律写明「论文未明确披露」；仓库经在线核验（R）；云上产品映射为示例（E，未逐一核验规格与价格）；成本公式、编排与运维建议为参数化推断（I）。本页不设任何评分。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文明确链接且经核验的官方仓库">R＝官方仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="13-megascale.html" rel="prev">上一篇：13 MegaScale（文件可能尚未发布）</a>
+  <a href="../index.html" rel="next">下一篇：本篇为训练类第 4 篇，返回论文目录</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（第 1 页）</caption>
+    <tbody>
+      <tr><th scope="row">标题</th><td>TorchTitan: One-stop PyTorch native solution for production ready LLM pretraining（编辑译名：面向生产级 LLM 预训练的一站式 PyTorch 原生方案）</td></tr>
+      <tr><th scope="row">作者与机构</th><td>Wanchao Liang、Tianyu Liu、Less Wright、Will Constable、Andrew Gu、Chien-Chin Huang、Iris Zhang、Wei Feng、Howard Huang、Junjie Wang、Sanket Purandare、Gokul Nadathur、Stratos Idreos；Meta（Purandare 为哈佛在读、工作完成于 Meta）与 Harvard University <span class="ev ev-p">P</span>（第 1 页）</td></tr>
+      <tr><th scope="row">arXiv / 版本</th><td>arXiv:2410.06511v3（cs.CL），PDF 水印 2025-06-07；文内日期 June 10, 2025；未标注会议录用信息 <span class="ev ev-p">P</span>（第 1 页）</td></tr>
+      <tr><th scope="row">代码</th><td>论文第 1 页明示 <code>Code: https://github.com/pytorch/torchtitan</code>，经在线核验（<span class="ev ev-r">R</span>，见 <a href="#links">#links</a>）</td></tr>
+      <tr><th scope="row">评估范围</th><td>Llama 3.1 家族 8B / 70B / 405B；8 → 512 GPU；1D → 4D 并行 <span class="ev ev-p">P</span>（第 1 页摘要、第 7 页 §3）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> TorchTitan 的价值主张不是某单项技术最快，而是把 4D 并行（FSDP2/HSDP、TP/SP、PP 六种调度、CP）、编译（torch.compile）、Float8、DCP 异步检查点与 Flight Recorder 调试统一进一个约 9K 行的 PyTorch 原生代码库，使「并行策略可组合、配方可比较、生产可运维」。对云平台团队，它适合作为自建 LLM 预训练平台的<strong>基座或对照物</strong>；是否选它，核心取决于能否接受 PyTorch nightly 节奏与 NVIDIA H100+ 硬件前提（见 <a href="#fit">#fit</a>、<a href="#security-ops">#security-ops</a>）。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>现有分布式训练方案散落在多个库/仓库中，难以组合与比较，检查点扩展性、故障恢复与调试工具不足，维护工程量大 <span class="ev ev-p">P</span>（第 1-2 页 §1）。</li>
+  <li><strong>方案：</strong>以 DTensor + DeviceMesh 为统一抽象，组合 FSDP2（默认 1D）、HSDP、TP/SP（含 Loss Parallel、AsyncTP）、PP（1F1B/交错 1F1B/ZeroBubble 等 6 种调度）、CP，叠加激活检查点三模式、regional compilation、Float8；生产侧集成 DCP 异步检查点与 Flight Recorder <span class="ev ev-p">P</span>（第 3-7 页 §2）。</li>
+  <li><strong>论文声称的主要结果：</strong>在「已叠加此前全部技术」的优化基线上，Llama 3.1 8B（128 GPU、1D）加速 65.08%，70B（256 GPU、2D）经 AsyncTP 加速 12.59%，405B（512 GPU、3D）经交错 1F1B 加速 30%；CP+4D 支撑 262,144 token 上下文训练 <span class="ev ev-p">P</span>（第 1 页摘要；条件见 <a href="#experiments">#experiments</a> 表 E1-E6）。</li>
+  <li><strong>云上含义：</strong>训练平台的吞吐来自「叠加式」优化（编译 → Float8 → AsyncTP → 调度），而平台可用性与故障恢复来自 DCP 异步检查点（开销降 5-15 倍，Llama 3.1 8B）与 Flight Recorder 排障 <span class="ev ev-p">P</span>（第 7-8 页）；<span class="ev ev-i">I</span> 前者决定 GPU 租用成本，后者决定大集群下的有效训练时间占比。</li>
+  <li><strong>主要限制：</strong>实验全部为 Llama 3.1 dense 模型、非标准 H100（作者自述不知确切峰值 TFLOPS）；MoE 在论文时点为 Ongoing；Float8/AsyncTP 依赖 H100+ 与 NVSwitch；仓库要求 PyTorch nightly <span class="ev ev-p">P</span>（第 7 页脚注 1、第 20 页表 7、第 6 页 §2.2.3）+ <span class="ev ev-r">R</span>（README，2026-09-14 核验）。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>规模背景：</strong>论文以 Llama 3.1（405B 参数、15T tokens、30.84M GPU 小时、16K H100 GPU）与 PaLM（540B 参数、0.8T tokens、9.4M TPU 小时、6144 TPUv4）说明前沿模型训练的资源量级；并指出大规模训练易发 GPU 故障，需要高效恢复机制与检查点策略来减少停机 <span class="ev ev-p">P</span>（第 1 页 §1）。<span class="ev ev-i">I</span> 对架构师而言，这意味着「算得快」与「坏得起、恢复得快」必须同时设计。</p>
+
+<p><strong>现有方案的五大不足（论文归纳）：</strong><span class="ev ev-p">P</span>（第 2 页 §1）</p>
+<ol>
+  <li><strong>不可组合：</strong>难以把多种并行技术叠加，限制了多维探索与内存/计算优化的集成，训练效率受损。</li>
+  <li><strong>架构不灵活：</strong>缺模块化与可扩展性，新方法、新优化、新硬件难以接入。</li>
+  <li><strong>硬件利用率不足：</strong>未用好先进硬件特性，GPU 效率次优，且缺少可定制的检查点策略做内存-计算权衡。</li>
+  <li><strong>生产训练支持不足：</strong>分布式检查点扩展性有限、故障恢复繁琐、调试工具缺乏，阻碍生产级工作流。</li>
+  <li><strong>框架局限：</strong>依赖外部且维护不善的库，未能利用 PyTorch 优化 kernel、新特性与编译器支持，带来低效与兼容性问题。</li>
+</ol>
+
+<p><strong>根因：</strong>论文认为这些问题源于全栈缺少统一一致的张量与设备抽象，导致并行策略、检查点与效率优化彼此割裂 <span class="ev ev-p">P</span>（第 2 页 §1 末段）。</p>
+
+<p><strong>目标工作负载与约束：</strong>Llama 类 dense Transformer 的千亿参数、万亿 token 预训练；数千加速器规模；要求生产可用（检查点、恢复、调试、日志）<span class="ev ev-p">P</span>（第 1-3 页 §1-§2）。<strong>基线口径：</strong>性能对比的基线为「已包含此前全部叠加技术」的优化配置（stacked baselines），而非裸 eager <span class="ev ev-p">P</span>（第 8 页 §3.2）。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 代码组织与统一抽象</h3>
+<ul>
+  <li><strong>三组件正交：</strong>①并行无关、为可读性设计的模型定义；②把并行与训练优化应用到具体模型的 helpers；③通用训练循环。全部经 TOML 文件 + 命令行覆盖配置，便于新增模型与并行技术 <span class="ev ev-p">P</span>（第 3 页 §2、图 1）。</li>
+  <li><strong>DTensor/DeviceMesh：</strong>扩展 DTensor 的 n-D 分片、兼容 torch.compile、经 state_dict 支撑 n-D 模型高效检查点；DeviceMesh 表达并行维度。二者提供统一抽象与「正确的单设备语义」<span class="ev ev-p">P</span>（第 2 页 §1、第 3 页贡献 1）。</li>
+  <li><strong>meta device 初始化：</strong>先在 meta 设备仅凭元数据建模型（初始化极快），分片为 DTensor 后用用户自定义函数初始化参数，保证分片布局与 RNG seed 正确——解决「建大模型先爆 CPU/GPU 内存」的起点问题 <span class="ev ev-p">P</span>（第 4 页 §2.1.1；代码见第 14-15 页附录 A）。</li>
+</ul>
+
+<h3>3.2 四个并行维度（可自由组合至 4D）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>并行维度一览（机制均为论文事实 <span class="ev ev-p">P</span>；「职责边界」列为编辑整理 <span class="ev ev-i">I</span>）</caption>
+    <thead>
+      <tr><th scope="col">维度</th><th scope="col">实现机制</th><th scope="col">通信与硬件前提</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">FSDP2 / HSDP（数据并行）</th>
+        <td>FSDP2 以逐参数 DTensor 分片替代 FSDP1 的 FlatParameter；默认自动按 world size 分片；HSDP 构建 2D DeviceMesh（shard 组内跑 FSDP、replica 组间普通 DP，两者乘积为实际 DP world size）（第 4 页 §2.1.2、第 16-17 页附录 B.1/B.2）</td>
+        <td>参数 all-gather（BF16）+ 梯度 reduce-scatter（FP32）；HSDP 增加副本组间梯度 allreduce；可跨节点走 RDMA</td>
+        <td>默认 1D 并行；通信快于计算时常可用到 512 GPU；Llama 2 7B 对比 FSDP1：内存约 −7%、吞吐约 +1.5%（第 4、9、16 页）</td>
+      </tr>
+      <tr>
+        <th scope="row">TP / SP（张量/序列并行）</th>
+        <td>用 RowwiseParallel/ColwiseParallel 把 attention/MLP 参数分片为 DTensor，不改模型代码；SP 对 norm/dropout 沿序列维分片；TP 与 SP 捆绑、由 TP degree 统一控制；Loss Parallel 按词元维分片交叉熵（默认启用）（第 4-5 页 §2.1.3、第 17 页附录 B.3）</td>
+        <td>引入 all-reduce/all-gather/reduce-scatter 同步中间激活，需节点内高速网络（NVLink），度数一般 ≤8（第 9 页 §3.3.2）</td>
+        <td>降低集合通信时延、缩小有效 batch、优化矩阵乘形状、为大模型/长序列降峰值内存（第 9 页 §3.3.2）</td>
+      </tr>
+      <tr>
+        <th scope="row">PP（流水线并行）</th>
+        <td>模型按切分点分 S 个 stage，各占一组设备；输入批切 microbatch；经 <code>torch.distributed.pipelining</code> 支持 1F1B、GPipe、交错 1F1B、ZeroBubble、Flexible-Interleaved-1F1B、Looped-BFS 共 6 种调度（pipeline IR 表达调度、编译 pass 插入/优化通信）；PP 实验采用 ZeRO-2 语义（第 5 页 §2.1.4、第 17 页 B.4、第 20 页表 7 与 B.10.1）</td>
+        <td>阶段间仅点对点传边界激活/梯度，带宽需求小；效率取决于调度与 microbatch 大小（气泡）（第 10 页 §3.3.3）</td>
+        <td>应对更大规模或带宽受限集群，缓解 FSDP 通信时延（第 10 页 §3.3.3）</td>
+      </tr>
+      <tr>
+        <th scope="row">CP（上下文并行）</th>
+        <td>沿序列维分片 DTensor；上下文管理器动态替换 <code>scaled_dot_product_attention</code> 调用（不改模型代码）；DTensor dispatcher 扩展支持 Ring Attention 与 causal 负载均衡（第 5 页 §2.1.5、第 18 页附录 B.5）</td>
+        <td>Ring Attention P2P 轮转；与 FSDP/TP/PP、AC、torch.compile、DCP 全兼容；大规模训练时 TP 居最内维、CP 居次外维（第 10 页 §3.3.4）</td>
+        <td>主用于超长上下文：Llama 3.1 8B + 8 H100 支撑 262,144 token 上下文、MFU 随 CP 度仅轻微下降（第 5 页 §2.1.5）</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>3.3 内存与计算优化</h3>
+<ul>
+  <li><strong>激活检查点三模式：</strong>full AC（反向重算全部所需激活）；op-level SAC（保存 matmul、SDPA 等高算术强度算子的中间结果，其余重算；为平衡吞吐仅每隔一个 matmul 保存）；layer-level SAC（每 x 个 TransformerBlock 包一层，x=1 等价 full）。作用于 TransformerBlock 层级，经 torch.utils.checkpoint 实现，常在多维并行之后仍属必要 <span class="ev ev-p">P</span>（第 5 页 §2.2.1、第 18-19 页附录 B.6）。</li>
+  <li><strong>regional compilation：</strong>对每个 TransformerBlock 单独应用 torch.compile——每区域获得无 graph break 的全图（兼容 FSDP2/TP/DTensor），且相同结构的块只编译一次、大幅缩短编译时间；经算子融合与计算-通信重排提升吞吐与内存 <span class="ev ev-p">P</span>（第 6 页 §2.2.2）。</li>
+  <li><strong>AsyncTP：</strong>把 attention/FFN 内的 TP 矩阵乘分数化为小块，微流水线式重叠通信与计算；基于 SymmetricMemory（节点内每 GPU 相同共享缓冲、直连 P2P，快于标准 NCCL），依赖 NVSwitch、一般仅 H100+ 可用 <span class="ev ev-p">P</span>（第 6 页 §2.2.3、第 19 页 B.7）。</li>
+  <li><strong>混合精度与 Float8：</strong>默认 MixedPrecisionPolicy 为参数 all-gather/计算 BF16、梯度 reduce-scatter/优化器 FP32；Float8 为派生数据类型、仅选择性应用于线性层（H100+），torchao.float8 提供 dynamic/delayed/static 逐张量缩放，与 autograd、torch.compile、FSDP2、TP（含 Float8 all-gather）可组合 <span class="ev ev-p">P</span>（第 6 页 §2.2.4、第 19 页 B.8）。</li>
+</ul>
+
+<h3>3.4 生产级训练设施</h3>
+<ul>
+  <li><strong>DCP 分布式检查点：</strong>借 DTensor 同时封装全局/本地张量信息（与并行方式解耦），保存为内部格式；加载时按当前 DTensor 布局匹配取回所需分片——兼得「换并行布局可复用」与「分片并行读写高效」；异步检查点把存储持久化放独立线程、与后续训练迭代重叠，Llama 3.1 8B 上开销较同步分布式检查点降低 5-15 倍 <span class="ev ev-p">P</span>（第 7 页 §2.3.1）。</li>
+  <li><strong>Flight Recorder：</strong>记录所有 collective 与 p2p 通信的 start/end/enqueue 时间及元数据（进程组、源/目的 rank、张量尺寸、调用栈）；对 PP 可定位 GPU 上最后完成的 send/recv 以排查调度 bug，对 FSDP/TP 可找出未调用集合通信的 rank <span class="ev ev-p">P</span>（第 7 页 §2.3.2）。</li>
+  <li><strong>日志与可观测：</strong>内置训练日志指标（吞吐、内存读数等），每 10 次迭代记录、实验统一取第 90 次迭代读数；PP 各 rank 峰值内存取最大 <span class="ev ev-p">P</span>（第 8 页 §3.2 与脚注 2）。</li>
+</ul>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页为便于云上理解作如下划分：<strong>控制面</strong>=TOML 配置解析、DeviceMesh 构建、调度选择、训练循环编排、检查点/恢复触发；<strong>数据面</strong>=数据加载、张量分片与集合/P2P 通信、优化器更新、检查点读写。该划分仅影响叙述方式，不改变组件职责的论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/torchtitan-data-path.svg"
+       alt="TorchTitan 数据路径示意图：控制面由 TOML 配置构建 DeviceMesh 并行维度、选择流水线调度并驱动通用训练循环；数据面上 C4 数据经 tiktoken 分词与可检查点数据加载器进入训练，模型先在 meta 设备上分片初始化，microbatch 按流水线调度流经各 PP 阶段，阶段间仅点对点传递边界激活与梯度；单个阶段内部嵌套 TP/SP 分片计算（节点内 NVLink，AsyncTP 重叠）、FSDP2 参数 all-gather 与梯度 reduce-scatter（跨节点 RDMA，HSDP 增加副本组 allreduce）与 CP 序列维 Ring Attention；随后优化器以 FP32 更新；DCP 按 DTensor 布局分片保存检查点，异步模式以独立线程持久化并与训练迭代重叠，写入高吞吐存储；Flight Recorder 旁路记录所有集合与点对点通信事件用于故障诊断。" width="980" height="812">
+  <figcaption>图 1：TorchTitan 4D 并行训练数据路径与控制面/数据面边界。实线＝数据面（数据/张量/通信/检查点），虚线＝控制面与调试旁路；编号 ①–⑨ 对应下方文字序列。依据论文第 4-7 页 §2.1-§2.3 与第 14-21 页附录 A/B 绘制 <span class="ev ev-p">P</span>；平面划分、配色与编号为编辑标注 <span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 数据接入：</strong>C4（en 变体，Common Crawl 清洗语料）经 Llama 3.1 官方 tiktoken 分词，进入可检查点的 data loader（支持断点恢复读取）<span class="ev ev-p">P</span>（第 7 页 §3.1）。</li>
+  <li><strong>② 初始化：</strong>模型先在 meta 设备上创建（仅元数据），按 <code>pipeline_parallel_split_points</code> 切分为 PP stage（looped 调度可得多个 model_parts），对每个 stage 依次应用 TP 计划、激活检查点、torch.compile、FSDP2 与混合精度，最后 <code>to_empty(cuda)</code> 落卡并以用户函数初始化权重（DTensor 保证分片布局与 RNG 正确）<span class="ev ev-p">P</span>（第 4 页 §2.1.1、第 14-15 页附录 A 代码）。</li>
+  <li><strong>③ microbatch 流动：</strong>输入批切为 microbatch，按所选流水线调度（如交错 1F1B）在各 stage 间流动；stage 之间仅以 P2P 传边界激活（前向）与梯度（反向），末 stage 计算损失并启动反向；梯度归约只在最后一个 microbatch 后发生 <span class="ev ev-p">P</span>（第 5 页 §2.1.4、第 20 页 B.10.1）。</li>
+  <li><strong>④ stage 内 TP/SP：</strong>attention/MLP 参数按列/行分片（RowwiseParallel/ColwiseParallel），中间激活经 all-gather/reduce-scatter 在节点内 NVLink 上同步；norm/dropout 沿序列维分片（SP）；启用 AsyncTP 时矩阵乘被切小块、通信与计算微流水重叠（SymmetricMemory 直连 P2P）<span class="ev ev-p">P</span>（第 4 页 §2.1.3、第 6 页 §2.2.3、第 17 页 B.3）。</li>
+  <li><strong>⑤ stage 内 FSDP2/HSDP：</strong>前向按需 all-gather 参数（BF16），本地计算后立即（除最后一个 TransformerBlock 外）reshard；反向梯度 reduce-scatter（FP32）并更新分片优化器状态；HSDP 形态下 shard 组内如上、副本组间再做梯度 allreduce <span class="ev ev-p">P</span>（第 4 页 §2.1.2、第 15-17 页附录 A/B.1/B.2）。</li>
+  <li><strong>⑥ stage 内 CP：</strong>序列维分片时，attention 调用被上下文管理器替换为 CP 算子，经 Ring Attention P2P 轮转 KV/激活并做因果负载均衡；输入 ids/labels 等缓冲按 cp_seq_dims 声明参与分片 <span class="ev ev-p">P</span>（第 18 页附录 B.5 与第 15-16 页附录 A 代码）。</li>
+  <li><strong>⑦ 反向与优化器：</strong>Loss Parallel 使交叉熵按词元维分片计算、免全量 gather 模型输出（默认启用）；优化器状态 FP32 更新 <span class="ev ev-p">P</span>（第 5 页 Loss Parallel、第 6 页 §2.2.4、第 19 页 B.8）。</li>
+  <li><strong>⑧ 检查点路径：</strong>DCP 按 DTensor 布局把分片模型/优化器状态写为内部格式存储；异步模式下持久化在独立线程执行、与后续训练迭代重叠（Llama 3.1 8B 开销较同步降 5-15 倍）；加载时按当前并行布局匹配取回分片，可跨并行配置复用 <span class="ev ev-p">P</span>（第 7 页 §2.3.1）。</li>
+  <li><strong>⑨ 调试旁路：</strong>训练全程 Flight Recorder 记录每个 collective/p2p 的 start/end/enqueue 时间与元数据（进程组、rank、张量尺寸、调用栈），作业卡死/崩溃时用于定位最后完成的 send/recv 或未调用集合通信的 rank <span class="ev ev-p">P</span>（第 7 页 §2.3.2）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与容量事实（配置/机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TP 度数一般 ≤8，限于节点内（NVLink）；原文另有「Scaling beyond 4192 GPUs requires combining TP with PP」一句（数字 4192 系原文原样印出、无分隔符；编辑注：疑为排版笔误，不改动原文）<span class="ev ev-i">I</span></td><td>TP 扩展上限</td><td><span class="ev ev-p">P</span> 第 9 页 §3.3.2</td></tr>
+      <tr><td>HSDP：data_parallel_shard_degree × data_parallel_replicate_degree ＝ 实际 DP world size</td><td>HSDP 配置语义</td><td><span class="ev ev-p">P</span> 第 17 页 B.2</td></tr>
+      <tr><td>PP 实验用 ZeRO-2（ZeRO-3 每 microbatch 额外 all-gather、低效）</td><td>PP + FSDP 组合口径</td><td><span class="ev ev-p">P</span> 第 20 页 B.10.1</td></tr>
+      <tr><td>CP 支撑 262,144 token 上下文（8B、8 GPU）；4D 下 TP 居最内维、CP 居次外维</td><td>长上下文训练</td><td><span class="ev ev-p">P</span> 第 5 页 §2.1.5、第 10 页 §3.3.4</td></tr>
+      <tr><td>异步检查点开销较同步降 5-15×（Llama 3.1 8B）；硬件/检查点大小/存储介质：论文未明确披露</td><td>DCP 异步检查点</td><td><span class="ev ev-p">P</span> 第 7 页 §2.3.1</td></tr>
+      <tr><td>每主机 8 GPU + NVSwitch；两主机一机架接 TOR；TOR 间后端 RDMA 互联</td><td>实验集群拓扑</td><td><span class="ev ev-p">P</span> 第 7 页 §3.1</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong><span class="ev ev-p">P</span> 口径提醒（读数方式）：</strong>论文吞吐为 tokens/s/GPU，每 10 次迭代记录、统一取第 90 次迭代读数；内存读数全程稳定、PP 各 rank 取最大值；启用 Float8 后因 BF16/FP8 Tensor Core 峰值 FLOPS 不同而<strong>不报告 MFU</strong>（仅给参照：1D 8B 不开 Float8 为 33%-42% MFU）<span class="ev ev-p">P</span>（第 8 页 §3.2 与脚注 1-2）。引用本页任何数字时必须保留这些口径。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>组合性 ↔ 配置复杂度</h3>
+    <p><span class="ev ev-p">P</span> 4D 并行自由组合是核心卖点（第 3-5 页）。<span class="ev ev-i">I</span> 代价是配置空间指数扩大：FSDP/TP/PP/CP 度数、microbatch 数、调度选择、AC 模式需联合调优；TOML 配置与论文配方指南（§3.3）可降低门槛，但首轮容量规划仍需专人负责。</p>
+  </li>
+  <li>
+    <h3>通信模式互斥：FSDP ↔ TP ↔ PP</h3>
+    <p><span class="ev ev-p">P</span> FSDP 集合通信时延随 world size 线性上升（≤512 GPU 常够用）；TP 降时延但引入阻塞集合通信、限于节点内（≤8）；PP 只传边界激活/梯度、省带宽但引入气泡（第 9-10 页 §3.3）。<span class="ev ev-i">I</span> 三者是「带宽↔时延↔气泡」的互补互换，按「TP 节点内 → PP 跨带宽 → FSDP 收尾」分层叠加是论文推荐的次序。</p>
+  </li>
+  <li>
+    <h3>内存 ↔ 重算（AC/SAC）</h3>
+    <p><span class="ev ev-p">P</span> full AC 内存最低但反向重算全部激活；op-level SAC 保存高算术强度算子（matmul/SDPA）、重算其余；layer-level SAC 每 x 层一档，提供连续折中（第 5 页 §2.2.1、第 18-19 页 B.6）。<span class="ev ev-i">I</span> 这是训练平台最常调的「内存-吞吐旋钮」，建议以吞吐-显存曲线标定后固化配方。</p>
+  </li>
+  <li>
+    <h3>编译收益 ↔ 灵活性/编译等待</h3>
+    <p><span class="ev ev-p">P</span> regional compilation 获得无断点全图且重复结构只编译一次（第 6 页 §2.2.2）；表 1/2 显示 +6.64%/+14.82% 吞吐（第 8 页）。<span class="ev ev-i">I</span> 代价是动态行为受限与启动期编译等待；模型结构频繁变更的研发阶段需评估重启频率。</p>
+  </li>
+  <li>
+    <h3>精度/可测性 ↔ 效率（Float8）</h3>
+    <p><span class="ev ev-p">P</span> Float8 在线性层带来 +50.35%/+65.08% 吞吐（8B，第 8 页表 1/2），但使 MFU 定义不明确、需 dynamic/delayed/static 缩放策略保稳定（第 6、8 页）。<span class="ev ev-i">I</span> 收益最大也最难治理：上线前需做收敛对照（论文给出损失收敛验证方法，第 21 页），并把「MFU 不可比」写进平台口径。</p>
+  </li>
+  <li>
+    <h3>检查点：同步 ↔ 异步</h3>
+    <p><span class="ev ev-p">P</span> 异步检查点把持久化移出关键路径，开销降 5-15×（Llama 3.1 8B，第 7 页 §2.3.1）。<span class="ev ev-i">I</span> 异步窗口内的最新状态尚未落盘，故障时回退更多步数；该窗口大小、检查点大小与存储介质需求论文未明确披露，落地方案需自行压测。</p>
+  </li>
+  <li>
+    <h3>HSDP：通信 ↔ 冗余显存/存储</h3>
+    <p><span class="ev ev-p">P</span> HSDP 把 FSDP 通信限制在 shard 组内、以副本组 allreduce 替代全局通信，支持继续以数据并行扩展（第 4、17 页）。<span class="ev ev-i">I</span> 代价是每副本一份完整分片状态，显存/检查点占用随副本度线性增长；跨副本的容灾布局（副本组跨机架/可用区）是云上额外设计点。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实（集群拓扑、机制）单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>TorchTitan 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算节点：每主机 8 GPU + NVSwitch（TP/AsyncTP/SymmetricMemory 前提）</th>
+        <td><span class="ev ev-e">E</span> 8×H100/H200 整机实例：如 AWS p5/p5e 家族、Google Cloud a3-highgpu/a3-megagpu、Azure ND H100 v5 系列（示例命名）</td>
+        <td>硬件前提为论文事实 <span class="ev ev-p">P</span>（第 6-7 页 §2.2.3、§3.1）；实例名为厂商目录示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">网络：节点内 NVLink/NVSwitch；节点间 RDMA 后端（TOR 互联）</th>
+        <td><span class="ev ev-e">E</span> GPU 组网选型：RDMA over Converged Ethernet（RoCEv2）或 InfiniBand 后端网络；TP 组必须同主机</td>
+        <td>论文实验拓扑 <span class="ev ev-p">P</span>（第 7 页 §3.1）；带宽等级与云厂商组网规格需按目录核对 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">存储：DCP 分片检查点高吞吐读写；异步持久化与训练重叠</th>
+        <td><span class="ev ev-e">E</span> 高吞吐对象存储或并行文件系统（如各云的 Lustre/GPFS 类托管服务、对象存储多 part 并发写）；按租户/项目隔离的检查点桶</td>
+        <td>DCP 分片读写机制 <span class="ev ev-p">P</span>（第 7 页 §2.3.1）；存储产品与吞吐规格为云示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">编排：多节点作业启动、失败重启、拓扑感知放置</th>
+        <td><span class="ev ev-e">E</span> Slurm / Kubernetes（torchrun 风格 launcher）+ GPU 拓扑感知调度；作业级重试与节点替换</td>
+        <td>论文未指定编排器（实验为固定集群）<span class="ev ev-p">P</span>（第 7 页 §3.1）；编排与放置建议为 <span class="ev ev-i">I</span>/<span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性：改变并行度后继续训练；跨集群迁移</th>
+        <td><span class="ev ev-e">E</span> 借 DCP「布局解耦」：缩容/换型后从旧检查点按新并行布局恢复；HSDP 度数调整作为弹性维度</td>
+        <td>DCP 跨布局复用为论文机制 <span class="ev ev-p">P</span>（第 7 页 §2.3.1）；弹性操作流程为编辑建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：吞吐/内存日志 + Flight Recorder 通信事件</th>
+        <td><span class="ev ev-e">E</span> 日志接入集中式监控（Prometheus/Grafana、云厂商托管监控）；Flight Recorder 追踪文件按作业归档并设访问控制</td>
+        <td>内置日志指标与 Flight Recorder 为论文功能 <span class="ev ev-p">P</span>（第 7-8 页 §2.3.2、§3.2）；监控接入为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> 依论文通信分层：TP/SP 维度必须整组落在同一主机的 NVSwitch 域内；PP 相邻 stage 尽量同机架（P2P 走 TOR）；FSDP/HSDP 的 all-gather/reduce-scatter 与副本 allreduce 走后端 RDMA、按 rack/可用区分散副本组以兼顾容灾。放置错误（如 TP 跨主机）的后果不是变慢而是不可用——TP 依赖节点内高速互联。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 训练场景的「SLO」口径</h3>
+<p>预训练没有在线时延 SLO，平台 SLA 通常转化为：<span class="ev ev-i">I</span> ①<strong>吞吐目标</strong>（tokens/s/GPU 或总 tokens/天）；②<strong>有效训练时间占比</strong>（1 − 故障/检查点停机占比）；③<strong>故障恢复时间 MTTR</strong>（作业崩溃到恢复训练的时长）；④<strong>损失收敛里程碑</strong>（按计划达到目标 loss/下游指标）。论文对前三者给出机制与参考数字，对第④项给出收敛验证方法 <span class="ev ev-p">P</span>（第 8 页 §3.2、第 21 页 B.10.2）。</p>
+
+<h3>7.2 成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+预计 GPU 时（小时）≈ 总 token 数 ÷ (单卡吞吐 tokens/s × 卡数 ÷ 3600)<br>
+算力成本 ≈ GPU 时 × 当时单价（记录查询日期）+ 节点溢价<br>
+存储成本 ≈ 检查点大小 × 保留副本数 × 保留时长 × 存储单价；检查点大小 ≈ (参数 + 优化器状态 + 临时缓冲) 字节数（与精度策略相关）<br>
+有效成本/GPU 时 ≈ 算力成本 ÷ 有效训练时间占比
+</div>
+<p><span class="ev ev-i">I</span> 公式中唯一由论文支撑的变量是单卡吞吐（带完整条件，见 <a href="#experiments">#experiments</a>）与检查点开销倍率（5-15×，第 7 页）；单价、存储价、检查点大小均需按部署时数据填写，论文未披露、本页不给出伪精确数字。</p>
+
+<h3>7.3 敏感项排序（论文口径，条件互不可比）</h3>
+<p><span class="ev ev-p">P</span> 在各自实验条件下，逐项叠加的吞吐增益为：Float8（8B：+50.35%/+65.08%，第 8 页表 1/2）＞流水线调度换挡（405B：1F1B→交错 1F1B +30.00%，表 4）＞AsyncTP（70B 2D：+12.59%，表 3）＞torch.compile（8B：+6.64%/+14.82%，表 1/2）。<span class="ev ev-i">I</span> 成本治理含义：Float8 与调度选择的「免租金」收益最大，应最先纳入 PoC；各增益倍数基于不同模型/规模/基线，<strong>不可横向相乘或跨表比较</strong>。</p>
+
+<h3>7.4 数据缺口</h3>
+<ul>
+  <li>端到端 TCO、云价格、检查点大小/频率/存储吞吐需求：<span class="ev ev-i">I</span> 论文未披露，需部署时自测。</li>
+  <li>异步检查点的故障回退窗口：论文未明确披露（机制见第 7 页 §2.3.1）。</li>
+  <li>Float8 下的能耗/散热差异（低 TDP 非标准 H100 使结论更难外推）：论文未明确披露 <span class="ev ev-p">P</span>（第 7 页脚注 1）。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>训练数据合规：</strong>论文实验用 C4（en，Common Crawl 清洗语料）<span class="ev ev-p">P</span>（第 7 页 §3.1）。<span class="ev ev-i">I</span> 生产替换为自有语料前，需完成来源许可、个人信息与版权审查；C4 类爬虫语料直接商用需另行法务评估。</li>
+  <li><strong>租户隔离与检查点访问控制：</strong><span class="ev ev-i">I</span> 训练作业通常独占 GPU 组；检查点/数据集桶应按项目隔离并启用最小权限与静态加密（云存储侧能力，<span class="ev ev-e">E</span>）。DCP 检查点含全部权重与优化器状态，等同模型资产核心机密，访问要审计。</li>
+  <li><strong>Flight Recorder 日志敏感性：</strong><span class="ev ev-i">I</span> 记录含张量尺寸、rank 拓扑与调用栈（<span class="ev ev-p">P</span> 第 7 页），可间接暴露模型结构与并行布局；追踪文件应与检查点同级保护、限期保留。</li>
+  <li><strong>镜像与供应链：</strong><span class="ev ev-r">R</span> 仓库要求 PyTorch nightly（README，2026-09-14 核验），Float8 依赖 torchao。<span class="ev ev-i">I</span> nightly 节奏意味着镜像必须 digest 锁定 + CVE 扫描 + 保留可回退镜像层；升级属受控变更而非自动拉取。</li>
+  <li><strong>许可合规：</strong>论文版权归原作者；仓库代码为 BSD-3-Clause <span class="ev ev-r">R</span>（2026-09-14 核验），二次分发需保留许可声明。</li>
+</ul>
+
+<h3>8.2 可运维性</h3>
+<ul>
+  <li><strong>故障恢复：</strong><span class="ev ev-p">P</span> DCP 支撑快速恢复（异步保存把开销降 5-15×，Llama 3.1 8B，第 7 页），恢复时按当前布局取回分片；可检查点 data loader 支撑数据侧续读（第 7 页 §3.1）。<span class="ev ev-i">I</span> 平台侧需定义：保存频率、保留窗口（最近 N 个）、节点替换后的重启编排。</li>
+  <li><strong>卡死/超时诊断：</strong><span class="ev ev-p">P</span> Flight Recorder 面向大规模 NCCL 超时：PP 定位最后完成的 send/recv；FSDP/TP 找出未调用 collective 的 rank（第 7 页 §2.3.2）。<span class="ev ev-i">I</span> 建议常开低频记录并在故障演练中验证其定位能力，避免「故障时才发现没开」。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-p">P</span> 内置吞吐/内存日志（每 10 迭代记录口径，第 8 页）。<span class="ev ev-i">I</span> 告警建议：tokens/s/GPU 相对滚动基线的跌幅、峰值显存逼近上限、loss 发散、检查点连续失败；接入云监控（<span class="ev ev-e">E</span>）。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-i">I</span> 由于依赖 PyTorch nightly（<span class="ev ev-r">R</span>），采用「版本 pin + 金丝雀作业」：新 nightly/新 torchao 先在小规模金丝雀跑通收敛对照，再全量切换；保留「上一可用镜像 + 兼容检查点」的回滚组合。<span class="ev ev-p">P</span> 检查点跨并行布局可加载（第 7 页），但<strong>跨 PyTorch/DTensor 版本的加载兼容性论文未明确披露</strong>，升级演练必须覆盖「旧版本写入 → 新版本读取」。</li>
+  <li><strong>功能边界随版本演进：</strong><span class="ev ev-p">P</span> MoE 在论文时点为 Ongoing（第 20 页表 7）；<span class="ev ev-r">R</span> 仓库当前 README 已含论文之外的能力与模型支持（2026-09-14 核验）。<span class="ev ev-i">I</span> 采购/立项评估应以「pin 的那个 commit」实测为准，不要按论文或 README 最新文案外推。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>Llama 类 dense 模型的 8B–405B 预训练/继续预训练，8–512+ H100 GPU，团队愿意采用 PyTorch 原生栈。</strong>触发：模型可按 Llama 适配、硬件为 H100 主机（NVSwitch）+ RDMA 后端。理由：论文实验全覆盖该区间并给出叠加增益与收敛验证 <span class="ev ev-p">P</span>（第 1、7-9、21 页）。</li>
+  <li><strong>长上下文训练（32K–262K）且单卡显存不足。</strong>触发：序列长度驱动 OOM、或模型质量目标要求超长上下文。理由：CP 把序列维分片并与 3D 并行组合，8B/8 GPU 支撑 262,144 token、405B/512 GPU 4D 同样可达 <span class="ev ev-p">P</span>（第 5 页 §2.1.5、第 9 页表 5/6）。</li>
+  <li><strong>带宽受限集群或超大模型需要流水线并行。</strong>触发：FSDP 集合通信时延随 world size 线性上升、跨节点带宽成为瓶颈。理由：PP 仅 P2P 传边界激活/梯度，且提供 6 种调度按气泡/内存折中选型 <span class="ev ev-p">P</span>（第 9-10 页 §3.3.1/3.3.3、第 20 页表 7）。</li>
+  <li><strong>追求吞吐上限且硬件达标（H100+ NVSwitch）。</strong>触发：可接受 Float8 治理成本与收敛验证流程。理由：compile+Float8+AsyncTP+交错 1F1B 的叠加增益均有条件化实验支撑 <span class="ev ev-p">P</span>（第 8 页表 1-4）。</li>
+  <li><strong>大集群生产训练，故障恢复与排障是硬需求。</strong>触发：GPU 故障率高、NCCL 卡死定位成本高。理由：DCP 异步检查点（5-15× 开销降）+ Flight Recorder + 可检查点 data loader 构成恢复闭环 <span class="ev ev-p">P</span>（第 7 页 §2.3、§3.1）。</li>
+  <li><strong>教学/研究：并行配方实验床。</strong>触发：需要系统性比较并行策略而维护成本可控。理由：核心 7K 行/全量 9K 行代码、三组件正交、TOML 配置 <span class="ev ev-p">P</span>（第 3 页 §2、第 20 页表 8）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>MoE 或非 Llama 类架构的「开箱即用」预期。</strong>触发：直接拿 MoE 模型按论文结果预估收益。理由：论文实验全部为 Llama 3.1 dense，MoE 行在其功能对比表中为 Ongoing <span class="ev ev-p">P</span>（第 7-9 页、第 20 页表 7）。</li>
+  <li><strong>非 NVIDIA H100+ 或无 NVSwitch 的硬件。</strong>触发：A100/消费级卡、无节点内 NVSwitch 的整机。理由：Float8 需 H100 等较新硬件，AsyncTP/SymmetricMemory 依赖 NVSwitch，论文实验口径为非标准 H100 <span class="ev ev-p">P</span>（第 6 页 §2.2.3-2.2.4、第 7 页脚注 1）。</li>
+  <li><strong>无法接受 PyTorch nightly 依赖的严苛生产环境。</strong>触发：变更管控要求「仅用稳定版/长期支持版」。理由：仓库明确要求 nightly 构建 <span class="ev ev-r">R</span>（README，2026-09-14 核验）；<span class="ev ev-i">I</span> 若只能用稳定版，需评估当时稳定版已包含的 FSDP2/DCP 能力是否满足，等于放弃论文部分叠加增益。</li>
+  <li><strong>期望托管式训练平台（UI、自动超参/并行搜索）。</strong>触发：用户需要产品化界面与自动化配方搜索。理由：TorchTitan 定位是训练系统/试验床，配置经 TOML 与命令行，无托管控制面 <span class="ev ev-p">P</span>（第 3 页 §2）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>推理服务场景。</strong>触发：拿它做在线 serving。理由：论文范畴为预训练系统，不含服务化组件 <span class="ev ev-p">P</span>（第 1、10 页）。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span>（第 7-8 页 §3.1-§3.2）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（论文事实）</caption>
+    <tbody>
+      <tr><th scope="row">硬件</th><td>NVIDIA H100、95 GiB 显存；<strong>非标准卡</strong>：HBM2e、更低 TDP，峰值 TFLOPS 介于 SXM 与 NVL 之间、作者不知道确切值（脚注 1）；每主机 8 GPU + NVSwitch；两主机/机架 + TOR；TOR 间后端 RDMA（第 7 页 §3.1 与脚注 1）</td></tr>
+      <tr><th scope="row">数据与分词</th><td>C4（en 变体）；Llama 3.1 官方 tiktoken；可检查点 data loader（第 7 页 §3.1）</td></tr>
+      <tr><th scope="row">吞吐口径</th><td>tokens/s/GPU，每 10 次迭代记录、取第 90 次迭代读数；内存读数全程稳定、PP 各 rank 取最大（脚注 2）（第 8 页 §3.2）</td></tr>
+      <tr><th scope="row">MFU 口径</th><td>启用 Float8 后不报告 MFU（BF16/FP8 Tensor Core 峰值 FLOPS 不同、定义不明确）；参照：1D 8B 不开 Float8 为 33%-42% MFU（第 8 页 §3.2）</td></tr>
+      <tr><th scope="row">基线公平性</th><td>叠加式基线：更高维并行/新功能的基线总是包含此前全部技术（第 8 页 §3.2）</td></tr>
+      <tr><th scope="row">收敛验证</th><td>图 5：Llama 3.1 8B、C4、local batch 4/global batch 32、3000 步、600 warmup；表 9 四组设置含 FSDP 8 基准（第 21 页 B.10.2）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 论文实验结果（全量转录，条件逐表完整）</h3>
+<p>下表合并论文表 1-6；「—」表示该字段论文未明确披露。所有百分比为相对各自表内基线行（叠加式）的增幅；不同表之间<strong>不可横向比较</strong>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文表 1-6 转录：吞吐与峰值显存（每 GPU；均为 <span class="ev ev-p">P</span>，第 8-9 页）</caption>
+    <thead>
+      <tr>
+        <th scope="col">表/规模</th>
+        <th scope="col">技术栈（相对其表内基线）</th>
+        <th scope="col" class="num">吞吐 (Tok/s)</th>
+        <th scope="col" class="num">相对基线</th>
+        <th scope="col" class="num">显存 (GiB)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="3">表 1：Llama 3.1 8B，8 GPU<br>混合精度 + 选择性 AC；local batch 2 / global 16；C4；序列长度 —</th>
+        <td>FSDP（基线）</td><td class="num">6,258</td><td class="num">100%</td><td class="num">81.9</td></tr>
+      <tr><td>+ torch.compile</td><td class="num">6,674</td><td class="num">+6.64%</td><td class="num">77.0</td></tr>
+      <tr><td>+ torch.compile + Float8</td><td class="num">9,409</td><td class="num">+50.35%</td><td class="num">76.8</td></tr>
+
+      <tr><th scope="row" rowspan="3">表 2：Llama 3.1 8B，128 GPU<br>混合精度 + 选择性 AC；local 2 / global 256；C4；序列长度 —</th>
+        <td>FSDP（基线）</td><td class="num">5,645</td><td class="num">100%</td><td class="num">67.0</td></tr>
+      <tr><td>+ torch.compile</td><td class="num">6,482</td><td class="num">+14.82%</td><td class="num">62.1</td></tr>
+      <tr><td>+ torch.compile + Float8</td><td class="num">9,319</td><td class="num">+65.08%</td><td class="num">61.8</td></tr>
+
+      <tr><th scope="row" rowspan="2">表 3：Llama 3.1 70B，256 GPU，2D（FSDP 32 / TP 8）<br>混合精度 + Full AC；local 16 / global 512；C4；序列长度 —；基线含 compile+Float8</th>
+        <td>2D（基线）</td><td class="num">897</td><td class="num">100%</td><td class="num">70.3</td></tr>
+      <tr><td>+ AsyncTP</td><td class="num">1,010</td><td class="num">+12.59%</td><td class="num">67.7</td></tr>
+
+      <tr><th scope="row" rowspan="2">表 4：Llama 3.1 405B，512 GPU，3D（FSDP 4 / TP 8 / PP 16）<br>混合精度 + Full AC；local 32 / global 128；C4；序列长度 —；基线含 compile+Float8+AsyncTP</th>
+        <td>1F1B 调度（基线）</td><td class="num">100</td><td class="num">100%</td><td class="num">78.0</td></tr>
+      <tr><td>交错 1F1B 调度</td><td class="num">130</td><td class="num">+30.00%</td><td class="num">80.3</td></tr>
+
+      <tr><th scope="row" rowspan="4">表 5：Llama 3.1 8B，8 GPU（FSDP + CP + compile + Float8）<br>混合精度 + Full AC；local 1 / global —；C4</th>
+        <td>FSDP 8, CP 1 @ 32,768</td><td class="num">3,890</td><td class="num">—</td><td class="num">83.9</td></tr>
+      <tr><td>FSDP 4, CP 2 @ 65,536</td><td class="num">2,540</td><td class="num">—</td><td class="num">84.2</td></tr>
+      <tr><td>FSDP 2, CP 4 @ 131,072</td><td class="num">1,071</td><td class="num">—</td><td class="num">84.0</td></tr>
+      <tr><td>FSDP 1, CP 8 @ 262,144</td><td class="num">548</td><td class="num">—</td><td class="num">84.5</td></tr>
+
+      <tr><th scope="row" rowspan="4">表 6：Llama 3.1 405B，512 GPU，4D（1F1B，TP 8 / PP 8，含 compile+Float8+AsyncTP）<br>混合精度 + Full AC；local 8 / global —；C4</th>
+        <td>FSDP 8, CP 1 @ 32,768</td><td class="num">76</td><td class="num">—</td><td class="num">75.3</td></tr>
+      <tr><td>FSDP 4, CP 2 @ 65,536</td><td class="num">47</td><td class="num">—</td><td class="num">75.9</td></tr>
+      <tr><td>FSDP 2, CP 4 @ 131,072</td><td class="num">31</td><td class="num">—</td><td class="num">77.1</td></tr>
+      <tr><td>FSDP 1, CP 8 @ 262,144</td><td class="num">16</td><td class="num">—</td><td class="num">84.9</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>各实验的条件字段完整性与页码定位（缺项一律写「论文未明确披露」）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col">硬件</th><th scope="col">模型</th><th scope="col">精度</th><th scope="col">批量</th><th scope="col">IO（数据/序列）</th><th scope="col">基线</th><th scope="col">页码</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">表 1</th><td>H100 95 GiB ×8（NVSwitch）</td><td>Llama 3.1 8B</td><td>混合精度 + 选择性 AC</td><td>local 2 / global 16</td><td>C4；序列长度：论文未明确披露</td><td>FSDP 行</td><td><span class="ev ev-p">P</span> 第 8 页</td></tr>
+      <tr><th scope="row">表 2</th><td>H100 95 GiB ×128</td><td>Llama 3.1 8B</td><td>混合精度 + 选择性 AC</td><td>local 2 / global 256</td><td>C4；序列长度：论文未明确披露</td><td>FSDP 行</td><td><span class="ev ev-p">P</span> 第 8 页</td></tr>
+      <tr><th scope="row">表 3</th><td>H100 95 GiB ×256</td><td>Llama 3.1 70B</td><td>混合精度 + Full AC</td><td>local 16 / global 512</td><td>C4；序列长度：论文未明确披露</td><td>2D（含 compile+Float8）行</td><td><span class="ev ev-p">P</span> 第 8 页</td></tr>
+      <tr><th scope="row">表 4</th><td>H100 95 GiB ×512</td><td>Llama 3.1 405B</td><td>混合精度 + Full AC</td><td>local 32 / global 128</td><td>C4；序列长度：论文未明确披露</td><td>1F1B 行</td><td><span class="ev ev-p">P</span> 第 8 页</td></tr>
+      <tr><th scope="row">表 5</th><td>H100 95 GiB ×8</td><td>Llama 3.1 8B</td><td>混合精度 + Full AC（compile+Float8）</td><td>local 1 / global：论文未明确披露</td><td>C4；序列 32,768–262,144</td><td>表内 FSDP 8/CP 1 行（纵向对比）</td><td><span class="ev ev-p">P</span> 第 9 页</td></tr>
+      <tr><th scope="row">表 6</th><td>H100 95 GiB ×512</td><td>Llama 3.1 405B</td><td>混合精度 + Full AC（4D，compile+Float8+AsyncTP）</td><td>local 8 / global：论文未明确披露</td><td>C4；序列 32,768–262,144</td><td>表内 FSDP 8/CP 1 行（纵向对比）</td><td><span class="ev ev-p">P</span> 第 9 页</td></tr>
+      <tr><th scope="row">DCP 异步检查点 5-15×</th><td>论文未明确披露（实验环境口径推断为同 §3.1 集群 <span class="ev ev-i">I</span>）</td><td>Llama 3.1 8B</td><td>论文未明确披露</td><td>论文未明确披露</td><td>检查点保存 IO；大小/频率/介质：论文未明确披露</td><td>同步分布式检查点</td><td><span class="ev ev-p">P</span> 第 7 页</td></tr>
+      <tr><th scope="row">FSDP2 vs FSDP1（−7% 内存 / +1.5% 吞吐）</th><td>论文未明确披露</td><td>Llama 2 7B</td><td>论文未明确披露</td><td>论文未明确披露</td><td>论文未明确披露</td><td>FSDP1</td><td><span class="ev ev-p">P</span> 第 4 页 §2.1.2、第 16 页 B.1</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①硬件为非标准 H100，作者自述峰值 TFLOPS 未知（第 7 页脚注 1），MFU 结论不可外推到标准卡；②吞吐取第 90 次迭代单点读数（第 8 页），非全程均值；③基线为叠加式，各百分比分属不同模型/规模/基线，<strong>禁止跨表相加或与站内其他论文数字直接比较</strong>；④PP 各 rank 内存不同、表中为最大值（第 8 页脚注 2）。
+</div>
+
+<h3>10.3 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 锁定仓库 commit 与 PyTorch nightly 版本，记录 torchao 版本；用容器镜像 digest 固定环境。</li>
+  <li><span class="ev ev-i">I</span> 单机 8 GPU 跑 8B（表 1 配置：混合精度 + SAC，local 2/global 16），核对吞吐与显存是否与表 1 同数量级；若启 Float8，确认硬件支持。</li>
+  <li><span class="ev ev-i">I</span> 跑 3000 步收敛冒烟（对照图 5 条件：C4、local 4/global 32、600 warmup），确认 loss 曲线形态与论文一致 <span class="ev ev-p">P</span>（第 21 页）。</li>
+  <li><span class="ev ev-i">I</span> 逐维扩并行：先 FSDP 多机 → 加 TP（节点内）→ 加 PP（选调度）→ 需要长上下文再加 CP；每一步做一次故障演练（杀进程 → 从 DCP 检查点恢复 → 用 Flight Recorder 复盘一次人为注入的卡死）。</li>
+  <li><span class="ev ev-i">I</span> 固化配方为 TOML 基线并纳入版本管理；把吞吐/显存/恢复时长写进平台容量档案。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2410.06511" rel="noopener noreferrer">https://arxiv.org/abs/2410.06511</a></td>
+        <td><span class="ev ev-p">P</span> v3（cs.CL），PDF 水印 2025-06-07；本地 PDF：<code>14_TorchTitan_2410.06511.pdf</code>（21 页，已全部逐页核对）</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/pytorch/torchtitan" rel="noopener noreferrer">https://github.com/pytorch/torchtitan</a></td>
+        <td><span class="ev ev-r">R</span> 论文第 1 页 “Code:” 明示；2026-09-14 在线核验：pytorch 官方组织、BSD-3-Clause、README 自述 “A PyTorch native platform for training generative AI models”，功能清单含 FSDP2/TP（async）/PP/CP/DDP+HSDP/meta device/逐算子 SAC、C4 预配置（144M 条目）、Float8+MXFP8、torch.compile、分布式检查点（含异步）、torchtune 互操作；要求 PyTorch nightly。注意：README 所列模型支持（Qwen3、DeepSeek V3 等）已超出论文实验范围（论文仅 Llama 3.1 8B/70B/405B）。</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库</th>
+        <td>不提供</td>
+        <td><span class="ev ev-i">I</span> 遵循本站「不猜测仓库」策略：论文正文未明示且未经核验的第三方/镜像仓库一律不链接。论文参考文献中引用的 PyTorch 论坛帖与 DTensor RFC 仅作为论文材料呈现，不在此单列。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 明确模型族与规模是否落在论文验证区间（Llama 3.1 dense 8B/70B/405B）或已自行适配（P：第 7-9 页）</label></li>
+      <li><label><input type="checkbox"> 估出 token 预算与期望完成日期，反推所需 tokens/s 总量（I：§7.2 公式）</label></li>
+      <li><label><input type="checkbox"> 明确目标上下文长度；超过 32K 时把 CP 纳入设计（P：第 5、9 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 硬件为 H100+ 且节点内 NVSwitch 完好（Float8/AsyncTP/SymmetricMemory 前提）（P：第 6 页、第 7 页脚注 1）</label></li>
+      <li><label><input type="checkbox"> 接受 PyTorch nightly + torchao 依赖，并已确定 pin 策略（R：README 核验 2026-09-14）</label></li>
+      <li><label><input type="checkbox"> 确认当前 pin 版本对目标模型/功能（如 MoE）的支持状态，不以论文表格或 README 文案外推（P：第 20 页表 7；R）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（2-4 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 单机 8B 复现表 1 配置，吞吐/显存与论文同数量级（P：第 8 页；I：验收阈值自定）</label></li>
+      <li><label><input type="checkbox"> 3000 步收敛冒烟对照图 5 条件（C4、local 4/global 32、600 warmup）（P：第 21 页）</label></li>
+      <li><label><input type="checkbox"> 故障演练：杀进程后从 DCP 检查点恢复，并人为注入一次卡死用 Flight Recorder 定位（P：第 7 页）</label></li>
+      <li><label><input type="checkbox"> Float8 收敛对照实验通过（不开/开 Float8 各一次）（P：第 8 页表 1/2；I：对照方法）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量与拓扑</strong>
+    <ul>
+      <li><label><input type="checkbox"> 并行维度规划：TP ≤8 且同主机；PP 相邻 stage 同机架；FSDP/HSDP 走后端 RDMA；CP 按序列长度需求配置（P：第 9-10 页 §3.3；I：放置建议）</label></li>
+      <li><label><input type="checkbox"> 检查点存储吞吐估算：分片并发写带宽 ≥ 期望保存窗口内状态字节数 ÷ 允许写时长；异步模式另估缓冲内存（I：参数化公式，论文未披露数值）</label></li>
+      <li><label><input type="checkbox"> 保留 N 个检查点 + 数据 loader 状态，验证「任意保留点可恢复」（P：可检查点 data loader，第 7 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义吞吐 SLO（tokens/s/GPU）与度量口径（对齐论文每 10 迭代记录/取点方式，避免口径漂移）（P：第 8 页）</label></li>
+      <li><label><input type="checkbox"> 定义 MTTR 与有效训练时间占比目标，把异步检查点窗口计入可接受损失（P：5-15× 开销降，第 7 页；I：窗口量化）</label></li>
+      <li><label><input type="checkbox"> 定义 loss 收敛里程碑与判废标准（对照收敛验证方法，P：第 21 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以「当时单价 + 查询日期」估算总算力成本；不使用本页数字直接报价（I）</label></li>
+      <li><label><input type="checkbox"> 把 Float8/调度/AsyncTP 的增益写入成本敏感项分析，标注各自条件不可比（P：第 8 页；I：解读）</label></li>
+      <li><label><input type="checkbox"> 纳入存储（检查点副本）与网络（RDMA 组网）成本项（E/I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> 训练语料完成许可/隐私/版权审查（论文用 C4 仅为实验口径）（P：第 7 页；I：合规要求）</label></li>
+      <li><label><input type="checkbox"> 检查点与数据集桶按项目隔离、静态加密、最小权限 + 审计（E/I）</label></li>
+      <li><label><input type="checkbox"> 容器镜像 digest 锁定 + CVE 扫描 + 可回退镜像层；Flight Recorder 追踪文件设访问控制与保留期（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 版本升级走金丝雀作业：新 nightly 先小规模收敛验证再全量（I）</label></li>
+      <li><label><input type="checkbox"> 升级演练覆盖「旧版本写入的检查点 → 新版本读取」（DCP 跨版本兼容性论文未明确披露）（I，机制 P：第 7 页）</label></li>
+      <li><label><input type="checkbox"> 监控告警接入：吞吐基线漂移、显存逼近上限、loss 发散、检查点失败（I/E）</label></li>
+      <li><label><input type="checkbox"> 回滚预案：上一可用镜像 + 兼容检查点 + 配置（TOML）三件套同时回退（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 评估 DCP 检查点被其他训练栈读取的可行性（DCP 属 PyTorch 原生分布式检查点生态；迁移成本写入决策记录）（I，机制 P：第 7 页）</label></li>
+      <li><label><input type="checkbox"> 归档全部 TOML 配置、镜像 digest、commit 与容量档案，保证可重建（I）</label></li>
+      <li><label><input type="checkbox"> 预设备选替代（如继续用 FSDP1/其他框架）的最小迁移面：模型代码并行无关设计已降低绑定（P：第 3 页 §2；I：迁移评估）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与在线核验记录见构建文件 <code>sources/torchtitan.evidence.json</code>。核验日期均为 <time datetime="2026-09-14">2026-09-14</time>。</p>
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名/作者/机构/arXiv v3（cs.CL，2025-06-07）；代码 URL 印于第 1 页</td><td><span class="ev ev-p">P</span></td><td>第 1 页</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>摘要级结论：+65.08%（8B/128 GPU/1D）、+12.59%（70B/256 GPU/2D）、+30%（405B/512 GPU/3D）；4D 支撑长上下文</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要（另见第 3、8、10 页）</td><td>已核验（PDF 原页；条件见 EV-23～26）</td></tr>
+      <tr><td>现有系统五大不足与「缺统一张量/设备抽象」根因</td><td><span class="ev ev-p">P</span></td><td>第 2 页 §1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>三组件正交 + TOML 配置；DTensor/DeviceMesh 统一抽象；meta device 初始化</td><td><span class="ev ev-p">P</span></td><td>第 3-4 页 §2、§2.1.1；第 14-15 页附录 A</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>FSDP2 默认 1D：逐参数 DTensor 分片；vs FSDP1 内存约 −7%、吞吐约 +1.5%（Llama 2 7B）</td><td><span class="ev ev-p">P</span></td><td>第 4 页 §2.1.2、第 16 页 B.1</td><td>已核验（PDF 原页；其余条件论文未明确披露）</td></tr>
+      <tr><td>HSDP 2D DeviceMesh；shard 度 × 副本度 = DP world size</td><td><span class="ev ev-p">P</span></td><td>第 4 页 §2.1.2、第 17 页 B.2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>TP/SP 捆绑由 TP degree 控制；Loss Parallel 默认启用；TP 度数一般 ≤8、限节点内</td><td><span class="ev ev-p">P</span></td><td>第 4-5 页 §2.1.3、第 9 页 §3.3.2、第 17 页 B.3</td><td>已核验（PDF 原页；4192 句系原文原样）</td></tr>
+      <tr><td>PP 六种调度（含 ZeroBubble、Flexible-Interleaved-1F1B）、pipeline IR；PP 实验用 ZeRO-2</td><td><span class="ev ev-p">P</span></td><td>第 5 页 §2.1.4、第 17 页 B.4、第 20 页表 7 与 B.10.1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>CP：上下文至 262,144 tokens（8B/8 GPU）；Ring Attention；TP 最内维、CP 次外维</td><td><span class="ev ev-p">P</span></td><td>第 5 页 §2.1.5、第 10 页 §3.3.4、第 18 页 B.5</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>AC 三模式（full / op-level SAC / layer-level SAC）；每隔一个 matmul 保存</td><td><span class="ev ev-p">P</span></td><td>第 5 页 §2.2.1、第 18-19 页 B.6</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>regional compilation；AsyncTP/SymmetricMemory（H100+ NVSwitch）；Float8（torchao，dynamic/delayed/static）</td><td><span class="ev ev-p">P</span></td><td>第 6 页 §2.2.2-2.2.4、第 19 页 B.7/B.8</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>DCP：DTensor 布局解耦的分片保存/加载；异步检查点开销降 5-15×（Llama 3.1 8B）</td><td><span class="ev ev-p">P</span></td><td>第 7 页 §2.3.1</td><td>已核验（PDF 原页；其余条件论文未明确披露）</td></tr>
+      <tr><td>Flight Recorder：记录 collective/p2p 起止与入队时间及元数据，定位卡死与缺失 collective 的 rank</td><td><span class="ev ev-p">P</span></td><td>第 7 页 §2.3.2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>实验环境：H100 95 GiB（非标准 HBM2e/低 TDP、峰值 TFLOPS 未知）×8/主机 NVSwitch；TOR + 后端 RDMA；C4（en）+ tiktoken；吞吐取第 90 次迭代；不报 MFU（参照 33%-42%）</td><td><span class="ev ev-p">P</span></td><td>第 7 页 §3.1 与脚注 1、第 8 页 §3.2 与脚注 2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>表 1-6 全部吞吐/显存数字与逐表条件（local/global batch、调度、并行度）</td><td><span class="ev ev-p">P</span></td><td>第 8-9 页表 1-6</td><td>已核验（PDF 原页；缺项标「论文未明确披露」）</td></tr>
+      <tr><td>收敛验证：图 5（3000 步、600 warmup）与表 9 四组设置</td><td><span class="ev ev-p">P</span></td><td>第 21 页 B.10.2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>功能对比（表 7：FSDP+(TP+SP)+PP+CP、Flexible SAC、Float8 仅 TorchTitan 全 Yes；MoE=Ongoing）与代码量（表 8：7K/9K vs 93K/269K vs 94K/194K）</td><td><span class="ev ev-p">P</span></td><td>第 10 页 §4、第 20 页表 7/表 8</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>官方仓库可达性、归属（pytorch 组织）、BSD-3-Clause、README 功能清单与 nightly 要求</td><td><span class="ev ev-r">R</span></td><td>论文第 1 页 “Code:” 给出的 URL</td><td>已核验（2026-09-14 在线核验）</td></tr>
+      <tr><td>云实例/网络/存储映射示例（8×H100 NVSwitch 整机、RoCEv2/IB 后端、高吞吐对象/并行文件存储）</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>成本公式、编排/弹性/监控映射、安全与回滚建议、复现步骤、控制面/数据面划分</td><td><span class="ev ev-i">I</span></td><td>本报告 §6-§10、§12</td><td>编辑标注完成；不含伪精确数字</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="13-megascale.html" rel="prev">上一篇：13 MegaScale（文件可能尚未发布）</a>
+  <a href="../index.html" rel="next">下一篇：本篇为训练类第 4 篇，返回论文目录</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页全部论文事实基于本地 <code>14_TorchTitan_2410.06511.pdf</code>（arXiv:2410.06511v3，全部 21 页逐页核对）及论文明确引用的材料；云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；官方仓库代码许可为 BSD-3-Clause（2026-09-14 核验，以仓库当时声明为准）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-14；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+</body>
+</html>

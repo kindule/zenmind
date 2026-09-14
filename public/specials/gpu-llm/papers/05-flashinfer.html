@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>FlashInfer：面向 LLM 推理服务的高效可定制注意力引擎（MLSys 2025） · GPU 大模型系统论文解读</title>
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <!-- 说明：本页已引用共享骨架 ../assets/css/site.css 与 ../assets/js/site.js；
+       下方内联样式保留为回退（共享文件缺失或离线 file:// 打开时页面仍完整可读）。
+       主题策略：跟随系统明暗（prefers-color-scheme），站点级主题切换/目录高亮由共享 site.js 增强，禁用 JS 时本页仍完整可读。 -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fa;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --border: #cbd5e1;
+      --text: #1f2937;
+      --text-muted: #475569;
+      --heading: #16213e;
+      --accent: #16213e;
+      --accent-2: #0e7490;
+      --accent-soft: #e0f2fe;
+      --mem: #6d28d9;
+      --mem-soft: #ede9fe;
+      --net: #c2410c;
+      --net-soft: #ffedd5;
+      --warn-bg: #fffbeb;
+      --warn-border: #b45309;
+      --warn-text: #92400e;
+      --p-bg: #d1fae5; --p-fg: #065f46; --p-border: #059669;
+      --r-bg: #dbeafe; --r-fg: #1e40af; --r-border: #2563eb;
+      --e-bg: #ffedd5; --e-fg: #9a3412; --e-border: #c2410c;
+      --i-bg: #ede9fe; --i-fg: #5b21b6; --i-border: #7c3aed;
+      --focus: #b45309;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220;
+        --surface: #111a2c;
+        --surface-2: #17223a;
+        --border: #33415c;
+        --text: #e2e8f0;
+        --text-muted: #a8b3c7;
+        --heading: #f1f5f9;
+        --accent: #cbd5e1;
+        --accent-2: #67e8f9;
+        --accent-soft: #164e63;
+        --mem-soft: #3b2a63;
+        --net-soft: #4a2410;
+        --warn-bg: #2c2410;
+        --warn-border: #d97706;
+        --warn-text: #fcd34d;
+        --p-bg: #064e3b; --p-fg: #a7f3d0; --p-border: #10b981;
+        --r-bg: #1e3a8a; --r-fg: #bfdbfe; --r-border: #60a5fa;
+        --e-bg: #4a2410; --e-fg: #fdba74; --e-border: #ea580c;
+        --i-bg: #3b2a63; --i-fg: #ddd6fe; --i-border: #a78bfa;
+        --focus: #fbbf24;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    }
+    a { color: var(--accent-2); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+    .skip-link {
+      position: absolute; left: 8px; top: -48px; z-index: 10;
+      background: var(--surface); color: var(--text);
+      border: 2px solid var(--focus); border-radius: 4px;
+      padding: 10px 16px; font-weight: 700; transition: top .15s ease;
+    }
+    .skip-link:focus { top: 8px; }
+    code, .num, .mono { font-family: var(--mono); }
+    .mono { font-size: .92em; }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+    }
+    .topbar .site { font-weight: 800; color: var(--heading); text-decoration: none; margin-right: auto; }
+    .topbar a { color: var(--text); text-decoration: none; padding: 10px 4px; display: inline-block; }
+    .topbar a:hover { color: var(--accent-2); text-decoration: underline; }
+
+    .breadcrumb {
+      padding: 12px 20px 0; font-size: 14px; color: var(--text-muted);
+      max-width: 1240px; margin: 0 auto;
+    }
+    .breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+    .breadcrumb li + li::before { content: "→"; margin-right: 6px; color: var(--text-muted); }
+
+    .layout {
+      max-width: 1240px; margin: 0 auto; padding: 8px 20px 40px;
+      display: grid; grid-template-columns: 1fr; gap: 24px;
+    }
+    @media (min-width: 768px) { .layout { grid-template-columns: 200px 1fr; } }
+    @media (min-width: 1200px) { .layout { grid-template-columns: 240px 1fr; } }
+
+    .toc-aside { display: none; }
+    @media (min-width: 768px) {
+      .toc-aside { display: block; }
+      .toc-mobile-slot { display: none; }
+    }
+    aside nav, .toc-mobile-slot details {
+      position: sticky; top: 16px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .toc-mobile-slot details { position: static; }
+    aside nav strong, .toc-mobile-slot summary {
+      color: var(--heading); display: block; margin-bottom: 8px; font-size: 14px;
+    }
+    .toc-mobile-slot summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
+    aside nav ol, .toc-mobile-slot ol {
+      list-style: none; margin: 0; padding: 0; counter-reset: toc;
+    }
+    aside nav li, .toc-mobile-slot li { margin: 2px 0; }
+    aside nav a, .toc-mobile-slot a {
+      display: block; padding: 8px 6px; text-decoration: none; color: var(--text);
+      border-radius: 4px; line-height: 1.4;
+    }
+    aside nav a:hover, .toc-mobile-slot a:hover { background: var(--surface-2); color: var(--accent-2); }
+
+    main { min-width: 0; }
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 20px 22px; margin: 0 0 22px;
+      break-inside: avoid-page;
+    }
+    h1 { font-size: 26px; line-height: 1.35; color: var(--heading); margin: 6px 0 4px; }
+    h2 { font-size: 21px; color: var(--heading); margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 17px; color: var(--heading); margin: 20px 0 8px; }
+    p { max-width: 76ch; }
+
+    .meta-note {
+      background: var(--surface-2); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 10px 14px; font-size: 14px; color: var(--text-muted); margin: 10px 0 16px;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+    .tags li {
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 6px 12px; font-size: 13px; background: var(--surface-2); color: var(--text);
+    }
+
+    .badge {
+      display: inline-block; font-size: 12px; font-weight: 700; line-height: 1;
+      padding: 4px 8px; border-radius: 4px; border: 1px solid; vertical-align: 1px; white-space: nowrap;
+    }
+    .b-p { background: var(--p-bg); color: var(--p-fg); border-color: var(--p-border); }
+    .b-r { background: var(--r-bg); color: var(--r-fg); border-color: var(--r-border); }
+    .b-e { background: var(--e-bg); color: var(--e-fg); border-color: var(--e-border); }
+    .b-i { background: var(--i-bg); color: var(--i-fg); border-color: var(--i-border); }
+
+    .fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0; }
+    .fact-card {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .fact-card dt { font-weight: 700; color: var(--heading); margin-bottom: 4px; }
+    .fact-card dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+
+    .callout-warning {
+      background: var(--warn-bg); border: 1px solid var(--warn-border); border-left-width: 5px;
+      border-radius: 6px; padding: 12px 16px; margin: 16px 0;
+    }
+    .callout-warning strong:first-child { color: var(--warn-text); }
+
+    .table-scroll {
+      overflow-x: auto; margin: 14px 0;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
+    caption { text-align: left; font-weight: 700; color: var(--heading); padding: 10px 12px 2px; font-size: 14px; }
+    th, td { border-top: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+    thead th { background: var(--surface-2); color: var(--heading); border-top: none; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: var(--surface-2); }
+    td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+
+    .tradeoff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+    .tradeoff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--surface-2); font-size: 14px; }
+    .tradeoff-card h3 { margin: 0 0 6px; font-size: 15px; }
+
+    figure.architecture-diagram { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--surface); }
+    figure.architecture-diagram img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+    figure.architecture-diagram figcaption { font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+    .diagram-scroll { overflow-x: auto; }
+
+    ul, ol { padding-left: 26px; }
+    li { margin: 4px 0; }
+
+    .decision-checklist fieldset {
+      border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 10px 14px;
+    }
+    .decision-checklist legend { font-weight: 700; color: var(--heading); padding: 0 6px; }
+    .decision-checklist label {
+      display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; min-height: 44px; cursor: pointer;
+    }
+    .decision-checklist input[type="checkbox"] { width: 20px; height: 20px; margin-top: 3px; flex: none; }
+
+    .pager { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 8px 0 0; }
+    .pager a {
+      display: inline-block; min-height: 44px; padding: 10px 16px;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+      color: var(--text); text-decoration: none; font-weight: 600;
+    }
+    .pager a:hover { border-color: var(--accent-2); color: var(--accent-2); }
+    .pager .spacer { flex: 1; }
+
+    footer.site-footer {
+      max-width: 1240px; margin: 0 auto; padding: 16px 20px 40px;
+      font-size: 13px; color: var(--text-muted); border-top: 1px solid var(--border);
+    }
+    @media (max-width: 419px) {
+      .pager a { width: 100%; text-align: center; }
+      .fact-grid { grid-template-columns: 1fr; }
+      section { padding: 16px 14px; }
+    }
+    @media print {
+      .topbar, .breadcrumb, aside nav, .toc-mobile-slot, .pager { display: none !important; }
+      body { background: #fff; color: #000; }
+      section { border: none; padding: 0 0 12px; break-inside: avoid-page; }
+      .table-scroll { overflow: visible; }
+      a { color: #000; text-decoration: none; }
+      a[href^="http"]::after { content: "（" attr(href) "）"; font-size: 11px; }
+      thead { display: table-header-group; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至正文</a>
+
+  <header class="topbar">
+    <a class="site" href="../index.html">GPU 大模型系统论文解读</a>
+    <nav aria-label="站点导航">
+      <a href="../index.html">首页</a>
+      <a href="../index.html">推理服务与资源调度</a>
+      <a href="../index.html">解码加速与量化</a>
+      <a href="../index.html">训练、并行与 GPU Kernel</a>
+      <a href="../index.html#metrics">指标术语</a>
+      <a href="../index.html#methodology">阅读说明</a>
+    </nav>
+  </header>
+
+  <nav class="breadcrumb" aria-label="面包屑">
+    <ol>
+      <li><a href="../index.html">首页</a></li>
+      <li><a href="../index.html">推理服务与资源调度</a></li>
+      <li aria-current="page">FlashInfer</li>
+    </ol>
+  </nav>
+
+  <div class="layout">
+    <aside class="toc-aside">
+      <nav aria-label="页内目录">
+        <strong>页内目录</strong>
+        <ol>
+          <li><a href="#overview">摘要与一句话判断</a></li>
+          <li><a href="#background">问题背景</a></li>
+          <li><a href="#mechanism">核心机制</a></li>
+          <li><a href="#data-path">GPU/系统数据路径</a></li>
+          <li><a href="#tradeoffs">架构权衡</a></li>
+          <li><a href="#cloud-mapping">云上部署映射</a></li>
+          <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+          <li><a href="#security-ops">安全与可运维性</a></li>
+          <li><a href="#fit">适用 / 不适用场景</a></li>
+          <li><a href="#experiments">实验与指标</a></li>
+          <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+          <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+          <li><a href="#evidence">证据台账</a></li>
+        </ol>
+      </nav>
+    </aside>
+
+    <main id="main">
+      <div class="toc-mobile-slot">
+        <details class="toc-mobile" open>
+          <summary>页内目录（点击展开/折叠）</summary>
+          <nav aria-label="页内目录（移动端）">
+            <ol>
+              <li><a href="#overview">摘要与一句话判断</a></li>
+              <li><a href="#background">问题背景</a></li>
+              <li><a href="#mechanism">核心机制</a></li>
+              <li><a href="#data-path">GPU/系统数据路径</a></li>
+              <li><a href="#tradeoffs">架构权衡</a></li>
+              <li><a href="#cloud-mapping">云上部署映射</a></li>
+              <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+              <li><a href="#security-ops">安全与可运维性</a></li>
+              <li><a href="#fit">适用 / 不适用场景</a></li>
+              <li><a href="#experiments">实验与指标</a></li>
+              <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+              <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+              <li><a href="#evidence">证据台账</a></li>
+            </ol>
+          </nav>
+        </details>
+      </div>
+
+      <section id="overview" aria-labelledby="overview-h">
+        <h1 id="overview-h">FlashInfer：面向 LLM 推理服务的高效可定制注意力引擎</h1>
+        <div class="meta-note">
+          <p style="margin:0 0 4px"><strong>最后核验日期：</strong>2026-09-14　<strong>证据完整度：</strong>台账 40 条 = P 33 · R 1 · E 2 · I 4，全部带 PDF 页码/章节定位（详见 <a href="#evidence">证据台账</a>）。分级口径（本论文台账 schema，<span class="mono">sources/flashinfer.evidence.json</span>）：P = 论文正文/附录/图表（含论文报告的实验结果）；R = 论文明确链接的官方仓库；E = 论文脚注引用的外部文档（仅用于云上映射/接口锚点）；I = 编辑推断。<strong>页码注意：</strong>PDF 文本提取无印刷页码，本页页码按页眉分隔行推得（第 1 页 = 标题/摘要页，全文 21 页），未经 PDF 二进制目视复核；图 7–10 与图 12 的柱状标签在提取中乱序，柱级「FlashInfer vs 基线」配对不作断言。全页外链仅 arXiv 摘要页与论文确认的官方仓库两处。</p>
+          <p style="margin:0"><strong>输入 PDF：</strong><span class="mono">05_FlashInfer_2501.01005.pdf</span>（《FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving》，arXiv:2501.01005v2，MLSys 2025，第 1 页页脚）。</p>
+        </div>
+        <ul class="tags" aria-label="快速标签">
+          <li>生命周期：推理服务（注意力 kernel 引擎，库形态）</li>
+          <li>部署形态：SGLang / vLLM / MLC-Engine 内集成（第 1–2 页）</li>
+          <li>目标硬件：NVIDIA Turing–Hopper（sm75–sm90a）；评测 A100 40GB SXM / H100 80GB SXM（第 5、8 页）</li>
+          <li>核心资源：KV-Cache 布局 · HBM 带宽 · SM 负载均衡</li>
+          <li>证据状态：P 主导 + 官方仓库（R）+ 论文脚注文档（E）+ 4 条编辑推断（I）</li>
+        </ul>
+
+        <h2>一句话判断</h2>
+        <p>对「注意力变体多、序列长度分布动态、已用 SGLang/vLLM/MLC-Engine 且被注意力 kernel 拖累」的 LLM 推理服务，FlashInfer 在<strong>内核层</strong>给出三件事：用<strong>块稀疏行（BSR）格式统一</strong>页表/基数树等异构 KV-Cache 存储，用<strong>JIT 编译的可定制注意力模板</strong>承接各式注意力变体，用<strong>负载均衡且兼容 CUDAGraph 的运行时调度</strong>应对批内长度动态。论文口径下：对比编译器后端（SGLang v0.3.4 + Triton v3.0）端到端 token 间延迟（ITL）降 <strong>29–69%</strong>，长上下文（StreamingLLM 融合 RoPE）延迟降 <strong>28–30%</strong>，并行生成服务提速 <strong>13–17%</strong>（全部数字的条件与定位见<a href="#experiments">实验与指标</a>）。边界同样清楚：仅前向（反向是未来工作，第 11 页）、不替代服务框架的调度器与显存管理（与 vAttention 正交互补，论文第 10 页明言可结合）、kernel 级收益可能被 host 侧开销稀释（vLLM 集成近持平，第 21 页 Table 8）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-r">R</span> <span class="badge evidence-badge b-i">I（边界判断为编辑观点）</span></p>
+
+        <h2>3 分钟速读</h2>
+        <ol>
+          <li><strong>问题：</strong>LLM 服务的注意力 kernel 面临两重挑战——负载多样（prefill、批量 decode、前缀复用、投机解码树掩码；批内查询长度与 KV 长度随时间变化，朴素实现负载不均）与硬件/变体定制压力（分页 KV、分组查询头、特异掩码、自定义打分如 soft-cap/FlashSigmoid）；各系统各自为战导致维护成本高（第 1–2 页 §1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>统一存储：</strong>把 PageAttention 页表、RadixAttention 基数树等非连续 KV 布局统一表达为块稀疏行（BSR）矩阵——Br 对应查询 tile 大小、Bc 由 KV 管理算法决定，kernel 支持任意 (Br, Bc)（第 4 页 §3.1.1 + 图 2）；查询/输出用无填充 ragged 张量打包（第 4 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>可定制执行：</strong>CUDA/CUTLASS FlashAttention 模板覆盖 Turing–Hopper（sm75–sm90a，FA2 算法至 Ada、FA3 算法用于 Hopper，第 5 页 §3.2）；注意力变体经六个仿函数（Query/Key/Value/OutputTransform、LogitsTransform/LogitsMask）声明，由 JIT 编译器生成优化 kernel，经 PyTorch JIT 编译并注册为自定义算子（第 6 页 §3.2.3 + 图 5）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>动态调度：</strong>每生成步由 CPU 侧 <span class="mono">plan()</span> 按代价模型 <span class="mono">cost=α·l_q+β·l_kv</span> 均衡分派工作到 CTA，产出工作队列与部分输出约简映射（计划跨层复用、不被 CUDAGraph 捕获）；<span class="mono">run()</span> 是 attention+contraction 合一的持久 kernel，grid 编译期固定、workspace 段偏移恒定，满足 CUDAGraph 全图捕获（第 7 页 Alg.1/§3.3.1、第 7–8 页 §3.4、第 19 页附录 D）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>结果与边界：</strong>端到端（SGLang）ITL 较 Triton 后端降 29–69%、StreamingLLM 长上下文降 28–30%、MLC-Engine 并行生成提速 13–17%（第 1 页摘要 + 第 8–10 页 §4）；kernel 级对 FlexAttention 四种变体全序列长占优（第 20–21 页表 1–4）。边界：仅前向（第 11 页）；vLLM 集成因 host 侧 Python 开销收益近零（bf16）但 fp8 KV 下 ITL 约 −13%（第 21 页 Table 8）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（综合）</span></li>
+        </ol>
+
+        <h2>论文声称的主要结果</h2>
+        <div class="table-scroll" role="region" aria-label="主要结果表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 A · 论文声称的主要结果（均为条件性数字，禁止脱离条件摘取；完整条件列含硬件/模型/精度/负载/基线）</caption>
+            <thead>
+              <tr><th scope="col">指标（口径）</th><th scope="col" class="num">数字</th><th scope="col">基线</th><th scope="col">完整条件（硬件 / 模型 / 精度 / 负载）</th><th scope="col">来源页码</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>端到端 token 间延迟（ITL）降幅</td><td class="num">29–69%</td>
+                <td>SGLang v0.3.4 的 Triton v3.0 编译器后端</td>
+                <td>NVIDIA A100 40GB SXM + H100 80GB SXM；Llama 3.1 8B Instruct（1×H100）/ 70B Instruct（4×H100）；f16（存储与计算）；在线服务：ShareGPT + 合成 Variable U(512,2048)，请求率调至 P99 TTFT &lt; 200ms。摘要级聚合数字，无法从图 7 提取的中位数柱标签重新导出，按论文报告口径引用</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页（摘要）；第 8 页 §4/§4.1 + 图 7</td>
+              </tr>
+              <tr>
+                <td>长上下文推理端到端延迟降幅（ITL）</td><td class="num">28–30%</td>
+                <td>FlashAttention 未融合 RoPE kernel + FA attention kernel（优化版实现；原始 StreamingLLM 实现作参照）</td>
+                <td>H100 SXM 80GB + A100 SXM 40GB 双面板；Vicuna-13B；f16（§4 全局设定，§4.3 未复述）；StreamingLLM、MT-Bench 数据集、recent 窗口 1000/2000/4000 token</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 9 页 §4.3 + 图 9</td>
+              </tr>
+              <tr>
+                <td>并行生成服务提速（聚合）；峰值在 n=4</td><td class="num">13–17%；n=4 时 ITL −13.73%（8B）/ −17.42%（70B），TTFT −16.41% / −22.86%</td>
+                <td>MLC-Engine 关闭可组合格式（单格式）</td>
+                <td>H100：8B 用 1×、70B 用 4×；Llama 3.1 8B / 70B Instruct；f16（§4 全局设定，§4.4 未复述）；ShareGPT、固定请求率 16、并行度 n ∈ {1,2,4,8,16,32,64}</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页（摘要）；第 9–10 页 §4.4 + 图 10</td>
+              </tr>
+              <tr>
+                <td>kernel 级 causal attention 吞吐 @ 序列 16384</td><td class="num">612.259 vs 453.57 TFLOPS/s</td>
+                <td>FlexAttention（Triton）</td>
+                <td>NVIDIA H100 80GB SXM；kernel 级（无 LLM）：batch 16、16 头、head_dim 128；精度论文未明确披露（附录 G 未复述）；CUDA 12.4 / Triton 3.2；序列 512–16384</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 20 页表 1 + §G.1</td>
+              </tr>
+              <tr>
+                <td>负载均衡调度器消融 @ U(4096,16384) RR=1</td><td class="num">ITL 8.63 vs 13.89 vs 11.08 ms；TTFT 411.02 vs 421.60 vs 566.30 ms</td>
+                <td>SGLang+FlashInfer 关闭负载均衡；SGLang Triton 后端</td>
+                <td>NVIDIA H100 SXM5；Llama 3.1-8B-Instruct；精度论文未明确披露（附录 G 未复述）；输出固定 256 token；三种负载（ShareGPT RR=16 / U(512,2048) RR=8 / U(4096,16384) RR=1），长序列差距最大</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 21 页表 6–7 + 第 20 页 §G.3</td>
+              </tr>
+              <tr>
+                <td>细粒度稀疏 decode kernel 延迟 @ seq 32768、page_budget 64</td><td class="num">22.371 vs 1711.955 vs 1169.109 µs（论文 prose：长序列至 20×）</td>
+                <td>PyTorch SDPA；FlexAttention</td>
+                <td>NVIDIA H100 SXM5；kernel 级（Quest 长上下文算法）；精度论文未明确披露；block size 16、32 查询头 + 32 KV 头、head_dim 128；seq 4096–32768、page_budget 64–512</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 21 页表 9–11 + §G.5</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>不可直接比较：</strong>上表数字全部出自 FlashInfer 论文自身的内核版本（FlashInfer v0.2、SGLang v0.3.4 + Triton v3.0、FA 主干 commit c1d146c、FlexAttention/Triton 3.2）、模型（Llama 3.1 / Vicuna-13B）与负载口径，与本站其他论文（DistServe、Mooncake、vAttention 等）的硬件、负载与指标口径均不一致，<strong>不允许跨论文横向排名</strong>。图 7–10、图 12 的柱状标签在文本提取中乱序，本页只引用论文 prose 明示的聚合数字与附录表格数值，不做柱级配对。<span class="badge evidence-badge b-i">I（口径声明）</span>
+        </div>
+
+        <h3>术语与记号</h3>
+        <dl class="fact-grid">
+          <div class="fact-card"><dt>BSR（块稀疏行）</dt><dd>把非零元素组织为 (Br, Bc) 连续子块的稀疏格式，利于寄存器复用并贴合张量核心矩阵指令；FlashInfer 用它统一表达页表/基数树等 KV-Cache 布局，支持任意 (Br, Bc)（第 3 页 §2.3、第 4 页 §3.1.1）。</dd></div>
+          <div class="fact-card"><dt>ragged 张量</dt><dd>不规则、无填充的紧致打包张量；FlashInfer 用同一 indptr 把各请求的查询/输出紧凑打包（第 4 页 §3.1.1）。</dd></div>
+          <div class="fact-card"><dt>Attention State 与 ⊕</dt><dd>规范 kernel 输出 =（输出 O, 对数求和归一化 LSE）；⊕ 为其组合算子，可结合/可交换，支撑 split-KV 分块与共享前缀分解（Ring-Attention/Flash-Decoding 同源思想，第 3 页 §2.2）。</dd></div>
+          <div class="fact-card"><dt>可组合格式（composable formats）</dt><dd>把 KV 稀疏矩阵按先验拆成多个不同块大小的 BSR 子矩阵（如共享前缀 (3,1) + 独有后缀 (1,1)）；只计算 index/indptr、不搬运 KV 数据（第 4–5 页 §3.1.2 + 图 3）。</dd></div>
+          <div class="fact-card"><dt>plan()/run()（IE 模型）</dt><dd>受 Inspector-Executor 模型启发：CPU 侧 plan 每生成步产出调度计划（可跨层复用、不被 CUDAGraph 捕获），GPU 侧 run 执行注意力并可被 CUDAGraph 捕获（第 7–8 页 §3.3.1/§3.4 + Listing 1）。</dd></div>
+          <div class="fact-card"><dt>CUDAGraph 兼容</dt><dd>attention 与 contraction 合一持久 kernel、grid 编译期固定、workspace 按最大容量分配且段偏移恒定，使捕获图中 kernel 指针各步不变（第 7 页 §3.3.1、第 19 页附录 D.1）。</dd></div>
+          <div class="fact-card"><dt>GQA 头组融合</dt><dd>KV 头映射到独立线程块、查询头并入查询长度维，一次共享内存 KV 加载服务整个头组；短查询长度时优先（第 18 页附录 A + 图 11；类似 TensorRT-LLM 的 XQA）。</dd></div>
+          <div class="fact-card"><dt>论文出处</dt><dd>《FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving》，MLSys 2025（第 1 页页脚）；作者来自 UW/NVIDIA/Perplexity AI/CMU 等；本地文件 <span class="mono">05_FlashInfer_2501.01005.pdf</span>。</dd></div>
+        </dl>
+      </section>
+
+      <section id="background" aria-labelledby="background-h">
+        <h2 id="background-h">问题背景</h2>
+        <h3>注意力 kernel 是 LLM 服务的咽喉</h3>
+        <p>LLM 推理的核心是注意力：读取 KV-Cache 中的历史上下文、以当前查询计算输出。kernel 效率直接决定整体服务性能；而训练环境里不存在的难题在服务侧集中爆发（第 1 页 §1）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>挑战一：负载多样与输入动态</h3>
+        <p>服务中的注意力形态横跨 prefill（处理上下文）与批量 decode（逐 token 生成）；多请求处理中不断出现前缀复用机会，投机解码引入树形注意力掩码；批内查询长度与 KV-Cache 长度随时间变化——朴素实现会负载不均，最优调度要求 kernel 动态自适应（第 1 页 §1）。<span class="badge evidence-badge b-p">P</span> 从运算强度看，FlashAttention 的运算强度 <span class="mono">O(1/l_qo + 1/l_kv)</span> 在服务场景（查询长度 ≤ KV 长度）简化为 <span class="mono">O(l_qo)</span>，MQA/GQA 以组大小 <span class="mono">g = H_qo/H_kv</span> 把它提升到 <span class="mono">O(g·l_qo)</span>（第 3 页 §2.1）——decode 是内存受限问题，KV 布局与访存路径是第一性的。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>挑战二：存储异构与变体爆炸</h3>
+        <ul>
+          <li><strong>存储侧：</strong>PageAttention 页表、SGLang 基数树等非连续存储已成 KV 管理标配，各框架粒度与结构不一（第 1–2 页 §1）；注意力计算需要一种能统一表达它们的格式。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>变体侧：</strong>分组查询头（GQA）、特异掩码（滑动窗口、ALiBi）、自定义打分（Grok 的 logit soft-cap、FlashSigmoid 的 sigmoid 自注意力）不断涌现；为每个变体在 CUDA 库里手工特化不可持续（第 2 页 §1、第 6 页 §3.2.3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>稀疏格式背景：</strong>多数注意力库把块稀疏块限制为 (128,128) 的倍数，而研究表明 (16,1)/(1,16) 的向量稀疏同样能吃满张量核心——FlashInfer 据此支持任意列块大小 Bc（第 3 页 §2.3）。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+        <h3>既有方案与基线格局</h3>
+        <p>FlashAttention 系列解决了计算与显存footprint（在线 softmax、循环重排、流水线，第 3 页 §2.1），但面对「非连续 KV + 长度动态 + 变体定制」需要系统级答案；各服务框架各自实现特化注意力导致高维护成本与潜在低效（第 2 页 §1）。FlashInfer 的对照面由此确定：编译器后端（SGLang Triton 后端）、开源 FlashAttention 库、FlexAttention（Triton 生成）、以及各服务框架自带内核（第 8–9 页 §4）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>本页使用的延迟/吞吐口径</h3>
+        <p>与全站一致：在线服务看 ITL/TTFT（论文 §4.1 以「请求率调至 P99 TTFT &lt; 200ms」为约束）、kernel 级看带宽利用率与 TFLOPS/s；两套口径不可混用，跨论文横比被禁止。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（口径整理）</span></p>
+      </section>
+
+      <section id="mechanism" aria-labelledby="mechanism-h">
+        <h2 id="mechanism-h">核心机制</h2>
+        <p>FlashInfer 的系统设计分两条输入线（第 2 页图 1）：<strong>编译时</strong>喂给 JIT 编译器三样东西——注意力变体规格、任务信息、KV-Cache 布局规格；<strong>运行时</strong>只喂序列长度信息给负载均衡调度器，经用户提供的 workspace 缓冲产出注意力输出。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>1 · 统一 KV-Cache 存储：BSR 作为通用抽象（第 4 页 §3.1.1 + 图 2）</h3>
+        <p>页表（PageAttention）与基数树（RadixAttention）等非连续 KV 布局统一为块稀疏行矩阵：非零块即请求访问的 KV 物理页；块大小 (Br, Bc) 中 Br 对应查询 tile、Bc 由 KV 管理算法指定，kernel 支持任意取值（图 2 示例 Br=4、Bc=1）。查询/输出以 ragged 无填充张量紧致打包；新生成的 K/V 先沿用查询的 indptr，再写入 BSR KV-Cache。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>2 · 可组合格式：不搬数据的内存效率（第 4–5 页 §3.1.2 + 图 3）</h3>
+        <p>单一块稀疏格式受固定 Br 制约：Br 大则共享内存/寄存器复用好但碎片多。可组合格式按先验把 KV 稀疏矩阵拆成多个 BSR 子矩阵——共享前缀落入大块 (3,1)（同块查询经共享内存/寄存器共享 KV），独有后缀留在 (1,1)（各查询走全局内存/L2）。关键性质：<strong>不需要搬动 KV 数据</strong>，只计算稀疏子矩阵的 index 与 indptr 数组。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>3 · 计算抽象：CUDA/CUTLASS 模板与数据搬运（第 5 页 §3.2 + 图 4）</h3>
+        <p>模板兼容 Turing–Hopper（sm75–sm90a）：FA2 算法用于至 Ada（sm89），FA3 算法用于 Hopper。稀疏/稠密的差异被压缩到装载模块：分散 KV tile 用 128B 宽 LDGSTS 异步拷贝汇聚成连续共享内存后，两者收敛到同一 kernel 主体；Hopper 的 TMA 不支持非仿射访问，仅用于连续 KV-Cache。头维通常 128 或 256，末维连续以贴合缓存行。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>4 · tile 尺寸族与启发式（第 5 页 §3.2.2、第 6 页 §3.2.3）</h3>
+        <p>FA2 kernel 提供 (1, 16, 32, 64, 128) × (32, 64, 128) 的 tile 菜单，两步启发式选择：先按批均查询长度（GQA 时查询长度与头组维融合）取≥它的最小查询 tile，再在寄存器/共享内存约束下最大化 SM 占用。查询 tile=1 走 CUDA 核心（张量核心 MMA 最小 16 行）；FA3 行 tile 取 64 的倍数以对齐 Hopper WGMMA。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>5 · JIT 编译的注意力变体与接口层次（第 6 页 §3.2.3 + 图 5）</h3>
+        <p>受 FlexAttention 启发，变体以「仿函数集合 + 附加变量/张量 + 数据类型」的规格声明（CUDA 代码字符串），JIT 编译器把变体类插入 kernel 模板生成优化代码。下表是本页归纳的接口层次（层次划分为编辑整理，各层内容均为论文事实）：<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（分层归纳）</span></p>
+        <div class="table-scroll" role="region" aria-label="接口层次表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 B0 · FlashInfer 的五层定制接口（第 2、5–8 页 + 图 1/图 5 + Listing 1）</caption>
+            <thead><tr><th scope="col">层次</th><th scope="col">内容</th><th scope="col">变体能力示例</th><th scope="col">证据</th></tr></thead>
+            <tbody>
+              <tr><td>存储/布局层</td><td>BSR 统一格式 + 可组合格式 + ragged 张量；任意 (Br, Bc)</td><td>分页 KV、基数树、共享前缀分解、细粒度 KV 剪枝（Quest 类）</td><td><span class="badge evidence-badge b-p">P</span> 第 3–5 页 §2.3/§3.1</td></tr>
+              <tr><td>kernel 模板层</td><td>CUDA/CUTLASS FA2/FA3 模板；tile 菜单与启发式；sm75–sm90a</td><td>按架构/任务（decode、prefill）编译期定型 tile</td><td><span class="badge evidence-badge b-p">P</span> 第 5–6 页 §3.2/§3.2.2</td></tr>
+              <tr><td>变体仿函数层</td><td>QueryTransform / KeyTransform / ValueTransform / OutputTransform / LogitsTransform / LogitsMask（固定签名，闭包于变体类）</td><td>soft-cap、自定义掩码、滑动窗口、FlashSigmoid（可关 softmax）、融合归一化/RoPE/投影（DeepSeek MLA）</td><td><span class="badge evidence-badge b-p">P</span> 第 6 页 §3.2.3 + 图 5</td></tr>
+              <tr><td>JIT 编译/注册层</td><td>变体规格 → 生成 CUDA → PyTorch JIT 编译 → 注册为 PyTorch 自定义算子（TORCH_LIBRARY_IMPL）；框架无关 DLPack 接口；允许内嵌 PTX 或用户自有库</td><td>init 时编译并缓存复用；20 行级代码生成融合 kernel（如 RoPE+attention）</td><td><span class="badge evidence-badge b-p">P</span> 第 6 页 §3.2.3 + 脚注 2–4；第 9 页 §4.3</td></tr>
+              <tr><td>运行时调度层</td><td>AttentionWrapper(变体规格, 任务信息, workspace)；plan()（CPU，每步，可跨层复用，不被捕获）+ run()（GPU，持久 kernel，可被 CUDAGraph 捕获）；不同块大小/组合配置各捕获一张图，运行时按 KV 配置选图</td><td>长度动态下的负载均衡；与 CUDAGraph 全图捕获共存；attention 可用 SM 数可由用户经 plan 指定（附录 E）</td><td><span class="badge evidence-badge b-p">P</span> 第 7–8 页 §3.3.1/§3.4 + Listing 1；第 19–20 页附录 D/E</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>6 · 负载均衡调度（第 7 页 Alg.1 + §3.3.1 + 图 6）</h3>
+        <p>目标是最小化 SM 空闲时间：以 <span class="mono">cost(l_q, l_kv) = α·l_q + β·l_kv</span> 计 tile 代价，按 <span class="mono">L_kv = Σ⌈l_qo/T_q⌉·l_kv / #CTA</span> 求最大 KV 分块，长任务降序排列后经 CTA 优先队列分配。灵感来自 Stream-K，但因 LLM 服务要求确定性输出，<strong>不使用原子聚合</strong>，给定相同序列长度信息时聚合顺序确定。长 KV 分块的各 chunk 产出部分输出写入用户提供的 workspace 缓冲，最终输出由 contraction kernel 按调度器算好的约简映射合成；attention 与 contraction 合并为一个持久 kernel，消除 kernel 间开销。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>7 · CUDAGraph 兼容的静态化手段（第 7 页 §3.3.1、第 19 页附录 D）</h3>
+        <ul>
+          <li>持久 kernel 的 grid 规模编译期固定；workspace 按各段<strong>最大容量</strong>分配、段偏移恒定，保证捕获图生命周期内 kernel 指针不变（附录 D.1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li>plan 信息在锁页（pinned）主机缓冲上计算，经 <span class="mono">cudaMemcpyAsync</span> 异步下发到 workspace 对应段（附录 D）。<span class="badge evidence-badge b-p">P</span></li>
+          <li>split-K 直写优化：仅「长」请求（KV 长度 &gt; 总 KV 长度 / #CTA）需要分块；短请求部分输出直写最终输出缓冲，省 workspace 与 contraction 工作；部分输出总量上界 <span class="mono">2·#CTA × T_q × H_qo × (D+1)</span>；默认 #CTA = k×#SM，Ampere 上 k≤2、Hopper 上常为 1（持久 kernel）（附录 D.2/D.3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li>不同查询长度/可组合配置编译并捕获<strong>不同</strong> CUDAGraph，运行时按当前 KV-Cache 配置选择（第 8 页 §3.4）。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+
+        <h3>8 · 精度与硬件扩展点（第 20 页附录 F、第 19–20 页附录 E/B）</h3>
+        <p>附录 F 提供 FP8–FP16 混合精度 kernel：查询/输出保持 fp16、KV-Cache 以 fp8 存储，借快速数值转换器与 fragment shuffler 完成反量化，目标是降内存占用、提带宽利用率而不显著损失精度。附录 E：attention 可占用的 SM 数量可由用户经 plan 函数提供（对照 Nanoflow 的固定 SM 划分，可与其余算子重叠）。附录 B：TMA 稀疏汇聚在块列 ≥128 时可行，留作未来工作。<span class="badge evidence-badge b-p">P</span></p>
+        <div class="callout-warning" role="note">
+          <strong>事实与解释的边界：</strong>以上均为论文陈述。本页对「五层接口」的分层命名、以及把机制组织为「存储→模板→变体→JIT→调度」的叙述顺序，是编辑为可读性所作的归纳（标 I），论文原文以 §3.1–§3.4 与附录 A–G 的原始展开为准。<span class="badge evidence-badge b-i">I</span>
+        </div>
+      </section>
+
+      <section id="data-path" aria-labelledby="data-path-h">
+        <h2 id="data-path-h">GPU / 系统数据路径</h2>
+        <figure class="architecture-diagram">
+          <div class="diagram-scroll">
+            <img src="../assets/diagrams/flashinfer-data-path.svg"
+                 alt="FlashInfer 注意力数据路径图，自上而下十个阶段：1 请求/上下文——prompt 与已生成 token 构成请求，各请求查询打包为 ragged 无填充张量；2 服务运行时——SGLang、vLLM、MLC-Engine 已集成，经 AttentionWrapper(变体规格, 任务信息, workspace) 使用，运行时输入为序列长度信息；3 Attention State 选择——规范 kernel 输出为（输出, LSE），配可结合交换的组合算子，据此选择 split-KV 分块与共享前缀分解；4 BSR/可组合 KV-Cache——页表等非连续布局统一为块稀疏行矩阵，可组合格式只计算索引不搬运 KV 数据，KV 块读取直接旁路到 GPU kernel；5 Attention 模板与变体仿函数——FA2（sm75-89）与 FA3（Hopper sm90a）CUDA/CUTLASS 模板，六个仿函数可融合 RoPE、归一化、掩码；6 JIT 编译与缓存——按变体规格生成 kernel，经 PyTorch JIT 编译注册为自定义算子，init 时编译并缓存；7 负载均衡 plan——CPU 每生成步按 cost=α·l_q+β·l_kv 分派工作队列，生成约简映射与 workspace 偏移，计划跨层复用且不被 CUDAGraph 捕获；8 CUDAGraph 兼容静态缓冲——workspace 按最大容量分配、段偏移固定，plan 信息经 cudaMemcpyAsync 异步下发，短请求可直写输出；9 GPU attention kernel——attention 与 split-KV 约简合并为单一持久 kernel、grid 编译期固定，分散 KV 块经 128B LDGSTS 汇聚至共享内存，TMA 仅用于 Hopper 连续 KV；10 logits/tokens——（输出, LSE）写回 ragged 输出张量，交回运行时采样（端到端闭环为编辑推断）。实线箭头为数据流，虚线箭头为控制流；P=论文事实并附页码，I=编辑推断；图中无性能数字"
+                 width="1000" height="1630" loading="lazy">
+          </div>
+          <figcaption>图 1 · FlashInfer 端到端注意力数据路径（本站据论文第 2 页图 1、第 3–8 页 §2–§3.4、第 18–19 页附录 A/D 绘制；编号 ①–⑩ 对应下方文字序列；图内 P/I 标注与来源页码内嵌于图底图例）。SVG 文件：<span class="mono">assets/diagrams/flashinfer-data-path.svg</span>（含 title/desc 无障碍描述）。</figcaption>
+        </figure>
+
+        <h3>端到端文字序列</h3>
+        <ol>
+          <li><strong>① 请求/上下文：</strong>prompt 与已生成 token 构成请求；各请求查询打包为 ragged 无填充张量，输出采用同一 ragged 布局（第 4 页 §3.1.1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>② 服务运行时：</strong>SGLang / vLLM / MLC-Engine 已集成 FlashInfer；按 Listing 1 构造 <span class="mono">AttentionWrapper(attn_spec, task_info, workspace)</span>，运行时输入为各请求查询/KV 长度（第 1–2 页摘要/§1、第 7–8 页 §3.4、第 2 页图 1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>③ Attention State 选择：</strong>规范 kernel 输出 =（输出 O, LSE），⊕ 可结合/可交换；据此决定 split-KV 分块求积与共享前缀分解的组成（第 3 页 §2.2）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>④ BSR / 可组合 KV-Cache：</strong>页表等非连续 KV 布局统一为 BSR 矩阵；可组合格式拆出多个子矩阵，只计算 index/indptr、不搬运 KV 数据；KV 块读取不经控制面、直接由 kernel 访存（第 4–5 页 §3.1.1/§3.1.2 + 图 2/图 3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑤ 模板 + 变体仿函数：</strong>CUDA/CUTLASS 模板按编译时输入（变体规格、任务信息、KV 布局规格）实例化；六个仿函数定义查询/KV 变换与 logits 处理（第 5–6 页 §3.2–§3.2.3 + 图 5）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑥ JIT 编译与缓存：</strong>生成的 CUDA 经 PyTorch JIT 编译并注册为自定义算子；init 时编译、缓存复用；DLPack 供其他运行时（第 6 页 §3.2.3、第 7–8 页 §3.4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑦ 负载均衡 plan：</strong>CPU 每生成步执行 <span class="mono">plan()</span>：按 <span class="mono">cost=α·l_q+β·l_kv</span> 均衡分派工作队列到 CTA，产出约简映射与 workspace 段偏移；计划跨层复用，不被 CUDAGraph 捕获（第 7 页 Alg.1/§3.3.1、第 7–8 页 §3.4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑧ 静态缓冲下发：</strong>plan 信息由锁页主机缓冲 <span class="mono">cudaMemcpyAsync</span> 至 GPU workspace 对应段；workspace 按最大容量分配、偏移恒定；短请求可直写最终输出、旁路 workspace（第 7 页 §3.3.1、第 19 页附录 D.1–D.3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑨ GPU attention kernel：</strong>attention 与 split-KV contraction 合一持久 kernel，grid 编译期固定；分散 KV tile 经 128B LDGSTS 汇聚至连续共享内存后进入稠密张量核心流水线；TMA 仅用于 Hopper 连续 KV-Cache（第 5 页 §3.2.1、第 19 页附录 D）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑩ logits/tokens：</strong>（输出 O, LSE）写回 ragged 输出张量，交回服务运行时采样；该端到端闭环为本页编辑装配（各环节为论文事实，闭环叙述标 I）（第 3 页 §2.2）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（装配）</span></li>
+        </ol>
+
+        <div class="table-scroll" role="region" aria-label="组件职责表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 B1 · 数据路径组件与职责</caption>
+            <thead><tr><th scope="col">组件</th><th scope="col">面</th><th scope="col">职责</th><th scope="col">证据</th></tr></thead>
+            <tbody>
+              <tr><td>服务框架（SGLang / vLLM / MLC-Engine）</td><td>控制面</td><td>请求接纳与批组合；提供 KV-Cache 管理与序列长度信息；按当前 KV 配置选择 CUDAGraph</td><td><span class="badge evidence-badge b-p">P</span> 第 1–2、8 页</td></tr>
+              <tr><td>AttentionWrapper + plan()/run()（Listing 1）</td><td>控制/数据交界</td><td>plan 在 CPU 产出工作队列、约简映射、workspace 偏移（跨层复用）；run 执行注意力并可被图捕获</td><td><span class="badge evidence-badge b-p">P</span> 第 7–8 页 §3.4</td></tr>
+              <tr><td>BSR / 可组合 KV-Cache</td><td>存储面</td><td>统一非连续 KV 布局；共享前缀大块复用；只算索引不搬数据</td><td><span class="badge evidence-badge b-p">P</span> 第 4–5 页 §3.1</td></tr>
+              <tr><td>workspace 缓冲（用户分配）</td><td>显存面</td><td>存调度元数据与 split-KV 部分输出；段偏移固定；上界 = 元数据（最大并发数、最大累计长度）+ 2·#CTA·T_q·H_qo·(D+1)</td><td><span class="badge evidence-badge b-p">P</span> 第 7 页 §3.3.1；第 19 页附录 D.3</td></tr>
+              <tr><td>JIT 编译器 + 自定义算子注册</td><td>编译面</td><td>变体规格 → CUDA 代码 → PyTorch JIT 编译 → 注册自定义算子；init 时完成并缓存</td><td><span class="badge evidence-badge b-p">P</span> 第 6 页 §3.2.3 + 脚注 2–4</td></tr>
+              <tr><td>持久 attention/contraction kernel</td><td>计算面</td><td>负载均衡执行；LDGSTS 稀疏汇聚；TMA（仅 Hopper 连续 KV）；确定性聚合顺序</td><td><span class="badge evidence-badge b-p">P</span> 第 5、7 页 + 附录 D</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tradeoffs" aria-labelledby="tradeoffs-h">
+        <h2 id="tradeoffs-h">架构权衡</h2>
+        <div class="tradeoff-grid">
+          <div class="tradeoff-card">
+            <h3>变体覆盖面 ↔ 维护面收敛</h3>
+            <p>为每个注意力变体在 CUDA 库手工特化「不可持续」（第 6 页）；JIT 模板把新变体的成本压到仿函数级（融合 RoPE 仅 20 行变体代码，第 9 页）。省下的是内核库的多变体维护面；付出的是变体规格的学习与 JIT 工具链依赖。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（成本判断）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>负载均衡收益 ↔ CPU plan 每步开销</h3>
+            <p>长序列/偏斜分布下调度器消融收益显著：U(4096,16384) RR=1 时 ITL 8.63 vs 13.89 ms（第 21 页表 6）；代价是 CPU 侧每步 plan——论文以「跨层复用 + 计划可缓存」摊薄，且 vLLM 集成评测显示 host 侧 Python 开销足以吃掉 kernel 收益（bf16 近持平，第 21 页表 8）。收益与 host 效率强耦合。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>大块复用 ↔ 碎片，可组合格式解耦</h3>
+            <p>大 Br 提升共享内存/寄存器复用但加剧碎片，且跨块不能互访共享内存（第 5 页 §3.1.2）；可组合格式让共享前缀用大块、独有部分用小块，用索引计算替代数据搬运——机制多了一套格式组合的复杂度。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（复杂度判断）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>BSR 通用性 ↔ 硬件快速路径（TMA）</h3>
+            <p>任意 (Br, Bc) 是通用性来源，但 Hopper TMA 只支持固定步长访问，稀疏汇聚退回 Ampere 式异步拷贝 + 手工指针运算：稀疏 vs 稠密 decode 差 &lt;1%、prefill 约 10%（FA3 稀疏还需更小 KV tile 防寄存器溢出，第 18–19 页附录 B）。通用格式放弃了部分最新硬件快速路径。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>确定性输出 ↔ 原子聚合性能</h3>
+            <p>Stream-K 式原子聚合可再压调度开销，但 LLM 服务要求确定性输出——FlashInfer 明确不采用，换取相同序列长度信息下确定的聚合顺序（第 7 页 §3.3.1）。这是正确性/可复现性优先于极限性能的取舍。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>kernel 级大胜 ↔ 端到端稀释</h3>
+            <p>共享前缀 kernel 最高 254.54 vs 4090 µs（第 21 页表 5），论文自己提醒「不能按比例转化为端到端收益，现实共享前缀更小」；Quest 稀疏 kernel 至 20×（表 9–11）也是 kernel 级口径。评估收益时必须区分 kernel 级与端到端两层（第 20–21 页附录 G）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（评估纪律）</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="cloud-mapping" aria-labelledby="cloud-mapping-h">
+        <h2 id="cloud-mapping-h">云上部署映射</h2>
+        <p class="meta-note" style="margin-top:0">本节为部署映射：<strong>论文硬件事实</strong>标 P，<strong>云产品对应</strong>标 E（厂商中立示例、非推荐，参数与价格以云厂商文档为准，本站未联网核验），<strong>运维建议/推断</strong>标 I。FlashInfer 是实例内 kernel 库，论文不涉及跨节点网络与存储架构。</p>
+        <div class="table-scroll" role="region" aria-label="云上部署映射表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 C · 论文配置 → 云上对应（厂商中立示例，非推荐）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文配置（P）</th><th scope="col">云上映射（E/I，示例非推荐）</th><th scope="col">说明</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>GPU 实例与代际</td>
+                <td>评测机群 A100 40GB SXM + H100 80GB SXM；模板覆盖 sm75–sm90a（第 5、8 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>单卡 A100/H100 实例族起步；Hopper 实例启用 FA3 模板路径，Ampere 及以下走 FA2 模板 <span class="badge evidence-badge b-e">E</span></td>
+                <td>代际决定可用算法模板与 tile 菜单，选型时先核对目标卡 sm 架构 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>软件栈与镜像</td>
+                <td>CUDA 12.4 + PyTorch 2.4.0 + f16（第 8 页 §4）<span class="badge evidence-badge b-p">P</span></td>
+                <td>固定 CUDA/PyTorch 版本的自定义推理镜像；镜像内含 JIT 编译所需工具链，init 期完成编译缓存 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>JIT 在 init 时编译并缓存（第 8 页 §3.4）；扩容冷启动含编译/缓存预热 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>集成形态</td>
+                <td>以库形态集成进 SGLang v0.3.4 / vLLM / MLC-Engine（第 1–2、8 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>容器化推理服务镜像中切换注意力后端；单实例内生效，不要求特殊网络/存储拓扑 <span class="badge evidence-badge b-e">E</span></td>
+                <td>与分离式架构（Mooncake 类）和显存管理层（vAttention 类）正交；论文明言可与 vAttention 结合生成连续 KV kernel（第 10 页 §5.4）<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>显存预算</td>
+                <td>用户分配 workspace：调度元数据上界由最大并发请求数与最大累计请求长度决定，部分输出上界 2·#CTA·T_q·H_qo·(D+1)（第 19 页附录 D.3）<span class="badge evidence-badge b-p">P</span></td>
+                <td>按业务峰值并发与最大上下文预留 workspace；容量规划把 workspace 计入单卡显存预算 <span class="badge evidence-badge b-i">I</span></td>
+                <td>上界低估会导致 plan 阶段空间不足——这是论文给出的显式契约 <span class="badge evidence-badge b-p">P</span>（契约）<span class="badge evidence-badge b-i">I</span>（预算建议）</td>
+              </tr>
+              <tr>
+                <td>调度与算力切分</td>
+                <td>#CTA = k×#SM（Ampere k≤2、Hopper 常 1）；attention 可用 SM 数可经 plan 提供（第 19–20 页附录 D.3/E）<span class="badge evidence-badge b-p">P</span></td>
+                <td>与 GEMM/通信重叠的 SM 分配策略可在 plan 层注入，对齐 Nanoflow 类资源切分思路 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文只提供接口能力，具体切分策略属部署方调优空间 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>可观测</td>
+                <td>论文度量：kernel 带宽/FLOPs 利用率、ITL/TTFT、吞吐（第 8–10 页 §4）<span class="badge evidence-badge b-p">P</span></td>
+                <td>云上指标面：ITL/TTFT 分位数、GPU SM 占用与 HBM 带宽利用率、plan() 耗时、JIT init 时长 <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文未披露运维指标体系（缺口）；kernel 级参考值见第 18 页附录 B（decode 带宽利用率 83–85%）<span class="badge evidence-badge b-i">I</span>（缺口声明）</td>
+              </tr>
+              <tr>
+                <td>弹性与扩缩容</td>
+                <td>论文未涉及 <span class="badge evidence-badge b-i">I（缺口）</span></td>
+                <td>新实例启动含 JIT 编译/缓存预热；镜像内预热缓存或持久化缓存卷可压缩冷启动 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>kernel 库无状态，扩缩容边界与宿主服务框架一致 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="cost-slo" aria-labelledby="cost-slo-h">
+        <h2 id="cost-slo-h">成本 / 性能 / SLO</h2>
+        <h3>论文的 SLO 与实验口径</h3>
+        <div class="table-scroll" role="region" aria-label="SLO 与实验口径表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 D · 论文各实验口径（在线服务以「请求率调至 P99 TTFT &lt; 200ms」为约束，第 8 页 §4.1）</caption>
+            <thead><tr><th scope="col">实验</th><th scope="col">SLO / 关键条件</th><th scope="col">系统配置</th><th scope="col" class="num">结果</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>端到端在线服务（§4.1）</td>
+                <td>请求率调至 P99 TTFT &lt; 200ms；ShareGPT + Variable U(512,2048)；度量 ITL/TTFT 中位数</td>
+                <td>SGLang v0.3.4：FlashInfer 0.2 后端 vs Triton v3.0 后端</td>
+                <td class="num">ITL 降 29–69%（论文聚合）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1、8 页</td>
+              </tr>
+              <tr>
+                <td>kernel 输入动态（§4.2）</td>
+                <td>batch 16；序列分布 constant(1024) / uniform(512–1024) / Zipf 偏斜均值 1024；prefill 开 causal</td>
+                <td>FlashInfer vs FlashAttention 主干（commit c1d146c，含 FA2+FA3）</td>
+                <td class="num">uniform/skewed 下 FlashInfer 显著占优（柱级配对不可恢复，见公平性限制）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 8–9 页 + 图 8</td>
+              </tr>
+              <tr>
+                <td>长上下文定制（§4.3）</td>
+                <td>StreamingLLM；MT-Bench；recent 窗口 1000/2000/4000；度量 ITL</td>
+                <td>FlashInfer 融合 RoPE vs FA 未融合（原始实现作参照）</td>
+                <td class="num">延迟降 28–30%；融合 kernel 带宽利用率 1.6–3.7×</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 9 页 + 图 9</td>
+              </tr>
+              <tr>
+                <td>并行生成（§4.4）</td>
+                <td>ShareGPT；请求率 16；n ∈ {1,…,64}</td>
+                <td>MLC-Engine：可组合格式开 vs 关</td>
+                <td class="num">聚合 13–17%；n=4 峰值 ITL −13.73%/−17.42%</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 9–10 页 + 图 10</td>
+              </tr>
+              <tr>
+                <td>vLLM 集成（附录 G.4）</td>
+                <td>固定请求率 16；吞吐/中位 ITL/中位 TTFT</td>
+                <td>vLLM FlashInfer 后端 vs 默认后端（bf16 与 e4m3 两种精度）</td>
+                <td class="num">吞吐近持平（6065.41 vs 6062.89 bf16）；fp8 KV 下中位 ITL 10.92 vs 12.56 ms</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 21 页表 8</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>容量规划变量（SLO 达成率的自变量）</h3>
+        <ul>
+          <li><strong>序列长度分布的偏斜度与长度：</strong>负载均衡收益随其放大——ShareGPT/U(512,2048) 上消融差距小、U(4096,16384) 上 ITL 8.63 vs 13.89 ms（第 21 页表 6–7）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>GPU 代际 → 模板路径：</strong>Hopper 走 FA3（WGMMA、行 tile 为 64 倍数、TMA 连续路径），Ampere/Ada 走 FA2；prefill 吞吐参考 FA3 模板 343–627 vs FA2 模板 265–370 TFLOPs/s（H100 SXM5、32+32 头、head_dim 128、(batch,seq) (32,1024)–(1,32768)、causal；精度论文未明确披露）（第 18 页附录 B + 图 12）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>SM 预算：</strong>#CTA = k×#SM（k≤2 Ampere、Hopper 常 1）；attention 可占 SM 数可经 plan 指定以与 GEMM/通信重叠（第 19–20 页附录 D.3/E）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>workspace 上界参数：</strong>最大并发请求数、最大累计请求长度（首个 plan 阶段必须提供）+ 部分输出上界公式（第 19 页附录 D.3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>GQA 组大小与头配置：</strong>组大小 g 提升运算强度（第 3 页 §2.1）；头组融合在短查询时优先（第 18 页附录 A）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>精度选择：</strong>f16 为基线口径；fp8 KV 混合精度可降显存/提带宽（第 20 页附录 F；vLLM 集成实测 fp8 下中位 ITL 约 −13%，第 21 页表 8）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>host 侧效率：</strong>vLLM 集成的 host Python 开销使 bf16 近持平——kernel 收益兑现需要 host 路径足够薄（第 21 页表 8 + §G.4）。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+
+        <h3>成本模型（参数化，非论文结论）</h3>
+        <p>论文不含任何成本数据（只有延迟/吞吐/利用率）。架构师可用下式估算（<span class="badge evidence-badge b-i">I</span>，价格项为参数）：</p>
+        <p class="mono" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;overflow-x:auto">每百万生成 token 成本 ≈ ( p_gpu × N_GPU ) ÷ ( T_gen × (1 − φ) ) × 10⁶ …（公式 1）</p>
+        <ul>
+          <li><span class="mono">p_gpu</span>：单卡时租价（A100/H100 按查询日云价代入，<span class="badge evidence-badge b-e">E</span>，非论文数据）；</li>
+          <li><span class="mono">N_GPU</span>：实例卡数——论文口径参考：8B 单卡 H100、70B 四卡 H100（第 8 页图 7 面板标注，<span class="badge evidence-badge b-p">P</span>）；</li>
+          <li><span class="mono">T_gen</span>：实测生成吞吐（token/s）——由注意力 kernel、序列分布、GQA 配置、CUDAGraph 与宿主框架共同决定；可按论文相对收益修正（如 vs SGLang Triton 后端 ITL −29~−69% 对应的负载条件，第 1、8 页，<span class="badge evidence-badge b-p">P</span>）；</li>
+          <li><span class="mono">φ</span>：非生成开销占比——CPU plan() 每步开销（跨层摊薄，第 7–8 页）、host 侧 Python 开销（vLLM 集成 bf16 近持平的主因，第 21 页表 8）、workspace 显存挤占批容量（第 19 页附录 D.3）。<span class="badge evidence-badge b-p">P</span>（成分） <span class="badge evidence-badge b-i">I</span>（取值）</li>
+        </ul>
+        <p><strong>敏感项：</strong>序列分布变长变偏斜 → 负载均衡收益放大（表 6，<span class="badge evidence-badge b-p">P</span>）；KV 换 fp8 → 带宽压力下降、ITL 收益约 13%（vLLM 集成口径，表 8，<span class="badge evidence-badge b-p">P</span>）；代际升级 A100→H100 → FA3 模板 prefill 吞吐上台阶（图 12，<span class="badge evidence-badge b-p">P</span>）；host 侧不优化 → kernel 收益被 φ 吃掉（表 8，<span class="badge evidence-badge b-p">P</span>）。JIT 冷启动为一次性成本，摊销后通常可忽略，但高频扩缩场景需计入（<span class="badge evidence-badge b-i">I</span>）。</p>
+      </section>
+
+      <section id="security-ops" aria-labelledby="security-ops-h">
+        <h2 id="security-ops-h">安全与可运维性</h2>
+        <h3>论文披露范围</h3>
+        <ul>
+          <li>论文<strong>未涉及多租户隔离、数据驻留、权限与故障恢复议题</strong>——以下部署要点除标注论文事实外均为编辑推断。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>官方仓库：</strong>论文第 11 页 §7 明示开源地址 <span class="mono">github.com/flashinfer-ai/flashinfer</span>，并称项目「已在生产级系统规模化部署」（论文表述，<span class="badge evidence-badge b-p">P</span>；仓库归属 flashinfer-ai 经论文自身引用确认，<span class="badge evidence-badge b-r">R</span>；论文未提供 commit/tag 与访问日期）。</li>
+          <li>论文脚注引用的外部文档：flashinfer.ai 项目主页（第 1 页脚注，论文原文为 http）、docs.flashinfer.ai 的两个 prefill wrapper API（第 18 页脚注 8–9）、PyTorch JIT/自定义算子文档与 DLPack 仓库（第 6 页脚注 2–4）。按本站链接策略，以上仅作文字引用、不加超链接（本页外链仅 arXiv 与官方仓库）。<span class="badge evidence-badge b-e">E</span></li>
+        </ul>
+        <h3>部署方必须自行覆盖的项</h3>
+        <div class="table-scroll" role="region" aria-label="安全运维清单表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 E · 安全/运维清单（论文事实 + 缺口 + 编辑建议）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文状态</th><th scope="col">部署建议（I）</th></tr></thead>
+            <tbody>
+              <tr><td>租户隔离 / KV 残留</td><td>FlashInfer 读取框架管理的 KV-Cache，自身不拥有数据归属语义；workspace 缓冲跨步跨层复用（存部分输出与调度元数据）（第 7 页 §3.3.1、第 19 页附录 D）<span class="badge evidence-badge b-p">P</span>（机制）</td><td>workspace 与 KV-Cache 中的用户衍生状态在实例重分配/请求完成后是否清零，由宿主框架决定；强多租户场景在框架层落实分域或清零策略，并把「workspace 复用」写入威胁模型</td></tr>
+              <tr><td>缓存语义</td><td>JIT 编译的 kernel 在 init 时生成并缓存复用；不同块大小/组合配置各持有一张 CUDAGraph（第 7–8 页 §3.4）<span class="badge evidence-badge b-p">P</span></td><td>编译缓存与图配置属于实例级派生物：镜像重建/版本升级后必须重建；审计配置时把「启用哪些块大小组合」纳入清单</td></tr>
+              <tr><td>供应链</td><td>官方仓库 flashinfer-ai/flashinfer（论文第 11 页唯一锚定）；生成代码经 PyTorch JIT 工具链编译（第 6 页脚注 2–3）<span class="badge evidence-badge b-r">R</span> <span class="badge evidence-badge b-e">E</span></td><td>仅从官方仓库构建并锁定 commit/digest（论文未提供，需自行固化）；镜像内 nvcc/PyTorch 工具链纳入 SBOM；任何第三方「优化版 FlashInfer」构建视为未核验供应链</td></tr>
+              <tr><td>RBAC / 权限</td><td>论文未涉及 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>运行时为普通 GPU 进程无特权需求；但镜像构建（含 JIT 工具链）与仓库写权限应分角色管理；init 期编译缓存目录需写权限，只授予服务账户所需最小集</td></tr>
+              <tr><td>监控告警</td><td>论文度量停留实验层（BW/FLOPs 利用率、ITL/TTFT）（第 8–9 页）<span class="badge evidence-badge b-p">P</span>（口径） <span class="badge evidence-badge b-i">I（缺口）</span></td><td>建议指标：ITL/TTFT 分位数、HBM 带宽利用率（参考量级：decode 83–85%，第 18 页附录 B）、plan() 每步耗时、JIT init 时长、workspace 分配失败/触顶事件</td></tr>
+              <tr><td>故障恢复</td><td>论文未披露 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>失败模式推演：workspace 上界低估（plan 阶段空间不足，附录 D.3 契约）、JIT 编译失败、sm 架构不在 sm75–sm90a 支持面——均为实例级可重启恢复；重启后需重做编译/缓存预热</td></tr>
+              <tr><td>升级 / 回滚</td><td>论文比较中存在「SGLang Triton 后端」这一替代注意力后端（第 8 页 §4.1）<span class="badge evidence-badge b-p">P</span>（存在性）</td><td>保留宿主框架的替代注意力后端作为已压测回退路径；FlashInfer 版本、CUDA/PyTorch 版本分开变更、可独立回滚；升级后先跑 kernel 输出一致性抽查（JIT 代码生成随工具链变化）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>运维契约提醒：</strong>workspace 上界（最大并发请求数、最大累计请求长度）是部署方必须在首个 plan 阶段提供的显式参数（第 19 页附录 D.3）——它同时决定显存占用与调度正确性上限。容量变更（峰值并发上调、上下文加长）时必须重新评估该上界，否则是运行期故障源。<span class="badge evidence-badge b-p">P</span>（契约） <span class="badge evidence-badge b-i">I（运维含义）</span>
+        </div>
+      </section>
+
+      <section id="fit" aria-labelledby="fit-h">
+        <h2 id="fit-h">适用 / 不适用场景</h2>
+        <h3>适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>注意力变体多、迭代快的模型栈</strong>：触发条件——产品/模型使用 soft-cap、滑动窗口、ALiBi、sigmoid 自注意力、MLA（需融合 RoPE/归一化/投影）等非标准注意力。理由——JIT 变体模板以仿函数级成本承接（第 6 页 §3.2.3），kernel 级对 FlexAttention 四种变体全序列长占优（第 20–21 页表 1–4，H100 80GB SXM、batch 16、16 头、head_dim 128；精度论文未明确披露）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>序列长度分布动态/偏斜的 decode 服务</strong>：触发条件——批内 KV 长度不均（如 Zipf 型）或长上下文为主。理由——负载均衡调度器消融：U(4096,16384) RR=1 时 ITL 8.63 vs 13.89 ms（关闭负载均衡）vs 11.08 ms（Triton）；Llama 3.1-8B-Instruct、H100 SXM5（第 21 页表 6–7）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>被编译器后端注意力拖累的 SGLang 类部署</strong>：触发条件——profile 显示注意力 kernel 主导 ITL。理由——端到端 ITL 较 SGLang v0.3.4 Triton v3.0 后端降 29–69%（A100/H100 SXM、Llama 3.1 8B/70B、f16、ShareGPT+Variable、P99 TTFT&lt;200ms 约束；论文聚合口径）（第 1、8 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>共享前缀 + 并行生成场景（多轮对话、agent 的 n 路采样）</strong>：触发条件——请求间大量共享前缀且并行度 4≤n≤32。理由——可组合格式解耦前缀/后缀，聚合提速 13–17%、n=4 峰值 ITL −13.73%/−17.42%（MLC-Engine、Llama 3.1 8B/70B、ShareGPT RR=16）（第 9–10 页 §4.4）；且统一页表管理、无需改造框架内存模块（第 10 页 §5.4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>KV 剪枝/细粒度稀疏长上下文算法</strong>：触发条件——采用 Quest 类 page-budget 稀疏 KV。理由——小块稀疏 kernel（block 16）在 seq 32768/pb64 下 22.371 µs vs PyTorch SDPA 1711.955 µs / FlexAttention 1169.109 µs，论文 prose 称长序列至 20×（H100 SXM5、32+32 头、head_dim 128；精度论文未明确披露）（第 21 页 §G.5 + 表 9–11）。<span class="badge evidence-badge b-p">P</span></li>
+        </ol>
+        <h3>不适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>训练 / 需要注意力反向的场景</strong>：触发条件——训练或微调管线需要注意力 backward。理由——论文明言「目前仅支持前向，可定制反向模板留作未来工作」（第 11 页 §6）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>非 NVIDIA 或早于 Turing（sm75 之前）的 GPU</strong>：触发条件——AMD/其他加速器或老卡。理由——模板覆盖面为 sm75–sm90a，论文未声称其他硬件支持（第 5 页 §3.2）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（外推边界）</span></li>
+          <li><strong>诉求是调度/显存管理/跨实例缓存层的团队</strong>：触发条件——需要过载准入、prefill/decode 分离、跨实例 KV 复用或虚拟内存化管理。理由——FlashInfer 是内核层组件，这些属服务框架与显存管理层职责；论文将 vAttention（显存管理）定位为可结合的互补层（第 10 页 §5.4）。此类诉求应对照本站 DistServe / Sarathi-Serve / Mooncake / vAttention 页。<span class="badge evidence-badge b-p">P</span>（定位） <span class="badge evidence-badge b-i">I（对照建议）</span></li>
+          <li><strong>短序列、低并行度的前缀复用负载</strong>：触发条件——ShareGPT 型短序列或 n&lt;4 的并行生成。理由——n 过小时块尺寸增量不足、可组合格式无收益；大 n 时注意力不再主导、收益趋平（第 10 页 §4.4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>无法提供 workspace 上界或不接受每步 CPU plan 的部署</strong>：触发条件——峰值并发/最大上下文无法估计，或对每步 CPU 开销零容忍。理由——workspace 上界是首个 plan 阶段的显式契约（第 19 页附录 D.3）；plan 每步在 CPU 执行（靠跨层复用摊薄，第 7–8 页）——契约无法满足时该方案不成立。<span class="badge evidence-badge b-p">P</span>（机制） <span class="badge evidence-badge b-i">I（适用判断）</span></li>
+        </ol>
+      </section>
+
+      <section id="experiments" aria-labelledby="experiments-h">
+        <h2 id="experiments-h">实验与指标</h2>
+        <h3>复现实验的完整条件（论文口径）</h3>
+        <div class="table-scroll" role="region" aria-label="实验配置表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 F · 实验条件口径（硬件 / 模型 / 精度 / 负载 / 基线）</caption>
+            <thead><tr><th scope="col">条件维度</th><th scope="col">论文口径</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr><td>被测版本</td><td>FlashInfer v0.2</td><td><span class="badge evidence-badge b-p">P</span> 第 8 页 §4</td></tr>
+              <tr><td>硬件</td><td>NVIDIA A100 40GB SXM + H100 80GB SXM（端到端与 kernel 主评测）；附录 B/G 部分实验标注 H100 SXM5</td><td><span class="badge evidence-badge b-p">P</span> 第 8 页 §4；第 18、20–21 页附录</td></tr>
+              <tr><td>软件栈</td><td>CUDA 12.4、PyTorch 2.4.0；FlexAttention 对比固定 Triton 3.2</td><td><span class="badge evidence-badge b-p">P</span> 第 8 页 §4；第 20 页 §G.1</td></tr>
+              <tr><td>精度（dtype）</td><td>f16（存储与计算，§4 全局声明）；附录 G 各表未复述精度处记「论文未明确披露」；附录 F 另有 fp8 KV + fp16 Q/O 混合精度 kernel；vLLM 集成实验明示 bf16 与 e4m3 两档</td><td><span class="badge evidence-badge b-p">P</span> 第 8、20、21 页；<span class="badge evidence-badge b-i">I</span>（披露缺口标注）</td></tr>
+              <tr><td>基线</td><td>SGLang v0.3.4 + Triton v3.0 编译器后端（§4.1；§4.1 提及的第二对照设置名称在提取中缺损，本页不点名）；FlashAttention 主干 commit c1d146c（含 FA2+FA3，§4.2 脚注）；FlexAttention（AttentionGym，§G.1）；MLC-Engine 单格式（§4.4）；vLLM 默认后端（§G.4）；PyTorch SDPA（§G.5）</td><td><span class="badge evidence-badge b-p">P</span> 第 8–9、20–21 页</td></tr>
+              <tr><td>负载（端到端）</td><td>ShareGPT + 合成 Variable U(512,2048)；请求率调至 P99 TTFT &lt; 200ms（§4.1）；并行生成固定 RR=16、n ∈ {1,2,4,8,16,32,64}（§4.4）；消验实验另有 U(4096,16384) RR=1、输出固定 256（§G.3）</td><td><span class="badge evidence-badge b-p">P</span> 第 8–10、20–21 页</td></tr>
+              <tr><td>负载（kernel）</td><td>batch 16；constant(1024) / uniform(512–1024) / Zipf 偏斜均值 1024；prefill 开 causal（§4.2）；FlexAttention 对比 seq 512–16384、batch 16、16 头、head_dim 128（§G.1）；Quest 对比 seq 4096–32768、page_budget 64–512、block 16、32+32 头（§G.5）</td><td><span class="badge evidence-badge b-p">P</span> 第 8–9、20–21 页</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>关键结果（均带条件）</h3>
+        <div class="table-scroll" role="region" aria-label="关键结果表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 G · 评测关键数字 → 完整条件 → 定位（「论文未明确披露」为允许字段值，不留空）</caption>
+            <thead><tr><th scope="col">结论（指标）</th><th scope="col" class="num">数字</th><th scope="col">完整条件（硬件 / 模型 / 精度 / 负载 / 基线）</th><th scope="col">来源页码</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>端到端 ITL 降幅 vs 编译器后端</td><td class="num">29–69%</td>
+                <td>A100 40GB SXM + H100 80GB SXM；Llama 3.1 8B Instruct（1×H100）/ 70B Instruct（4×H100）；f16；ShareGPT + Variable U(512,2048)、P99 TTFT&lt;200ms；基线 SGLang v0.3.4 Triton v3.0。摘要聚合口径，无法由图 7 提取柱标签重导出</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页摘要；第 8 页 §4/§4.1 + 图 7</td>
+              </tr>
+              <tr>
+                <td>图 7 中位数柱标签（ITL/TTFT）</td><td class="num">8B ITL 9.1–29.6 ms、70B ITL 21.8–48.3 ms；8B TTFT 38.8–61.8 ms、70B TTFT 115.6–165.2 ms</td>
+                <td>同上条件；<strong>柱与系统（FlashInfer/Triton）的归属在提取中乱序，不可配对</strong>——只作范围展示，不作对比结论</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 8 页图 7；<span class="badge evidence-badge b-i">I</span>（不配对声明）</td>
+              </tr>
+              <tr>
+                <td>decode 带宽利用率 / prefill FLOPs 利用率（图 8 柱标签范围）</td><td class="num">28–73% / 34–59%</td>
+                <td>H100 SXM 80GB + A100 SXM 40GB；kernel 级（MHA/GQA-4/GQA-8 头配置，无 LLM）；f16（§4 全局）；batch 16、三分布、causal prefill；基线 FlashAttention c1d146c。<strong>逐柱归属不可恢复（提取乱序），论文 prose 结论为：uniform/skewed 分布下 FlashInfer 显著优于 FA（归因负载均衡调度器与更优 decode tile）</strong></td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 9 页图 8 + §4.2；<span class="badge evidence-badge b-i">I</span>（不配对声明）</td>
+              </tr>
+              <tr>
+                <td>StreamingLLM 端到端 ITL 降幅；融合 RoPE kernel 带宽利用率</td><td class="num">28–30%；1.6–3.7×</td>
+                <td>H100 SXM 80GB + A100 SXM 40GB 面板；Vicuna-13B；f16（§4 全局，§4.3 未复述）；MT-Bench、recent 窗口 1000/2000/4000；基线 FA 未融合 RoPE + FA attention（优化版实现，原始实现作参照）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 9 页 §4.3 + 图 9</td>
+              </tr>
+              <tr>
+                <td>并行生成提速（聚合 / n=4 峰值）</td><td class="num">13–17%；ITL −13.73%（8B）/ −17.42%（70B）；TTFT −16.41% / −22.86%</td>
+                <td>H100：8B 1×、70B 4×；Llama 3.1 8B/70B Instruct；f16（§4 全局，§4.4 未复述）；ShareGPT、RR=16、n∈{1,…,64}；基线 MLC-Engine 关闭可组合格式；4≤n≤32 一致收益、更大 n 收益趋平</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页摘要；第 9–10 页 §4.4 + 图 10</td>
+              </tr>
+              <tr>
+                <td>vs FlexAttention：causal / soft-cap / ALiBi / 滑窗(1024)</td><td class="num">causal 250.454–612.259 vs 209.11–453.57；soft-cap 336.487–520.935 vs 241.51–409.89；ALiBi 403.899–578.005 vs 253.22–434.86；滑窗 236.363–384.998 vs 206.51–380.506（TFLOPS/s）</td>
+                <td>NVIDIA H100 80GB SXM；kernel 级：batch 16、16 头、head_dim 128（无 LLM）；精度论文未明确披露（附录 G 未复述）；seq 512–16384；CUDA 12.4 / Triton 3.2；归因 warp 专业化、TMA 与 CUTLASS 寄存器级控制</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 20–21 页表 1–4 + §G.1</td>
+              </tr>
+              <tr>
+                <td>稀疏 vs 稠密 KV-Cache（模板开销）</td><td class="num">decode 差 &lt;1%；prefill 差约 10%；FA2 模板 265–370、FA3 模板 343–627 TFLOPs/s；decode 带宽利用率 83–85%</td>
+                <td>H100 SXM5；kernel 级：32 查询头 + 32 KV 头、head_dim 128；(batch,seq) (32,1024)–(1,32768)、causal prefill；稀疏 = PageAttention 页大小 1；精度论文未明确披露（附录 B 未复述）；自比（FlashInfer 稠密为基线）；FA3 稀疏走 Ampere 式拷贝 + 手工指针、更小 KV tile</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 18 页附录 B + 图 12</td>
+              </tr>
+              <tr>
+                <td>负载均衡调度器消融（ITL / TTFT）</td><td class="num">ITL 8.96/8.21/8.63 vs 9.16/8.42/13.89 vs 9.36/8.49/11.08 ms；TTFT 39.05/66.78/411.02 vs 39.42/67.38/421.60 vs 52.92/68.48/566.30 ms</td>
+                <td>NVIDIA H100 SXM5；Llama 3.1-8B-Instruct；精度论文未明确披露；三负载：ShareGPT RR=16 / U(512,2048) RR=8 / U(4096,16384) RR=1（输出固定 256）；基线：SGLang+FlashInfer 关闭负载均衡、SGLang Triton 后端；长序列负载差距最大</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 21 页表 6–7 + 第 20 页 §G.3</td>
+              </tr>
+              <tr>
+                <td>共享前缀 kernel：可组合 vs 单格式</td><td class="num">prefix 8192/BS16：88.67 vs 226.57 µs；prefix 32768/BS64：254.54 vs 4090 µs；全表 45.17–254.54 vs 46.52–4090 µs</td>
+                <td>kernel 级；硬件论文未明确披露；精度论文未明确披露；后缀长 128、batch 16/64、共享前缀 1024/8192/32768；论文提醒：现实共享前缀更小，kernel 收益不按比例转化端到端</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 21 页表 5 + 第 20 页 §G.2</td>
+              </tr>
+              <tr>
+                <td>vLLM 集成（吞吐 / 中位 ITL / 中位 TTFT）</td><td class="num">bf16：6065.41 vs 6062.89 tok/s、10.63 vs 10.42 ms、36.60 vs 35.85 ms；e4m3：6020.32 vs 6015.86 tok/s、10.92 vs 12.56 ms、37.93 vs 39.74 ms</td>
+                <td>硬件论文未明确披露；模型论文未明确披露；精度 bf16 与 e4m3（fp8）明示；固定请求率 16；基线 vLLM 默认后端；论文解释：host 侧 Python 开销致 bf16 轻微回退、fp8 KV 下中位 ITL 约省 13%</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 21 页表 8 + §G.4</td>
+              </tr>
+              <tr>
+                <td>细粒度稀疏 decode（Quest 配置）</td><td class="num">FlashInfer 20.299–68.700 µs vs PyTorch SDPA 287.684–1713.093 µs vs FlexAttention 1071.797–1187.395 µs；@32768/pb64：22.371 vs 1711.955 vs 1169.109 µs；论文 prose：长序列至 20×</td>
+                <td>NVIDIA H100 SXM5；kernel 级（Quest 算法）；精度论文未明确披露；block size 16、32 查询头 + 32 KV 头、head_dim 128；seq 4096/8192/16384/32768 × page_budget 64/128/256/512；基线 PyTorch SDPA、FlexAttention（大块模板，无小块稀疏路径）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 21 页表 9–11 + §G.5</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>公平性限制与已知差异</h3>
+        <ul>
+          <li><strong>图柱乱序：</strong>图 7–10 与图 12 的柱状标签在文本提取中交错乱序，逐柱「FlashInfer vs 基线」配对无法从提取恢复——本页只引用论文 prose 明示的聚合（29–69%、28–30%、13–17%、20×、1.6–3.7×）与附录表格数值，未做任何柱级配对。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>基线时点：</strong>对照基于 FlashInfer v0.2、SGLang v0.3.4、Triton v3.0/3.2、FA commit c1d146c（论文发表时点）；当前各库已演进，绝对数字不能外推到今日版本栈。<span class="badge evidence-badge b-p">P</span>（口径） <span class="badge evidence-badge b-i">I</span>（时效）</li>
+          <li><strong>精度披露缺口：</strong>附录 B/G 的表格未复述精度（多处亦未复述硬件/模型），本页记「论文未明确披露」，不臆测。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>§4.1 第二对照设置：</strong>原文提及「two settings」但第二设置名称在提取中缺损（其注意力 kernel 为闭源的某领先引擎）；本页不点名、不猜测。<span class="badge evidence-badge b-i">I</span></li>
+          <li>数字不可与 DistServe、Mooncake、vAttention 等其他论文横比（硬件、负载、口径均不同）。<span class="badge evidence-badge b-i">I</span></li>
+        </ul>
+
+        <h3>建议复现路径</h3>
+        <p>论文提供官方开源仓库与完整实验配置；以下步骤顺序为编辑建议（<span class="badge evidence-badge b-i">I</span>），配置项均出自论文（<span class="badge evidence-badge b-p">P</span>）：</p>
+        <ol>
+          <li>获取官方仓库 <span class="mono">github.com/flashinfer-ai/flashinfer</span>（论文第 11 页 §7 唯一锚定；建议锁定明确 commit/tag 后再复现）；</li>
+          <li>环境对齐论文口径：CUDA 12.4 + PyTorch 2.4.0 + f16；A100 40GB SXM / H100 80GB SXM（第 8 页 §4）；</li>
+          <li>端到端：装 SGLang v0.3.4，分别以 Triton v3.0 后端与 FlashInfer 0.2 后端跑 ShareGPT 与 Variable U(512,2048)，按 P99 TTFT &lt; 200ms 调请求率，记录 ITL/TTFT（第 8 页 §4.1）；</li>
+          <li>kernel 级：batch 16、constant(1024)/uniform(512–1024)/Zipf 三分布对照 FlashAttention（记录所用 commit），prefill 开 causal（第 8–9 页 §4.2）；变体对比用 AttentionGym、Triton 3.2、batch 16/16 头/head_dim 128（第 20 页 §G.1）；</li>
+          <li>附录复刻：调度器消融（表 6–7 配置）、共享前缀（表 5）、vLLM 集成（表 8）、Quest 稀疏（表 9–11）逐表对齐负载参数；输出与论文数值的偏差先核工具链版本再论结论。</li>
+        </ol>
+      </section>
+
+      <section id="links" aria-labelledby="links-h">
+        <h2 id="links-h">论文 / 链接 / 延伸阅读</h2>
+        <div class="table-scroll" role="region" aria-label="链接表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 H · 来源与链接（外链仅 arXiv 与论文确认的官方仓库：HTTPS + rel="noopener noreferrer"）</caption>
+            <thead><tr><th scope="col">资源</th><th scope="col">级别</th><th scope="col">链接 / 文件</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>论文：《FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving》（MLSys 2025，arXiv:2501.01005v2）</td>
+                <td><span class="badge evidence-badge b-p">P</span></td>
+                <td><a href="https://arxiv.org/abs/2501.01005" rel="noopener noreferrer">arxiv.org/abs/2501.01005</a>；本地 <span class="mono">05_FlashInfer_2501.01005.pdf</span></td>
+              </tr>
+              <tr>
+                <td>官方仓库（论文 §7 明示开源地址；论文未提供 commit/tag 与访问日期）</td>
+                <td><span class="badge evidence-badge b-r">R</span></td>
+                <td><a href="https://github.com/flashinfer-ai/flashinfer" rel="noopener noreferrer">github.com/flashinfer-ai/flashinfer</a></td>
+              </tr>
+              <tr>
+                <td>项目主页 flashinfer.ai 与 docs.flashinfer.ai 的 BatchPrefillWithRaggedKVCacheWrapper / BatchPrefillWithPagedKVCacheWrapper 文档（论文第 1 页脚注、第 18 页脚注 8–9 引用；论文原文为 http/https 混用，本页不作超链接）</td>
+                <td><span class="badge evidence-badge b-e">E</span></td>
+                <td><span class="mono">flashinfer.ai</span> · <span class="mono">docs.flashinfer.ai/api/prefill.html</span>（文字引用）</td>
+              </tr>
+              <tr>
+                <td>PyTorch JIT 扩展 / 自定义算子文档与 DLPack 仓库（论文第 6 页脚注 2–4 引用，本页不作超链接）</td>
+                <td><span class="badge evidence-badge b-e">E</span></td>
+                <td><span class="mono">pytorch.org/tutorials/advanced/cpp_extension.html</span> · <span class="mono">github.com/dmlc/dlpack</span>（文字引用）</td>
+              </tr>
+              <tr>
+                <td>站内对照阅读</td>
+                <td>站内</td>
+                <td><a href="04-vattention.html">vAttention（04，显存管理层——论文 §5.4 明言可结合）</a> · <a href="01-distserve.html">DistServe（01）</a> · <a href="02-sarathi-serve.html">Sarathi-Serve（02，chunked prefill，论文 §5.4 引用）</a> · <a href="03-mooncake.html">Mooncake（03）</a> · <a href="06-eagle.html">EAGLE（06，投机解码——其树形注意力是 FlashInfer 面向的负载之一）</a> · <a href="11-flashattention-3.html">FlashAttention-3（11，FlashInfer Hopper 模板所用的算法）</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">论文引用的关联工作（FlexAttention、PagedAttention、SGLang、Quest、Nanoflow 等）仅按论文转述；除 arXiv 与官方仓库外本页不提供任何外部链接。上一篇：<a href="04-vattention.html">vAttention（04）</a>；下一篇：<a href="06-eagle.html">EAGLE（06）</a>；或从<a href="../index.html">首页目录</a>进入。</p>
+      </section>
+
+      <section id="decision-checklist" aria-labelledby="decision-checklist-h">
+        <h2 id="decision-checklist-h">给架构师的决策清单</h2>
+        <form class="decision-checklist" aria-label="FlashInfer 采用决策清单（静态勾选，不提交数据）">
+          <fieldset>
+            <legend>需求与兼容</legend>
+            <label><input type="checkbox" name="d1"> 负载确有注意力瓶颈或变体诉求：非标准注意力（soft-cap/滑窗/ALiBi/sigmoid/MLA 融合）或长度分布动态/偏斜（论文收益条件，第 8–10、20–21 页）；短序列、单一标准注意力的部署不应期待显著收益</label>
+            <label><input type="checkbox" name="d2"> 目标 GPU 为 NVIDIA sm75–sm90a（Turing–Hopper）；Hopper 实例才能走 FA3 模板路径（第 5 页 §3.2）</label>
+            <label><input type="checkbox" name="d3"> 宿主框架为 SGLang / vLLM / MLC-Engine 或具备同等集成面（论文集成清单，第 1–2 页）；已确认替代注意力后端可作回退（第 8 页 §4.1 的 Triton 后端对照）</label>
+            <label><input type="checkbox" name="d4"> 仅推理前向场景——训练/反向需求不适用（第 11 页 §6）</label>
+          </fieldset>
+          <fieldset>
+            <legend>PoC 与容量</legend>
+            <label><input type="checkbox" name="d5"> 用真实负载复测：端到端 ITL/TTFT 分位数 + kernel 带宽/FLOPs 利用率，对齐论文三分布口径（第 8–9 页 §4）</label>
+            <label><input type="checkbox" name="d6"> workspace 上界（最大并发请求数、最大累计请求长度）已按业务峰值设定并计入显存预算（第 19 页附录 D.3 契约）</label>
+            <label><input type="checkbox" name="d7"> 验证 CUDAGraph 路径：不同块大小/组合配置的图选择正确，plan() 每步 CPU 耗时在预算内（第 7–8 页 §3.3.1/§3.4）</label>
+            <label><input type="checkbox" name="d8"> JIT 冷启动（init 编译/缓存预热）时长已测并纳入扩缩容 SLA（第 8 页 §3.4）</label>
+          </fieldset>
+          <fieldset>
+            <legend>SLO 与成本</legend>
+            <label><input type="checkbox" name="d9"> 业务 SLO 口径（ITL/TTFT 分位）与论文口径（P99 TTFT&lt;200ms 约束下调请求率）已对齐；论文聚合数字（29–69% 等）不作 SLO 承诺直接引用</label>
+            <label><input type="checkbox" name="d10"> 用公式 1 按查询日云价核算每百万 token 成本；对序列分布、精度（f16 vs fp8 KV）、host 开销 φ 各做敏感性（第 20–21 页附录 F/表 8 条件）</label>
+          </fieldset>
+          <fieldset>
+            <legend>安全与运维</legend>
+            <label><input type="checkbox" name="d11"> 供应链收敛：仅从官方仓库构建、锁定 commit/digest、JIT 工具链入 SBOM；第三方构建视为未核验（第 6、11 页）</label>
+            <label><input type="checkbox" name="d12"> 多租户策略明确：workspace/KV 复用语义写入威胁模型，分域或清零策略过合规评审（第 7、19 页机制推演）</label>
+            <label><input type="checkbox" name="d13"> 监控就位：ITL/TTFT 分位、HBM 带宽利用率（参考 83–85%）、plan() 耗时、JIT init 时长、workspace 触顶告警</label>
+          </fieldset>
+          <fieldset>
+            <legend>退出策略</legend>
+            <label><input type="checkbox" name="d14"> 保留已压测的替代注意力后端（如 Triton 后端）切换开关，确保迁移可逆（第 8 页对照存在性）</label>
+            <label><input type="checkbox" name="d15"> FlashInfer 版本与 CUDA/PyTorch 工具链分开变更、可独立回滚；升级后先做 kernel 输出一致性与性能回归抽查</label>
+          </fieldset>
+        </form>
+      </section>
+
+      <section id="evidence" aria-labelledby="evidence-h">
+        <h2 id="evidence-h">证据台账</h2>
+        <p class="meta-note">分级（本论文台账 schema：<span class="mono">sources/flashinfer.evidence.json</span>）：P = 论文正文/附录/图表（含论文报告的实验结果，锚定 PDF 页码/章节）；R = 论文明确链接的官方仓库（owner flashinfer-ai 经论文自身引用确认，commit/tag/访问日期论文未提供）；E = 论文脚注引用的外部文档（仅作映射/接口锚点）；I = 编辑推断。<strong>注意与 04 页（vAttention）schema 不同——彼页 R=论文实验结果，本页 R=官方仓库，以各页台账为准。</strong>「已核验（页码推导）」指内容已对照提取文本核验、但印刷页码系按页眉分隔行推得（第 1 页=标题/摘要页，共 21 页），未对 PDF 二进制目视复核。最后核验日期：2026-09-14。</p>
+        <div class="table-scroll" role="region" aria-label="证据台账表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 I · 关键结论 → 级别 → 定位（PDF 页码 + 章节/图号）→ 核验状态（40 条 = P 33 · R 1 · E 2 · I 4）</caption>
+            <thead><tr><th scope="col">编号</th><th scope="col">关键结论（摘要）</th><th scope="col">级别</th><th scope="col">定位（PDF 页码/章节）</th><th scope="col">核验状态</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">C1</td><td>页表/基数树等非连续 KV 布局统一为 BSR；Br=查询 tile、Bc 由 KV 管理算法定；支持任意 (Br,Bc)（图 2 示例 4,1）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 4 页 §3.1.1 + 图 2</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C2</td><td>查询/输出为 ragged 无填充张量；新 K/V 沿用查询 indptr 后并入 BSR KV-Cache</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 4 页 §3.1.1</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C3</td><td>可组合格式拆 KV 稀疏矩阵为多个子矩阵（共享前缀 (3,1)+独有 (1,1)）；只算 index/indptr、不搬 KV 数据</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 4–5 页 §3.1.2 + 图 3</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C4</td><td>Attention State=(O,LSE) 为规范输出；⊕ 可结合/交换，用于 split-KV 与前缀分解</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 3 页 §2.2</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C5</td><td>长 KV 分块→部分输出入用户 workspace→contraction 按约简映射合成最终输出</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7 页 §3.3.1 + 图 6</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C6</td><td>128B LDGSTS 异步拷贝汇聚分散 KV tile 至共享内存；TMA 仅用于 Hopper 连续 KV（不支持非仿射访问）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §3.2.1 + 图 4</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C7</td><td>CUDA/CUTLASS 模板覆盖 sm75–sm90a；FA2 算法至 Ada(sm89)，FA3 算法用于 Hopper</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §3.2</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C8</td><td>GQA 头组融合：KV 头分线程块、查询头并入查询长度维；短查询优先；类似 XQA</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 18 页附录 A + 图 11</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C9</td><td>运行时路径综合（ragged→BSR→plan→持久 kernel+contraction）为编辑装配，不作论文结论</td><td><span class="badge evidence-badge b-i">I</span></td><td>综合第 3–8 页 §2–§3.4</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">C10</td><td>编译时输入=变体规格+任务信息+KV 布局规格（JIT）；运行时输入=序列长度信息（调度）（图 1）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页图 1 及其图注</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C11</td><td>可定制 CUDA 模板 + JIT：变体规格含 Query/Key/Value/OutputTransform、LogitsTransform/LogitsMask 六仿函数</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页 §3.2.3 + 图 5</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C12</td><td>生成 CUDA 经 PyTorch JIT 编译并注册自定义算子；DLPack 框架无关接口；可嵌 PTX/自有库</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页 §3.2.3 + 脚注 2–4</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C13</td><td>变体可关 softmax（FlashSigmoid）、soft-cap、自定义掩码、滑窗；可融合归一化/RoPE/投影（MLA）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页 §3.2.3</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C14</td><td>FA2 tile 菜单 (1,16,32,64,128)×(32,64,128) + 两步启发式；tile=1 走 CUDA 核心；FA3 行 tile 为 64 倍数</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §3.2.2 + 第 6 页 §3.2.3</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C15</td><td>vs FlexAttention：扩展 Q/K 变换、向量稀疏与负载均衡；生成 CUDA 因 Triton 逊于 CUDA+CUTLASS；可作 FlexAttention 前向后端；调度器后端无关</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 10–11 页 §5.3 + 第 19 页附录 C</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C16</td><td>AttentionWrapper(attn_spec, task_info, workspace)；init 时 JIT 编译并缓存；plan() 在 CPU、不被 CUDAGraph 捕获</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7–8 页 §3.4 + Listing 1</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C17</td><td>调度代价 cost=α·l_q+β·l_kv；L_kv 上限公式；降序排序+CTA 优先队列；不用原子聚合保确定性（Stream-K 启发）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7 页 Alg.1 + §3.3.1</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C18</td><td>plan/run 划分受 Inspector-Executor 模型启发；计划跨层复用、可跨算子缓存</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7–8 页 §3.3.1/§3.4</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C19</td><td>CUDAGraph 兼容：attention+contraction 合一持久 kernel、grid 编译期固定；workspace 按最大容量分配、段偏移恒定；plan 信息经 cudaMemcpyAsync 从锁页缓冲下发</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7 页 §3.3.1 + 第 19 页附录 D/D.1</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C20</td><td>不同块大小/可组合配置各自编译并捕获不同 CUDAGraph，运行时按当前 KV 配置选择</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8 页 §3.4</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C21</td><td>split-K 直写：仅长请求分块，短请求直写最终输出；部分输出上界 2·#CTA·T_q·H_qo·(D+1)；#CTA=k×#SM（Ampere k≤2、Hopper 常 1）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 19 页附录 D.2/D.3</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C22</td><td>调度器消融：长序列负载收益最大（ITL 8.63 vs 13.89 vs 11.08 ms；TTFT 411.02 vs 421.60 vs 566.30 ms @U(4096,16384) RR=1）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 21 页表 6–7 + 第 20 页 §G.3</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C23</td><td>attention 可占 SM 数可由用户经 plan 函数提供（对照 Nanoflow 固定 SM 划分）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 19–20 页附录 E</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C24</td><td>kernel 评测设置：batch 16；constant(1024)/uniform(512–1024)/Zipf 均值 1024；prefill causal；FA 主干 commit c1d146c</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8–9 页 §4.2 + 第 9 页脚注</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C25</td><td>uniform/skewed 分布下 FlashInfer kernel 显著优于 FlashAttention（归因负载均衡调度器与 decode tile 选择）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 9 页图 8 + §4.2</td><td>已核验（页码推导）；柱级配对不成立（见 C39）</td></tr>
+              <tr><td class="mono">C26</td><td>稀疏 vs 稠密 KV：decode 差 &lt;1%、prefill 差约 10%；FA2 模板 265–370、FA3 模板 343–627 TFLOPs/s；decode 带宽利用率 83–85%</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 18 页附录 B + 图 12</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C27</td><td>四种变体（causal/soft-cap/ALiBi/滑窗）全序列长一致超 FlexAttention；causal@16384：612.259 vs 453.57 TFLOPS/s</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 20 页 §G.1 + 第 20–21 页表 1–4</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C28</td><td>融合 RoPE 仅 20 行变体代码；融合 kernel 带宽利用率为未融合的 1.6–3.7×</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 9 页 §4.3 + 图 9</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C29</td><td>Quest 细粒度稀疏 decode：FlashInfer 20.299–68.700 µs vs SDPA 287.684–1713.093 µs vs FlexAttention 1071.797–1187.395 µs；prose 称长序列至 20×</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 21 页 §G.5 + 表 9–11</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C30</td><td>共享前缀可组合格式大幅优于单格式（254.54 vs 4090 µs @32768/BS64）；但端到端不按比例转化（现实前缀更小）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 20–21 页 §G.2 + 表 5</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C31</td><td>头条结果：29–69% ITL 降幅、28–30% 长上下文降幅、13–17% 并行生成提速；已集成 SGLang/vLLM/MLC-Engine</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页摘要 + 第 8 页 §4</td><td>已核验（页码推导）；摘要区间无法由图 7 提取值重导出，按论文报告口径引用</td></tr>
+              <tr><td class="mono">C32</td><td>评测机群：A100 40GB SXM + H100 80GB SXM；CUDA 12.4、PyTorch 2.4.0、f16</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8 页 §4</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C33</td><td>范围限制：仅前向、可定制反向为未来工作；TMA 稀疏汇聚（块列 ≥128）为未来工作</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 11 页 §6 + 第 19 页附录 B</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C34</td><td>FP8–FP16 混合精度 kernel：Q/O 保持 fp16、KV 以 fp8 存储；目标是降内存、提带宽而不显著损精度</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 20 页附录 F</td><td>已核验（页码推导）</td></tr>
+              <tr><td class="mono">C35</td><td>官方仓库 github.com/flashinfer-ai/flashinfer（论文 §7 明示）；论文称已规模化部署于生产级系统；项目主页 flashinfer.ai（第 1 页脚注）</td><td><span class="badge evidence-badge b-r">R</span></td><td>第 11 页 §7 + 第 1 页脚注</td><td>部分核验：URL 经论文自身引用核验；commit/tag/访问日期论文未提供，本页不锚定</td></tr>
+              <tr><td class="mono">C36</td><td>docs.flashinfer.ai 的 BatchPrefillWithRaggedKVCacheWrapper / BatchPrefillWithPagedKVCacheWrapper API（论文脚注引用）</td><td><span class="badge evidence-badge b-e">E</span></td><td>第 18 页脚注 8–9</td><td>已核验（页码推导）；本页仅文字引用不作链接</td></tr>
+              <tr><td class="mono">C37</td><td>PyTorch cpp_extension JIT / 自定义算子文档与 dmlc/dlpack（论文脚注引用）</td><td><span class="badge evidence-badge b-e">E</span></td><td>第 6 页脚注 2–4</td><td>已核验（页码推导）；本页仅文字引用不作链接</td></tr>
+              <tr><td class="mono">C38</td><td>印刷页码为按页眉分隔行推得（第 1 页=标题/摘要页，共 21 页），未对 PDF 二进制目视复核</td><td><span class="badge evidence-badge b-i">I</span></td><td>提取文本结构推导</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">C39</td><td>图 7–10、图 12 柱标签在提取中乱序：柱级 FlashInfer-vs-基线配对被禁止，只引用 prose 聚合与附录表格数值</td><td><span class="badge evidence-badge b-i">I</span></td><td>提取行 603–676、778–835 等</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">C40</td><td>§4.1「对照两设置」中第二设置名称在提取中缺损（其注意力 kernel 闭源）；本页不点名、不猜测</td><td><span class="badge evidence-badge b-i">I</span></td><td>第 8 页 §4.1（提取行 582–592）</td><td>编辑标注完成</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">数据与文件说明：本页全部性能数字与机制描述均取自论文《FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving》（arXiv:2501.01005v2，MLSys 2025）的提取文本，并通过 <span class="mono">sources/flashinfer.summary.json</span> 与 <span class="mono">sources/flashinfer.evidence.json</span> 逐条对应（claims 40 条、performance_rows 22 行，行行带硬件/模型/精度/负载/基线/定位字段，缺失字段记「论文未明确披露」）。编辑推断与部署建议已用 I 标注；本页外链仅 arXiv 与官方仓库两处（HTTPS + rel="noopener noreferrer"）。数据路径图 <span class="mono">assets/diagrams/flashinfer-data-path.svg</span>（含 title/desc 无障碍描述）。台账外不捏造任何数字、出处或日期。</p>
+      </section>
+
+      <nav class="pager" aria-label="上一篇下一篇">
+        <a href="04-vattention.html" rel="prev">← 上一篇：vAttention</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="../index.html">返回分类：推理服务与资源调度</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="06-eagle.html" rel="next">下一篇：EAGLE →</a>
+      </nav>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <p>来源声明：本页全部性能数字与机制描述均取自论文《FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving》（arXiv:2501.01005v2，MLSys 2025）提取文本的已核验条目（摘要/§1 第 1–2 页；背景 §2 第 3 页；设计 §3 第 4–8 页；实验 §4 第 8–10 页；讨论/结论 §6–§7 第 11 页；附录 A–G 第 18–21 页），并通过 <span class="mono">sources/flashinfer.summary.json</span> 与 <span class="mono">sources/flashinfer.evidence.json</span> 逐条对应；页码为提取推导值（PDF 未见二进制渲染），图 7–10/图 12 柱状标签乱序、不作配对断言；编辑推断与部署建议已用 I 标注，本页外链仅 arXiv 与论文确认的官方仓库 flashinfer-ai/flashinfer 两处（HTTPS + rel="noopener noreferrer"）。许可提醒：论文内容版权归原作者与出版方所有，引用以论文原文为准。本地生成：2026-09-14 · 输入 PDF <span class="mono">05_FlashInfer_2501.01005.pdf</span> · 数据路径图 <span class="mono">assets/diagrams/flashinfer-data-path.svg</span>。</p>
+  </footer>
+  <script src="../assets/js/site.js" defer></script>
+</body>
+</html>

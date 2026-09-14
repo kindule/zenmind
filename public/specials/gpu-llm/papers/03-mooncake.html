@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Mooncake：以 KVCache 为中心的 Prefill/Decode 分离式 LLM 服务架构 · GPU 大模型系统论文解读</title>
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <!-- 说明：本页已引用共享骨架 ../assets/css/site.css 与 ../assets/js/site.js；
+       下方内联样式保留为回退（共享文件缺失或离线 file:// 打开时页面仍完整可读）。
+       主题策略：跟随系统明暗（prefers-color-scheme），站点级主题切换/目录高亮由共享 site.js 增强，禁用 JS 时本页仍完整可读。 -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fa;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --border: #cbd5e1;
+      --text: #1f2937;
+      --text-muted: #475569;
+      --heading: #16213e;
+      --accent: #16213e;
+      --accent-2: #0e7490;
+      --accent-soft: #e0f2fe;
+      --mem: #6d28d9;
+      --mem-soft: #ede9fe;
+      --net: #c2410c;
+      --net-soft: #ffedd5;
+      --warn-bg: #fffbeb;
+      --warn-border: #b45309;
+      --warn-text: #92400e;
+      --p-bg: #d1fae5; --p-fg: #065f46; --p-border: #059669;
+      --r-bg: #dbeafe; --r-fg: #1e40af; --r-border: #2563eb;
+      --e-bg: #ffedd5; --e-fg: #9a3412; --e-border: #c2410c;
+      --i-bg: #ede9fe; --i-fg: #5b21b6; --i-border: #7c3aed;
+      --focus: #b45309;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220;
+        --surface: #111a2c;
+        --surface-2: #17223a;
+        --border: #33415c;
+        --text: #e2e8f0;
+        --text-muted: #a8b3c7;
+        --heading: #f1f5f9;
+        --accent: #cbd5e1;
+        --accent-2: #67e8f9;
+        --accent-soft: #164e63;
+        --mem-soft: #3b2a63;
+        --net-soft: #4a2410;
+        --warn-bg: #2c2410;
+        --warn-border: #d97706;
+        --warn-text: #fcd34d;
+        --p-bg: #064e3b; --p-fg: #a7f3d0; --p-border: #10b981;
+        --r-bg: #1e3a8a; --r-fg: #bfdbfe; --r-border: #60a5fa;
+        --e-bg: #4a2410; --e-fg: #fdba74; --e-border: #ea580c;
+        --i-bg: #3b2a63; --i-fg: #ddd6fe; --i-border: #a78bfa;
+        --focus: #fbbf24;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    }
+    a { color: var(--accent-2); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+    .skip-link {
+      position: absolute; left: 8px; top: -48px; z-index: 10;
+      background: var(--surface); color: var(--text);
+      border: 2px solid var(--focus); border-radius: 4px;
+      padding: 10px 16px; font-weight: 700; transition: top .15s ease;
+    }
+    .skip-link:focus { top: 8px; }
+    code, .num, .mono { font-family: var(--mono); }
+    .mono { font-size: .92em; }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+    }
+    .topbar .site { font-weight: 800; color: var(--heading); text-decoration: none; margin-right: auto; }
+    .topbar a { color: var(--text); text-decoration: none; padding: 10px 4px; display: inline-block; }
+    .topbar a:hover { color: var(--accent-2); text-decoration: underline; }
+
+    .breadcrumb {
+      padding: 12px 20px 0; font-size: 14px; color: var(--text-muted);
+      max-width: 1240px; margin: 0 auto;
+    }
+    .breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+    .breadcrumb li + li::before { content: "→"; margin-right: 6px; color: var(--text-muted); }
+
+    .layout {
+      max-width: 1240px; margin: 0 auto; padding: 8px 20px 40px;
+      display: grid; grid-template-columns: 1fr; gap: 24px;
+    }
+    @media (min-width: 768px) { .layout { grid-template-columns: 200px 1fr; } }
+    @media (min-width: 1200px) { .layout { grid-template-columns: 240px 1fr; } }
+
+    .toc-aside { display: none; }
+    @media (min-width: 768px) {
+      .toc-aside { display: block; }
+      .toc-mobile-slot { display: none; }
+    }
+    aside nav, .toc-mobile-slot details {
+      position: sticky; top: 16px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .toc-mobile-slot details { position: static; }
+    aside nav strong, .toc-mobile-slot summary {
+      color: var(--heading); display: block; margin-bottom: 8px; font-size: 14px;
+    }
+    .toc-mobile-slot summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
+    aside nav ol, .toc-mobile-slot ol {
+      list-style: none; margin: 0; padding: 0; counter-reset: toc;
+    }
+    aside nav li, .toc-mobile-slot li { margin: 2px 0; }
+    aside nav a, .toc-mobile-slot a {
+      display: block; padding: 8px 6px; text-decoration: none; color: var(--text);
+      border-radius: 4px; line-height: 1.4;
+    }
+    aside nav a:hover, .toc-mobile-slot a:hover { background: var(--surface-2); color: var(--accent-2); }
+
+    main { min-width: 0; }
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 20px 22px; margin: 0 0 22px;
+      break-inside: avoid-page;
+    }
+    h1 { font-size: 26px; line-height: 1.35; color: var(--heading); margin: 6px 0 4px; }
+    h2 { font-size: 21px; color: var(--heading); margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 17px; color: var(--heading); margin: 20px 0 8px; }
+    p { max-width: 76ch; }
+
+    .meta-note {
+      background: var(--surface-2); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 10px 14px; font-size: 14px; color: var(--text-muted); margin: 10px 0 16px;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+    .tags li {
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 6px 12px; font-size: 13px; background: var(--surface-2); color: var(--text);
+    }
+
+    .badge {
+      display: inline-block; font-size: 12px; font-weight: 700; line-height: 1;
+      padding: 4px 8px; border-radius: 4px; border: 1px solid; vertical-align: 1px; white-space: nowrap;
+    }
+    .b-p { background: var(--p-bg); color: var(--p-fg); border-color: var(--p-border); }
+    .b-r { background: var(--r-bg); color: var(--r-fg); border-color: var(--r-border); }
+    .b-e { background: var(--e-bg); color: var(--e-fg); border-color: var(--e-border); }
+    .b-i { background: var(--i-bg); color: var(--i-fg); border-color: var(--i-border); }
+
+    .fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0; }
+    .fact-card {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; font-size: 14px;
+    }
+    .fact-card dt { font-weight: 700; color: var(--heading); margin-bottom: 4px; }
+    .fact-card dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+
+    .callout-warning {
+      background: var(--warn-bg); border: 1px solid var(--warn-border); border-left-width: 5px;
+      border-radius: 6px; padding: 12px 16px; margin: 16px 0;
+    }
+    .callout-warning strong:first-child { color: var(--warn-text); }
+
+    .table-scroll {
+      overflow-x: auto; margin: 14px 0;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+    }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
+    caption { text-align: left; font-weight: 700; color: var(--heading); padding: 10px 12px 2px; font-size: 14px; }
+    th, td { border-top: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+    thead th { background: var(--surface-2); color: var(--heading); border-top: none; white-space: nowrap; }
+    tbody tr:nth-child(even) { background: var(--surface-2); }
+    td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+
+    .tradeoff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+    .tradeoff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--surface-2); font-size: 14px; }
+    .tradeoff-card h3 { margin: 0 0 6px; font-size: 15px; }
+
+    figure.architecture-diagram { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--surface); }
+    figure.architecture-diagram img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+    figure.architecture-diagram figcaption { font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+    .diagram-scroll { overflow-x: auto; }
+
+    ul, ol { padding-left: 26px; }
+    li { margin: 4px 0; }
+
+    .decision-checklist fieldset {
+      border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 10px 14px;
+    }
+    .decision-checklist legend { font-weight: 700; color: var(--heading); padding: 0 6px; }
+    .decision-checklist label {
+      display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; min-height: 44px; cursor: pointer;
+    }
+    .decision-checklist input[type="checkbox"] { width: 20px; height: 20px; margin-top: 3px; flex: none; }
+
+    .pager { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 8px 0 0; }
+    .pager a {
+      display: inline-block; min-height: 44px; padding: 10px 16px;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+      color: var(--text); text-decoration: none; font-weight: 600;
+    }
+    .pager a:hover { border-color: var(--accent-2); color: var(--accent-2); }
+    .pager .spacer { flex: 1; }
+
+    footer.site-footer {
+      max-width: 1240px; margin: 0 auto; padding: 16px 20px 40px;
+      font-size: 13px; color: var(--text-muted); border-top: 1px solid var(--border);
+    }
+    @media (max-width: 419px) {
+      .pager a { width: 100%; text-align: center; }
+      .fact-grid { grid-template-columns: 1fr; }
+      section { padding: 16px 14px; }
+    }
+    @media print {
+      .topbar, .breadcrumb, aside nav, .toc-mobile-slot, .pager { display: none !important; }
+      body { background: #fff; color: #000; }
+      section { border: none; padding: 0 0 12px; break-inside: avoid-page; }
+      .table-scroll { overflow: visible; }
+      a { color: #000; text-decoration: none; }
+      a[href^="http"]::after { content: "（" attr(href) "）"; font-size: 11px; }
+      thead { display: table-header-group; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至正文</a>
+
+  <header class="topbar">
+    <a class="site" href="../index.html">GPU 大模型系统论文解读</a>
+    <nav aria-label="站点导航">
+      <a href="../index.html">首页</a>
+      <a href="../index.html">推理服务与资源调度</a>
+      <a href="../index.html">解码加速与量化</a>
+      <a href="../index.html">训练、并行与 GPU Kernel</a>
+      <a href="../index.html#metrics">指标术语</a>
+      <a href="../index.html#methodology">阅读说明</a>
+    </nav>
+  </header>
+
+  <nav class="breadcrumb" aria-label="面包屑">
+    <ol>
+      <li><a href="../index.html">首页</a></li>
+      <li><a href="../index.html">推理服务与资源调度</a></li>
+      <li aria-current="page">Mooncake</li>
+    </ol>
+  </nav>
+
+  <div class="layout">
+    <aside class="toc-aside">
+      <nav aria-label="页内目录">
+        <strong>页内目录</strong>
+        <ol>
+          <li><a href="#overview">摘要与一句话判断</a></li>
+          <li><a href="#background">问题背景</a></li>
+          <li><a href="#mechanism">核心机制</a></li>
+          <li><a href="#data-path">GPU/系统数据路径</a></li>
+          <li><a href="#tradeoffs">架构权衡</a></li>
+          <li><a href="#cloud-mapping">云上部署映射</a></li>
+          <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+          <li><a href="#security-ops">安全与可运维性</a></li>
+          <li><a href="#fit">适用 / 不适用场景</a></li>
+          <li><a href="#experiments">实验与指标</a></li>
+          <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+          <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+          <li><a href="#evidence">证据台账</a></li>
+        </ol>
+      </nav>
+    </aside>
+
+    <main id="main">
+      <div class="toc-mobile-slot">
+        <details class="toc-mobile" open>
+          <summary>页内目录（点击展开/折叠）</summary>
+          <nav aria-label="页内目录（移动端）">
+            <ol>
+              <li><a href="#overview">摘要与一句话判断</a></li>
+              <li><a href="#background">问题背景</a></li>
+              <li><a href="#mechanism">核心机制</a></li>
+              <li><a href="#data-path">GPU/系统数据路径</a></li>
+              <li><a href="#tradeoffs">架构权衡</a></li>
+              <li><a href="#cloud-mapping">云上部署映射</a></li>
+              <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+              <li><a href="#security-ops">安全与可运维性</a></li>
+              <li><a href="#fit">适用 / 不适用场景</a></li>
+              <li><a href="#experiments">实验与指标</a></li>
+              <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+              <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+              <li><a href="#evidence">证据台账</a></li>
+            </ol>
+          </nav>
+        </details>
+      </div>
+
+      <section id="overview" aria-labelledby="overview-h">
+        <h1 id="overview-h">Mooncake：以 KVCache 为中心的 Prefill/Decode 分离式 LLM 服务架构</h1>
+        <div class="meta-note">
+          <p style="margin:0 0 4px"><strong>最后核验日期：</strong>2026-09-14　<strong>证据完整度：</strong>台账 14 条 = P 9 · R 0 · E 1 · I 4，全部带真实 PDF 页码/图号定位（详见 <a href="#evidence">证据台账</a>）。核验范围内论文未给出可核验的官方代码仓库声明，故本页 R 级证据为 0，且<strong>不提供任何代码仓库链接</strong>。</p>
+          <p style="margin:0"><strong>输入 PDF：</strong><span class="mono">03_Mooncake_2407.00079.pdf</span>（《Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving》，FAST '25）。</p>
+        </div>
+        <ul class="tags" aria-label="快速标签">
+          <li>生命周期：推理服务（集群级）</li>
+          <li>部署形态：Prefill / Decode 分池 + 全局 KVCache 层</li>
+          <li>目标硬件：GPU 集群（第 15 页披露 A800-SXM4-80GB 测试平台、每实例 8 GPU、800 Gbps RDMA 互联）</li>
+          <li>核心资源：KVCache · 跨节点带宽 · 调度控制面</li>
+          <li>证据状态：P 主导 + 4 条编辑推断（I）；无仓库级（R）证据</li>
+        </ul>
+
+        <h2>一句话判断</h2>
+        <p>对「长上下文、高前缀共享、过载频繁」的大规模在线 LLM 服务，Mooncake 把 KVCache 当成一等公民：Prefill 与 Decode 分池部署、全局调度器统一编排、过载时早期拒绝，在论文口径下以<strong>相同机器预算</strong>换取 20%–525% 不等的吞吐提升与更高的 SLO 达成率；代价是跨节点 KV 传输带宽依赖、控制面复杂度，以及「集中缓存 + 跨请求复用」带来的隔离与合规新问题。全部数字为论文条件性结果，且核验范围内无官方代码仓库声明。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（代价与适用面判断为编辑观点）</span></p>
+
+        <h2>3 分钟速读</h2>
+        <ol>
+          <li><strong>架构：</strong>图 1（PDF 第 2 页）给出整体形态——以 KVCache 为中心的分离式集群：全局调度器（Conductor）前置编排，Prefill 与 Decode 节点各自池化，两阶段之间通过 KVCache 的传输与复用衔接，并与全局 KVCache 缓存层协同。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>动机：</strong>图 3–图 4（PDF 第 5–6 页）展示以 KVCache 为中心的调度与并发控制——基于前缀块的 KVCache 复用、跨请求/跨节点的缓存块映射与一致性处理；摘要文件同时以该门控记录负载统计：请求长度分布不均、可复用共享前缀多、长输入短输出占比高。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>调度：</strong>PDF 第 9–11 页给出 CPP 与 KVCache 感知调度——结合缓存命中与负载估计决定请求接纳与 Prefill/Decode 节点放置，过载时进行准入控制；第 13–14 页补充早期拒绝：预计无法满足 SLO 的请求尽早拒绝，保护已接纳请求。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>结果：</strong>相同 4 机预算下 [3P+1D] 较 vLLM [4M] 吞吐 +20%/+40%（第 15 页）；长上下文（输入 16k–128k、输出 512、命中率约 50%）+50%–525%（第 16 页）；过载回放 [10P+10D] 较 [20M] 多处理约 75% 请求（SLO：TTFT 30s、TBT 0.1s/token，第 17 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>边界：</strong>数字全部为条件性结果，禁止跨论文横比；核验到的 SLO 口径偏宽松（TTFT 30 秒）；无已核验代码仓库；安全、成本、多租户议题论文未涉及，均为编辑推断。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+        </ol>
+
+        <h2>论文声称的主要结果</h2>
+        <div class="table-scroll" role="region" aria-label="主要结果表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 A · 论文声称的主要结果（均为条件性数字，禁止脱离条件摘取）</caption>
+            <thead>
+              <tr><th scope="col">指标（口径）</th><th scope="col" class="num">数字</th><th scope="col">系统配置</th><th scope="col">完整条件</th><th scope="col">来源</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>基础对比吞吐提升</td><td class="num">约 20% / 40%</td>
+                <td>Mooncake [3P+1D] vs vLLM [4M]</td>
+                <td>相同 4 机预算（3 Prefill + 1 Decode 对 4 台整体式机器，共四实例/4 机对比）；对应论文两种实验设定；第 15 页披露实验使用 LLaMA2-70B 同质 dummy 模型、A800-SXM4-80GB 节点（每实例 8 GPU）与实例间 800 Gbps RDMA 互联（精度 dtype 论文未明示，本页不臆测）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 15 页（台账 P06）</td>
+              </tr>
+              <tr>
+                <td>长上下文吞吐提升</td><td class="num">50%–525%</td>
+                <td>Mooncake 分离配置（第 16 页 §8.1.2 沿用 §8.1.1 相同配置）</td>
+                <td>长上下文场景：输入 prompt 16k–128k token，输出固定 512 token，KVCache 命中率约 50%</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 16 页（台账 P07）</td>
+              </tr>
+              <tr>
+                <td>过载场景请求处理量提升</td><td class="num">约 75%</td>
+                <td>Mooncake [10P+10D] vs [20M]</td>
+                <td>真实生产 trace 回放、过载场景；SLO 约束 TTFT 30 秒、TBT 0.1 秒/token；20 台整体式机器对照 10 Prefill + 10 Decode</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 17 页（台账 P08）</td>
+              </tr>
+              <tr>
+                <td>早期拒绝被拒请求数（三种设置）</td><td class="num">4183 / 3771 / 3589</td>
+                <td>Mooncake [8P+8D]</td>
+                <td>约 2.3 万条请求的生产 trace 以 2 倍速率回放；三种设置下分别对应上述被拒数量（其余条件见 <a href="#experiments">实验与指标</a>）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 17 页（台账 P09）</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>不可直接比较：</strong>上表数字来自 Mooncake 论文自身的 trace、配置与 SLO 定义（如 TTFT 30s / TBT 0.1s/token），与本站收录的其他论文（DistServe、Sarathi-Serve 等）的硬件、模型、负载与 SLO 口径均不一致，<strong>不允许跨论文横向排名</strong>。
+        </div>
+
+        <h3>术语与记号</h3>
+        <dl class="fact-grid">
+          <div class="fact-card"><dt>P / D / M</dt><dd>Prefill 节点 / Decode 节点 / 整体式（Monolithic）机器；配置记号 [3P+1D] 即 3 台 Prefill + 1 台 Decode，[4M] 即 4 台整体式机器。</dd></div>
+          <div class="fact-card"><dt>TTFT</dt><dd>Time To First Token，首 token 时间。</dd></div>
+          <div class="fact-card"><dt>TBT</dt><dd>Time Between Tokens，相邻 token 间隔时间。</dd></div>
+          <div class="fact-card"><dt>论文出处</dt><dd>《Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving》，USENIX FAST '25（取自证据台账）；本地文件 <span class="mono">03_Mooncake_2407.00079.pdf</span>。</dd></div>
+        </dl>
+      </section>
+
+      <section id="background" aria-labelledby="background-h">
+        <h2 id="background-h">问题背景</h2>
+        <h3>整体式架构的结构性矛盾</h3>
+        <p>LLM 推理的 prefill（并行处理整个 prompt、计算受限）与 decode（每迭代每请求只处理 1 个 token、内存受限）两阶段资源画像差异显著，整体式（monolithic）部署中二者混布互相干扰——prefill 长任务拖累运行中请求的 decode 延迟，decode 小批量又浪费算力。这一通识性动机在 Mooncake 论文中展开于引言与动机章节，但该部分<strong>不在本次核验门控范围内</strong>，本站按编辑通识转述，细节以论文原文为准。<span class="badge evidence-badge b-i">I</span></p>
+        <h3>生产负载特征（论文核验门控内）</h3>
+        <p>图 3–图 4（PDF 第 5–6 页）展示以 KVCache 为中心的调度与并发控制：基于前缀块的 KVCache 复用、跨请求/跨节点的缓存块映射与一致性处理。<span class="badge evidence-badge b-p">P</span> 摘要文件同时以该门控记录负载统计：基于生产 trace 的请求长度分布不均、存在大量可复用的共享前缀、长输入短输出占比高——这构成以 KVCache 为核心进行调度与缓存管理的设计动机。<span class="badge evidence-badge b-p">P</span>（两个来源对图 3–4 的侧重不同，本页并列呈现，不强行合并。）</p>
+        <h3>评估数据：真实生产 trace</h3>
+        <p>PDF 第 7–8 页描述用于评估的真实生产 trace：请求含长前缀、负载随时间波动；后续 trace 驱动仿真实验（含 2 倍速率回放）均基于该数据集，在可控配置下比较不同调度与缓存策略的吞吐和延迟表现。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>本页使用的延迟指标</h3>
+        <p>与全站一致，本页以 TTFT（首 token 时间）与 TBT（token 间隔时间）讨论延迟；Mooncake 论文在过载回放实验中给出显式 SLO 数值——TTFT 30 秒、TBT 0.1 秒/token（第 17 页）。<span class="badge evidence-badge b-p">P</span> 指标名词解释为站内通识口径。<span class="badge evidence-badge b-i">I</span></p>
+      </section>
+
+      <section id="mechanism" aria-labelledby="mechanism-h">
+        <h2 id="mechanism-h">核心机制</h2>
+        <h3>1 · 以 KVCache 为中心的分离式架构（Fig.1，PDF 第 2 页）</h3>
+        <p>Mooncake 将请求的 Prefill 与 Decode 阶段部署到不同的 GPU 节点池，中间通过 KVCache 的传输与复用衔接，并由全局调度器（Conductor）统一编排请求调度与缓存资源，整体与全局 KVCache 缓存层协同。KVCache 从「每张卡顺带维护的状态」升级为跨节点调度与复用的中心资源——这是「KVCache 为中心（KVCache-centric）」的含义。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>2 · 前缀块复用与跨节点缓存一致性（Figs.3–4，PDF 第 5–6 页）</h3>
+        <p>以 KVCache 为中心的调度与并发控制落在两件事上：其一是<strong>基于前缀块的 KVCache 复用</strong>——相同前缀（如系统提示词、模板化任务头）的 KV 只需计算/传输一次，可跨请求复用；其二是<strong>跨请求/跨节点的缓存块映射与一致性处理</strong>——缓存块在不同请求与不同节点之间建立映射，并处理一致性。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>3 · CPP 与 KVCache 感知调度（PDF 第 9–11 页）</h3>
+        <ul>
+          <li><strong>调度与放置：</strong>结合缓存命中情况与负载估计做请求调度与放置，决定「是否接纳」与「落到哪个 Prefill / Decode 节点」——摘要文件转述为按前缀/缓存亲和性选择节点，并结合缓存热度进行复制与淘汰。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>准入控制：</strong>过载时进行准入控制，避免新请求无限进入拖垮全体延迟。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>关于 CPP 的名称：</strong>CPP 即 chunked pipeline parallelism（分块流水线并行），术语见 PDF 第 9 页；本页 CPP 相关调度描述仍以第 9–11 页门控为准。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+        <h3>4 · 早期拒绝（early rejection，PDF 第 13–14 页）</h3>
+        <p>过载场景下，对预计无法满足 SLO 的请求<strong>尽早拒绝</strong>，避免其长期占用 Prefill/Decode 资源，从而保障已接纳请求的 TTFT 与 TBT，以及整体集群的 SLO 达成率。<span class="badge evidence-badge b-p">P</span> 直觉上，这是把过载从「全体一起变慢、尾部延迟爆炸」改写为「部分请求被明确拒绝、其余请求守住 SLO」——该定性概括为编辑观点。<span class="badge evidence-badge b-i">I</span> 量化结果（被拒请求数 4183/3771/3589）见 <a href="#experiments">实验与指标</a>。</p>
+        <div class="callout-warning" role="note">
+          <strong>核验范围提醒：</strong>本页机制描述严格限定于已核验门控（Fig.1 p2；Figs.3–4 pp5–6；trace pp7–8；CPP/调度 pp9–11；早期拒绝 pp13–14）。门控之外的章节（如逐出策略细节、传输引擎实现、故障处理）本站未核验，不作展开。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span>
+        </div>
+      </section>
+
+      <section id="data-path" aria-labelledby="data-path-h">
+        <h2 id="data-path-h">GPU / 系统数据路径</h2>
+        <figure class="architecture-diagram">
+          <div class="diagram-scroll">
+            <img src="../assets/diagrams/mooncake-data-path.svg"
+                 alt="Mooncake 数据路径图：客户端请求进入全局调度器/控制器，调度后由预填充（Prefill）实例处理提示并产出 KV 缓存，KV 缓存经 KV 传输 fabric 在实例之间传输到解码（Decode）实例完成增量解码，最终生成输出 Tokens；按序共 6 步"
+                 width="960" height="320" loading="lazy">
+          </div>
+          <figcaption>图 1 · Mooncake 端到端数据路径（本站按论文 Fig.1（PDF 第 2 页）与调度机制（PDF 第 9–11 页）绘制，编号 ①–⑥ 对应下方文字序列）。图注说明：状态逐出（eviction）为可配置项，图中不绘制固定逐出路径；状态到 SSD 的传输方式论文未指明；800 Gbps RDMA 互联带宽仅适用于论文披露的 A800 测试平台（第 15 页），不代表其他部署配置。</figcaption>
+        </figure>
+        <h3>端到端文字序列</h3>
+        <ol>
+          <li><strong>① 请求进入</strong>：客户端请求到达前置的全局调度器/控制器（Conductor）。<span class="badge evidence-badge b-p">P</span> Fig.1（第 2 页）</li>
+          <li><strong>② 调度与准入</strong>：调度器结合缓存命中与负载估计做调度/放置，决定请求接纳与 Prefill/Decode 节点分配（第 9–11 页）；预计无法满足 SLO 的请求在此被尽早拒绝（第 13–14 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>③ Prefill 计算</strong>：Prefill 节点并行处理 prompt、产出 KV 缓存（Fig.1，第 2 页）；基于前缀块的复用使共享前缀不必重算（第 5–6 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>④ KV 传输</strong>：KV 缓存经 KV 传输 fabric 从 Prefill 侧转移到 Decode 侧（Fig.1，第 2 页：两阶段通过 KVCache 的传输与复用衔接）；跨节点带宽是这一段的硬约束——论文第 15 页披露 A800 测试平台实例间为 800 Gbps RDMA 互联，不代表其他部署。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（带宽约束的部署含义为编辑推断）</span></li>
+          <li><strong>⑤ Decode 计算</strong>：Decode 节点基于传输到的 KV 做增量解码，逐 token 生成。<span class="badge evidence-badge b-p">P</span> Fig.1（第 2 页）</li>
+          <li><strong>⑥ 流式返回</strong>：输出 Tokens 流式回传客户端；TTFT 对应第 ③→⑥ 段的首 token 到达，TBT 对应其后相邻 token 间隔——第 17 页实验即以 TTFT 30s、TBT 0.1s/token 为 SLO 口径。<span class="badge evidence-badge b-p">P</span></li>
+        </ol>
+        <div class="table-scroll" role="region" aria-label="组件职责表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 B · 数据路径组件与职责</caption>
+            <thead><tr><th scope="col">组件</th><th scope="col">面</th><th scope="col">职责</th><th scope="col">证据</th></tr></thead>
+            <tbody>
+              <tr><td>全局调度器（Conductor）</td><td>控制面</td><td>全局编排、缓存感知调度/放置、准入控制</td><td><span class="badge evidence-badge b-p">P</span> Fig.1（第 2 页）、第 9–11 页</td></tr>
+              <tr><td>早期拒绝策略（调度器内）</td><td>控制面</td><td>SLO 不可达请求尽早拒绝，保护已接纳请求</td><td><span class="badge evidence-badge b-p">P</span> 第 13–14 页</td></tr>
+              <tr><td>Prefill 节点池</td><td>数据面</td><td>prompt 并行处理、产出 KV 缓存</td><td><span class="badge evidence-badge b-p">P</span> Fig.1（第 2 页）</td></tr>
+              <tr><td>KV 传输 fabric / 全局 KVCache 层</td><td>数据面</td><td>跨节点 KV 传输与复用；前缀块映射与一致性</td><td><span class="badge evidence-badge b-p">P</span> Fig.1（第 2 页）、第 5–6 页</td></tr>
+              <tr><td>Decode 节点池</td><td>数据面</td><td>增量解码、token 流式输出</td><td><span class="badge evidence-badge b-p">P</span> Fig.1（第 2 页）</td></tr>
+              <tr><td>trace 驱动仿真（评估面）</td><td>评估</td><td>生产 trace 回放（含 2 倍速）评估调度与缓存策略</td><td><span class="badge evidence-badge b-p">P</span> 第 7–8 页</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tradeoffs" aria-labelledby="tradeoffs-h">
+        <h2 id="tradeoffs-h">架构权衡</h2>
+        <div class="tradeoff-grid">
+          <div class="tradeoff-card">
+            <h3>分离收益 ↔ 同预算机器数</h3>
+            <p>相同 4 机预算下 [3P+1D] 较 vLLM [4M] 吞吐 +20%/40%（第 15 页），说明分离的收益不是「加机器」而是「同预算重排」；但分池 + KV 传输 fabric 要求实例间高带宽网络与双池运维，部署门槛高于整体式。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>缓存命中 ↔ 收益幅度</h3>
+            <p>长上下文 +50%–525% 的前提是 KVCache 命中率约 50%（第 16 页）——命中率是第一敏感项：共享前缀多、复用高的负载吃满机制红利，随机长尾 prompt 的负载收益会缩水（后一半为编辑推断，论文未在核验门控内给出低命中率对照）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>过载容量 ↔ 拒绝率</h3>
+            <p>过载回放中 [10P+10D] 较 [20M] 多处理约 75% 请求（第 17 页），但整体系统以「拒绝部分请求」为代价——[8P+8D]、23k trace@2x 下三种设置分别拒绝 4183/3771/3589 条（第 17 页）。早拒绝换 SLO 达成，业务方必须接受这一语义。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>全局优化 ↔ 控制面复杂度</h3>
+            <p>Conductor 全局编排带来跨池优化空间（缓存亲和、负载均衡、准入一体决策），但控制面自身成为新的关键组件；论文未讨论其高可用与扩展性，云上落地需部署方自行补齐。<span class="badge evidence-badge b-p">P</span>（架构存在性） <span class="badge evidence-badge b-i">I</span>（HA 缺口与建议）</p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>集中 KVCache ↔ 隔离合规</h3>
+            <p>KV 张量跨节点存储与传输、前缀块跨请求复用，意味着注意力中间状态离开了单卡边界：云上部署需配套传输加密、租户隔离与缓存清理策略；跨请求共享缓存的隔离粒度须结合业务合规另行评估。论文未涉及安全与隐私议题。<span class="badge evidence-badge b-i">I</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>SLO 证据 ↔ 口径宽度</h3>
+            <p>核验到的显式 SLO 为 TTFT 30 秒、TBT 0.1 秒/token（第 17 页）——对交互式服务偏宽松；更紧 SLO（亚秒级 TTFT）下 Mooncake 的行为不在核验门控内，不能由本页数字外推。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="cloud-mapping" aria-labelledby="cloud-mapping-h">
+        <h2 id="cloud-mapping-h">云上部署映射</h2>
+        <p class="meta-note" style="margin-top:0">本节为部署映射：<strong>论文硬件事实</strong>标 P，<strong>云产品对应</strong>标 E（仅作厂商中立示例，参数与价格以云厂商文档为准，本站未联网核验），<strong>运维建议/推断</strong>标 I。</p>
+        <div class="table-scroll" role="region" aria-label="云上部署映射表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 C · 论文配置 → 云上对应</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文配置（P）</th><th scope="col">云上映射（E/I，示例非推荐）</th><th scope="col">说明</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>部署形态</td>
+                <td>Prefill 与 Decode 分池 + 全局 KVCache 层 + Conductor 全局调度 <span class="badge evidence-badge b-p">P</span>（Fig.1，第 2 页）</td>
+                <td>两组独立 GPU 实例池（Prefill 池、Decode 池）+ 缓存/网络层 + 独立部署的调度控制面 <span class="badge evidence-badge b-e">E</span></td>
+                <td>两池按各自负载独立伸缩（P 池吃长度分布、D 池吃输出长度与并发） <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>实例间网络</td>
+                <td>KV 传输 fabric 为必经数据通路；论文第 15 页披露 A800-SXM4-80GB 测试平台（每实例 8 GPU）800 Gbps RDMA 互联（不代表其他部署）<span class="badge evidence-badge b-p">P</span></td>
+                <td>同可用区内选高带宽、低延迟实例间网络（如 RDMA 族实例）；带宽按 KV 传输峰值规划 <span class="badge evidence-badge b-e">E</span></td>
+                <td>带宽不足直接压缩分离收益与可行 P:D 比例 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>控制面</td>
+                <td>Conductor 全局调度器（缓存命中 + 负载估计 + 准入控制，第 9–11 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>独立的无状态调度服务 + 高可用部署；其 HA/多活方式论文未讨论，属部署方设计 <span class="badge evidence-badge b-i">I</span></td>
+                <td>控制面是全集群关键路径，故障域大于单实例</td>
+              </tr>
+              <tr>
+                <td>缓存层</td>
+                <td>全局 KVCache 层：前缀块复用、跨请求/跨节点映射与一致性（第 5–6 页）；逐出为可配置项（本站图注）<span class="badge evidence-badge b-p">P</span></td>
+                <td>缓存层容量、逐出与复制策略按命中率目标（论文口径约 50%）调优 <span class="badge evidence-badge b-i">I</span></td>
+                <td>命中率决定收益上限，需作为一等指标监控</td>
+              </tr>
+              <tr>
+                <td>弹性 / 过载</td>
+                <td>过载准入控制 + 早期拒绝（第 9–11、13–14 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>与云上配额、限流、熔断联动：拒绝率阈值对外暴露为降级信号 <span class="badge evidence-badge b-i">I</span></td>
+                <td>被拒请求需有客户端重试/排队/降级路径</td>
+              </tr>
+              <tr>
+                <td>可观测</td>
+                <td>SLO 口径：TTFT 30s、TBT 0.1s/token（第 17 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>指标面：SLO 达成率、拒绝率、KVCache 命中率、TTFT/TBT 分位、P/D 池水位 <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文未给运维指标体系，以上为部署建议</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="cost-slo" aria-labelledby="cost-slo-h">
+        <h2 id="cost-slo-h">成本 / 性能 / SLO</h2>
+        <h3>SLO 与实验口径（论文定义）</h3>
+        <div class="table-scroll" role="region" aria-label="SLO 与实验口径表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 D · 论文各实验的 SLO 与条件口径</caption>
+            <thead><tr><th scope="col">实验</th><th scope="col">SLO / 关键条件</th><th scope="col">系统配置</th><th scope="col" class="num">结果</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>基础对比（第 15 页）</td>
+                <td>门控内未记录显式 SLO 数值；相同 4 机预算、两种实验设定</td>
+                <td>Mooncake [3P+1D] vs vLLM [4M]</td>
+                <td class="num">+20% / +40%</td>
+                <td><span class="badge evidence-badge b-p">P</span> P06</td>
+              </tr>
+              <tr>
+                <td>长上下文（第 16 页）</td>
+                <td>输入 16k–128k token；输出固定 512 token；KVCache 命中率约 50%</td>
+                <td>Mooncake 分离配置（§8.1.2 与 §8.1.1 同配置，第 16 页）</td>
+                <td class="num">+50%–525%</td>
+                <td><span class="badge evidence-badge b-p">P</span> P07</td>
+              </tr>
+              <tr>
+                <td>过载 trace 回放（第 17 页）</td>
+                <td>真实 trace 回放、过载场景；SLO：TTFT 30 秒、TBT 0.1 秒/token</td>
+                <td>Mooncake [10P+10D] vs [20M]</td>
+                <td class="num">约 +75% 请求</td>
+                <td><span class="badge evidence-badge b-p">P</span> P08</td>
+              </tr>
+              <tr>
+                <td>早期拒绝量化（第 17 页）</td>
+                <td>[8P+8D]；约 2.3 万条 trace、2 倍速回放；三种设置</td>
+                <td>Mooncake [8P+8D]</td>
+                <td class="num">拒绝 4183/3771/3589</td>
+                <td><span class="badge evidence-badge b-p">P</span> P09</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>容量规划变量</h3>
+        <ul>
+          <li><strong>KVCache 命中率</strong>：决定复用收益（论文口径 50% 对应 50%–525% 提升，第 16 页）——前缀共享度是第一变量；<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>P:D 池比例</strong>：论文覆盖 [3P+1D]、[8P+8D]、[10P+10D] 等配置，比例是容量与成本的一级旋钮；<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>拒绝率</strong>：过载下有效处理量 = 到达量 − 被拒量，早拒绝阈值直接决定对外语义；<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>跨节点带宽</strong>：KV 传输 fabric 的可行域约束（论文第 15 页披露 A800 平台 800 Gbps RDMA）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+        </ul>
+        <h3>成本模型（参数化，非论文结论）</h3>
+        <p>论文不含任何成本数据（仅吞吐/SLO/拒绝率）。架构师可用下式估算（<span class="badge evidence-badge b-i">I</span>，价格项为参数）：</p>
+        <p class="mono" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;overflow-x:auto">每百万请求成本 ≈ ( p_gpu × (N_P + N_D) + p_net ) ÷ R_adm × 10⁶ …（公式 1）</p>
+        <ul>
+          <li><span class="mono">p_gpu</span>：单卡时租价（按查询日云价代入，<span class="badge evidence-badge b-e">E</span>）；</li>
+          <li><span class="mono">N_P / N_D</span>：Prefill 池 / Decode 池卡数（如 [3P+1D]×每机卡数起步）；</li>
+          <li><span class="mono">p_net</span>：跨节点 KV 传输与缓存层折算成本（命中率低、带宽贵时不可忽略，<span class="badge evidence-badge b-i">I</span>）；</li>
+          <li><span class="mono">R_adm</span>：SLO 内单位时间有效接纳并完成的请求数 ≈ 到达率 × (1 − 拒绝率)（<span class="badge evidence-badge b-i">I</span>）。</li>
+        </ul>
+        <p><strong>敏感项：</strong>命中率上升 → R_adm 上升（第 16 页命中 50% 时 50%–525% 提升 <span class="badge evidence-badge b-p">P</span>）；拒绝率上升 → R_adm 直接折损（第 17 页拒绝计数 <span class="badge evidence-badge b-p">P</span>）；P:D 比例失衡 → 某一池闲置、单位成本上升（编辑推断 <span class="badge evidence-badge b-i">I</span>）。</p>
+      </section>
+
+      <section id="security-ops" aria-labelledby="security-ops-h">
+        <h2 id="security-ops-h">安全与可运维性</h2>
+        <h3>论文披露范围</h3>
+        <ul>
+          <li>核验门控内论文<strong>未涉及安全、隐私、多租户与故障恢复议题</strong>——以下部署要点均为编辑推断。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>无已核验代码仓库：</strong>核验范围内论文未给出可核验的官方仓库声明，证据台账刻意不含任何仓库/实现层声明（commit、release、目录结构等均未验证）。<span class="badge evidence-badge b-r">R</span></li>
+          <li>评估方法论为真实生产 trace 驱动仿真（含 2 倍速回放），非公开可复现的基准套件声明。<span class="badge evidence-badge b-p">P</span>（第 7–8 页）</li>
+        </ul>
+        <h3>论文未披露、部署方必须自行覆盖的项</h3>
+        <div class="table-scroll" role="region" aria-label="安全运维缺口表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 E · 安全/运维清单（论文缺口 + 编辑建议）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文状态</th><th scope="col">部署建议（I）</th></tr></thead>
+            <tbody>
+              <tr><td>KV 传输加密</td><td>未涉及 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>注意力 KV 张量跨节点存储与传输，链路须启用传输加密（实例间 TLS/mTLS 或等效隔离网络）</td></tr>
+              <tr><td>租户隔离 / 跨请求缓存共享</td><td>未涉及；前缀块跨请求复用为机制默认 <span class="badge evidence-badge b-i">I</span></td><td>明确缓存共享的隔离粒度（按租户分域、默认不跨租户复用），并过合规评审——KV 含用户 prompt 衍生状态</td></tr>
+              <tr><td>缓存清理 / 残留</td><td>未涉及 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>请求结束后的 KV 逐出/清零策略成文；逐出为可配置项（本站图注），需审计配置而非假设默认安全</td></tr>
+              <tr><td>配额 / 限流联动</td><td>早拒绝在系统内部，未谈对外语义 <span class="badge evidence-badge b-p">P</span>（第 13–14 页）</td><td>拒绝率阈值与网关配额、限流、熔断联动；对被拒请求返回明确错误码与重试指引</td></tr>
+              <tr><td>监控告警</td><td>未披露指标体系 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>对 SLO 达成率（TTFT 30s / TBT 0.1s 口径可作起点）、拒绝率、命中率、P/D 池水位设告警</td></tr>
+              <tr><td>参数调优</td><td>未给生产 SOP <span class="badge evidence-badge b-i">I（缺口）</span></td><td>拒绝率阈值、P:D 比例、缓存容量按实际负载在线调优；论文结论不能直接迁移到任意生产环境</td></tr>
+              <tr><td>供应链 / 部署来源</td><td>无已核验仓库 <span class="badge evidence-badge b-r">R</span></td><td>勿从任何未经核验的「Mooncake 实现」仓库部署；如自行实现，按本页门控逐条对照论文行为</td></tr>
+              <tr><td>故障恢复</td><td>未披露 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>控制面（Conductor）按有状态关键服务做 HA；P/D 池与缓存层分别演练故障恢复</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>合规提醒：</strong>跨请求前缀复用意味着「请求 A 的前缀 KV 可能服务请求 B」。多租户场景必须显式决定共享边界并留审计记录；涉及个人数据或行业监管数据时，默认关闭跨租户复用。<span class="badge evidence-badge b-i">I</span>
+        </div>
+      </section>
+
+      <section id="fit" aria-labelledby="fit-h">
+        <h2 id="fit-h">适用 / 不适用场景</h2>
+        <h3>适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>长上下文生产负载</strong>：触发条件——输入在 16k–128k token 量级、输出数百 token。理由——论文在输入 16k–128k、输出 512、命中率约 50% 条件下实测吞吐 +50%–525%（第 16 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>高共享前缀 / 高命中率业务</strong>：触发条件——系统提示词、模板化任务头等前缀大量复用（命中率可测且可观）。理由——前缀块 KVCache 复用与跨请求映射是机制核心（第 5–6 页），命中率正是论文收益数字的前提变量。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>过载频繁、重视 SLO 达成率的集群服务</strong>：触发条件——峰值到达量常态性超过容量、业务可接受部分拒绝。理由——过载回放中 [10P+10D] 较 [20M] 多处理约 75% 请求（TTFT 30s / TBT 0.1s/token，第 17 页），早拒绝保住已接纳请求的延迟（第 13–14 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>两阶段负载不均衡、需独立伸缩的平台</strong>：触发条件——prefill 与 decode 峰值错位、扩容需求不同步。理由——P/D 天然分池，可各自伸缩；此为架构形态的直接推论。<span class="badge evidence-badge b-p">P</span>（分池形态，第 2 页） <span class="badge evidence-badge b-i">I</span>（伸缩收益判断）</li>
+        </ol>
+        <h3>不适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>低缓存复用负载</strong>：触发条件——prompt 随机性强、共享前缀少、命中率远低于论文 50% 口径。理由——复用是收益主引擎，命中率坍塌则 50%–525% 的前提不成立（编辑按第 16 页条件反推，论文未测低命中率对照）。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>单机 / 小规模部署</strong>：触发条件——总计个位数 GPU、无实例间高带宽网络。理由——分离架构至少要求 P/D 两组节点 + KV 传输 fabric，小规模下额外网络与控制面成本压倒收益（编辑推断）。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>紧 TTFT SLO 的强交互服务</strong>：触发条件——首 token 延迟要求亚秒级。理由——论文核验到的显式 SLO 为 TTFT 30 秒 / TBT 0.1 秒/token（第 17 页），更紧 SLO 下的行为无核验证据，不能外推。<span class="badge evidence-badge b-p">P</span>（证据边界） <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>硬多租户隔离 / 强合规业务</strong>：触发条件——跨租户数据严格不可见、审计要求高。理由——前缀块跨请求复用与集中 KVCache 与硬隔离天然冲突，需关闭复用或分域部署，收益随之缩水（编辑推断，论文未涉安全议题）。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>带宽受限的存量集群</strong>：触发条件——实例间仅普通以太网、无扩带宽计划。理由——KV 传输 fabric 是必经数据通路，带宽不足直接限制可行配置（论文第 15 页披露 A800 测试平台实例间 800 Gbps RDMA 互联）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+        </ol>
+      </section>
+
+      <section id="experiments" aria-labelledby="experiments-h">
+        <h2 id="experiments-h">实验与指标</h2>
+        <h3>复现实验的完整条件（论文核验门控内）</h3>
+        <div class="table-scroll" role="region" aria-label="实验配置表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 F · 实验条件口径</caption>
+            <thead><tr><th scope="col">条件维度</th><th scope="col">论文口径</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr><td>负载数据</td><td>来自线上服务的真实生产 trace：请求含长前缀、负载随时间波动</td><td><span class="badge evidence-badge b-p">P</span> 第 7–8 页（P03）</td></tr>
+              <tr><td>评估方式</td><td>trace 驱动仿真，在可控配置下比较不同调度与缓存策略的吞吐与延迟；含 2 倍速率回放</td><td><span class="badge evidence-badge b-p">P</span> 第 7–8 页（P03）、第 17 页（P09）</td></tr>
+              <tr><td>SLO 设定</td><td>TTFT 30 秒、TBT 0.1 秒/token（过载回放实验）</td><td><span class="badge evidence-badge b-p">P</span> 第 17 页（P08）</td></tr>
+              <tr><td>长上下文设置</td><td>输入 prompt 16k–128k token；输出固定 512 token；KVCache 命中率约 50%</td><td><span class="badge evidence-badge b-p">P</span> 第 16 页（P07）</td></tr>
+              <tr><td>系统配置口径</td><td>[3P+1D] vs [4M]；[10P+10D] vs [20M]；[8P+8D]（记号见 <a href="#overview">术语表</a>）</td><td><span class="badge evidence-badge b-p">P</span> 第 15、17 页</td></tr>
+              <tr><td>模型 / 精度 / 硬件明细</td><td>第 15 页披露：LLaMA2-70B 同质 dummy 模型；A800-SXM4-80GB 节点、每实例 8 GPU、共 4 台机器；实例间 800 Gbps RDMA 互联（不代表其他部署）。精度（dtype）论文未明示，本页不臆测</td><td><span class="badge evidence-badge b-p">P</span> 第 15 页（P06） <span class="badge evidence-badge b-i">I</span>（精度不臆测）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>关键结果（均带条件）</h3>
+        <div class="table-scroll" role="region" aria-label="关键结果表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 G · 评测关键数字 → 完整条件 → 定位</caption>
+            <thead><tr><th scope="col">结论（指标）</th><th scope="col" class="num">数字</th><th scope="col">完整条件</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>分离配置基础吞吐提升</td><td class="num">约 20% / 40%</td>
+                <td>Mooncake [3P+1D] vs vLLM [4M]；相同 4 机/四实例预算；两种实验设定；第 15 页披露 LLaMA2-70B 同质 dummy 模型、A800-SXM4-80GB（每实例 8 GPU）、800 Gbps RDMA</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 15 页（P06）</td>
+              </tr>
+              <tr>
+                <td>长上下文吞吐提升</td><td class="num">50%–525%</td>
+                <td>输入 16k–128k token、输出 512 token、KVCache 命中率约 50%；第 16 页 §8.1.2 沿用 §8.1.1 相同配置</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 16 页（P07）</td>
+              </tr>
+              <tr>
+                <td>过载请求处理量提升</td><td class="num">约 75%</td>
+                <td>[10P+10D] vs [20M]；真实生产 trace 回放、过载场景；SLO TTFT 30s、TBT 0.1s/token</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 17 页（P08）</td>
+              </tr>
+              <tr>
+                <td>早期拒绝被拒请求数</td><td class="num">4183 / 3771 / 3589</td>
+                <td>[8P+8D]；约 2.3 万条请求 trace、2 倍速回放；三种设置分别对应三个数值</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 17 页（P09）</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>公平性限制与已知差异</h3>
+        <ul>
+          <li>全部数字为对门控页的<strong>转述</strong>；精确引用请回查 PDF 原文（摘要文件同此声明）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>页码口径：</strong>被拒请求数（4183/3771/3589）在证据台账与摘要文件中均定位于第 17 页（P09）；第 13–14 页门控仅覆盖早期拒绝机制描述，不含该计数。<span class="badge evidence-badge b-p">P</span></li>
+          <li>论文第 15 页已披露实验模型与测试平台：LLaMA2-70B 同质 dummy 模型、A800-SXM4-80GB 节点（每实例 8 GPU、共 4 台机器）、实例间 800 Gbps RDMA 互联；第 16 页 §8.1.2 沿用 §8.1.1 相同配置。精度（dtype）、trace 起止时间等细节门控页未明示，按「论文未明示」如实标注，本页不臆测。<span class="badge evidence-badge b-p">P</span>（第 15–16 页）</li>
+          <li>数字不可与 DistServe、Sarathi-Serve 等其他论文横比（硬件、负载、SLO 口径均不同）。<span class="badge evidence-badge b-i">I</span></li>
+        </ul>
+        <h3>核对 / 复现路径</h3>
+        <p>由于核验范围内<strong>不存在已核验的官方代码仓库</strong>（<span class="badge evidence-badge b-r">R</span> 缺位），无法给出仓库级复现步骤；建议按 PDF 门控逐条核对：<span class="badge evidence-badge b-i">I（顺序为编辑建议）</span></p>
+        <ol>
+          <li>以 Fig.1（第 2 页）核对整体架构与组件边界；</li>
+          <li>以第 7–8 页核对 trace 定义与 2 倍速回放口径；</li>
+          <li>以第 9–11 页核对 CPP/调度与准入控制描述（CPP 即 chunked pipeline parallelism，见第 9 页）；</li>
+          <li>以第 13–14 页核对早拒绝机制，再以第 15–17 页核对全部数字及其条件。</li>
+        </ol>
+      </section>
+
+      <section id="links" aria-labelledby="links-h">
+        <h2 id="links-h">论文 / 链接 / 延伸阅读</h2>
+        <div class="table-scroll" role="region" aria-label="链接表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 H · 来源与链接（外链均为 HTTPS + rel="noopener noreferrer"，域名明示；本页无任何代码仓库链接）</caption>
+            <thead><tr><th scope="col">资源</th><th scope="col">级别</th><th scope="col">链接 / 文件</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>论文：《Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving》（FAST '25）</td>
+                <td><span class="badge evidence-badge b-p">P</span></td>
+                <td>题名与出处取自证据台账；本地 <span class="mono">03_Mooncake_2407.00079.pdf</span></td>
+              </tr>
+              <tr>
+                <td>arXiv 页面（本站编辑补充）</td>
+                <td><span class="badge evidence-badge b-i">I</span></td>
+                <td><a href="https://arxiv.org/abs/2407.00079" rel="noopener noreferrer">arxiv.org/abs/2407.00079</a>（URL 为编辑补充，2026-09-14 未联网复核可用性；内容以本地 PDF 与台账门控为准）</td>
+              </tr>
+              <tr>
+                <td>站内对照阅读</td>
+                <td>站内</td>
+                <td><a href="01-distserve.html">DistServe（01，disaggregated 路线）</a> · <a href="02-sarathi-serve.html">Sarathi-Serve（02，单实例 chunked-prefill 路线）</a></td>
+              </tr>
+              <tr>
+                <td>代码仓库</td>
+                <td><span class="badge evidence-badge b-r">R</span>（缺位）</td>
+                <td><strong>无</strong> —— 核验范围内论文未提供可核验的官方仓库声明（台账 repository_claims＝「无」）；本页刻意不提供任何仓库链接，凡声称「Mooncake 官方实现」的第三方仓库均未经本站核验</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">论文引用的关联工作（vLLM 及其他）仅按门控页转述，未核验到官方仓库的恕不提供链接。下一篇（04）页面如尚未生成，请从<a href="../index.html">首页目录</a>进入。</p>
+      </section>
+
+      <section id="decision-checklist" aria-labelledby="decision-checklist-h">
+        <h2 id="decision-checklist-h">给架构师的决策清单</h2>
+        <form class="decision-checklist" aria-label="Mooncake 采用决策清单（静态勾选，不提交数据）">
+          <fieldset>
+            <legend>需求与兼容</legend>
+            <label><input type="checkbox" name="d1"> 工作负载确有长上下文（万级–128k token 输入）或高共享前缀特征，且 KVCache 命中率可测量、预期可观（论文口径 50%）</label>
+            <label><input type="checkbox" name="d2"> 部署规模达到多节点分池量级，实例间具备高带宽低延迟网络可供 KV 传输 fabric 使用（论文测试平台为 800 Gbps RDMA，第 15 页）</label>
+            <label><input type="checkbox" name="d3"> 业务可接受「过载时部分请求被早拒绝」的语义，并已设计对外降级/重试/排队策略</label>
+          </fieldset>
+          <fieldset>
+            <legend>PoC 与容量</legend>
+            <label><input type="checkbox" name="d4"> 用真实生产 trace（含峰值段）回放压测，包含 2 倍速档位，记录 TTFT/TBT 分位与拒绝率曲线</label>
+            <label><input type="checkbox" name="d5"> 扫描 P:D 池比例（论文覆盖 [3P+1D] 至 [10P+10D]），记录吞吐—拒绝率—成本三线</label>
+            <label><input type="checkbox" name="d6"> 实测命中率并对照论文 50% 口径做敏感性（±若干档），确认收益区间</label>
+          </fieldset>
+          <fieldset>
+            <legend>SLO 与成本</legend>
+            <label><input type="checkbox" name="d7"> 确认业务 SLO 与论文口径（TTFT 30s、TBT 0.1s/token）的相对位置：显著更紧的 SLO 需另行验证，不得引用本页数字外推</label>
+            <label><input type="checkbox" name="d8"> 用公式 1 按查询日云价核算每百万请求成本，并对命中率与拒绝率各做 ±1 档敏感性</label>
+          </fieldset>
+          <fieldset>
+            <legend>安全与运维</legend>
+            <label><input type="checkbox" name="d9"> KV 跨节点传输已启用加密；跨请求前缀共享的隔离粒度（按租户分域）已过合规评审</label>
+            <label><input type="checkbox" name="d10"> 缓存清理/逐出策略已成文并纳入审计；对 SLO 达成率、拒绝率、命中率、P/D 池水位建立告警</label>
+            <label><input type="checkbox" name="d11"> 控制面（全局调度器）按关键服务做 HA 与容量规划；拒绝率阈值与网关配额/限流联动</label>
+          </fieldset>
+          <fieldset>
+            <legend>退出策略</legend>
+            <label><input type="checkbox" name="d12"> 保留回退整体式部署（如 vLLM 单池）的压测基线与切换开关，确保迁移可逆</label>
+            <label><input type="checkbox" name="d13"> 早拒绝参数（阈值、准入速率）与镜像版本分开变更、可独立回滚</label>
+          </fieldset>
+        </form>
+      </section>
+
+      <section id="evidence" aria-labelledby="evidence-h">
+        <h2 id="evidence-h">证据台账</h2>
+        <p class="meta-note">分级：P = 论文 PDF 原文证据（已核验）；R = 论文给出的官方仓库声明（<strong>本页为 0 条</strong>——台账刻意不含任何仓库声明）；E = 外部/云文档（仅部署映射，未联网核验）；I = 编辑推断（显式标注不确定性）。编号与 <span class="mono">sources/mooncake.evidence.json</span>（P01–P09、I01–I04）对应，E-01 为本站补充条目；定位均为<strong>真实 PDF 页码/图号</strong>。P09 被拒计数在台账与摘要文件中均为第 17 页；第 13–14 页门控仅覆盖早期拒绝机制。最后核验日期：2026-09-14。</p>
+        <div class="table-scroll" role="region" aria-label="证据台账表，可横向滚动" tabindex="0">
+          <table>
+            <caption>表 I · 关键结论 → 级别 → 定位（真实 PDF 页码+图号）→ 核验状态（14 条 = P 9 · E 1 · I 4；R 0）</caption>
+            <thead><tr><th scope="col">编号</th><th scope="col">关键结论（摘要）</th><th scope="col">级别</th><th scope="col">定位（PDF 页码 + 图号）</th><th scope="col">核验状态</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">P01</td><td>整体架构：以 KVCache 为中心的 P/D 分离集群，Conductor 全局调度器，节点池化并与全局 KVCache 层协同</td><td><span class="badge evidence-badge b-p">P</span></td><td>Fig.1，第 2 页</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">P02</td><td>以 KVCache 为中心的调度与并发控制：前缀块复用、跨请求/跨节点缓存块映射与一致性；摘要另记负载统计（长度不均、共享前缀多、长输入短输出）</td><td><span class="badge evidence-badge b-p">P</span></td><td>图 3–图 4，第 5–6 页</td><td>已核验（PDF 原页；两来源侧重不同，页面并列呈现）</td></tr>
+              <tr><td class="mono">P03</td><td>评估用真实生产 trace：长前缀、负载随时间波动；trace 驱动仿真含 2 倍速回放</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7–8 页</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">P04</td><td>CPP 与 KVCache 感知调度：缓存命中 + 负载估计的调度/放置，请求接纳与 P/D 节点分配；过载准入控制（CPP = chunked pipeline parallelism，第 9 页）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 9–11 页</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">P05</td><td>早期拒绝：估计无法满足 SLO 时尽早拒绝，避免占用 P/D 资源，保障整体 SLO 达成率</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 13–14 页</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">P06</td><td>[3P+1D] vs vLLM [4M]：吞吐 +20%/+40%（相同四实例/4 机对比、两种实验设定；第 15 页披露 LLaMA2-70B 同质 dummy 模型、A800-SXM4-80GB 每实例 8 GPU、800 Gbps RDMA）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 15 页</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">P07</td><td>长上下文：吞吐 +50%–525%；输入 16k–128k、输出 512、命中率约 50%</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 16 页</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">P08</td><td>[10P+10D] vs [20M]：多处理约 75% 请求；SLO TTFT 30s、TBT 0.1s/token</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 17 页</td><td>已核验（PDF 原页）</td></tr>
+              <tr><td class="mono">P09</td><td>[8P+8D]、约 2.3 万条 trace、2 倍速回放：被拒请求数 4183/3771/3589（三种设置）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 17 页</td><td>已核验（PDF 原页；摘要文件同记 p17）</td></tr>
+              <tr><td class="mono">E-01</td><td>云上映射：P/D 双 GPU 实例池 + 缓存/网络层 + 调度控制面，两池独立伸缩（示例非推荐）</td><td><span class="badge evidence-badge b-e">E</span></td><td>论文侧依据见 P01/P08；云产品对应为各厂商公开实例目录（本次未联网核验）</td><td>部分核验（论文事实为 PDF 原页；云映射未联网核验）</td></tr>
+              <tr><td class="mono">I01</td><td>云映射推断：分池独立伸缩；不确定性——实例间带宽/拓扑/AZ 约束、控制面 HA 论文未讨论</td><td><span class="badge evidence-badge b-i">I</span></td><td>—（编辑推断）</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">I02</td><td>成本推断：复用 + 早拒绝可望降低单位请求成本；论文无成本模型，无法由论文数据直接推出</td><td><span class="badge evidence-badge b-i">I</span></td><td>—（编辑推断）</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">I03</td><td>安全推断：KV 跨节点存储/传输需传输加密、租户隔离与缓存清理；跨请求共享粒度需合规评估；论文未涉及安全隐私</td><td><span class="badge evidence-badge b-i">I</span></td><td>—（编辑推断）</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">I04</td><td>运维推断：早拒绝与全局调度需与配额、限流、监控告警、容量规划协同；拒绝率阈值与 P:D 比例需在线调优；运维复杂度高于单体部署</td><td><span class="badge evidence-badge b-i">I</span></td><td>—（编辑推断）</td><td>编辑标注完成</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">R 级说明：核验范围内论文未给出官方代码仓库声明，台账不含任何仓库/实现层声明（代码结构、commit、release 等均未验证）；本页因此不提供任何仓库链接。摘要文件 <span class="mono">sources/mooncake.summary.json</span> 的 source_pdf 同步记为 <span class="mono">03_Mooncake_2407.00079.pdf</span>。</p>
+      </section>
+
+      <nav class="pager" aria-label="上一篇下一篇">
+        <a href="02-sarathi-serve.html" rel="prev">← 上一篇：Sarathi-Serve</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="../index.html">返回分类：推理服务与资源调度</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="04-vattention.html" rel="next">下一篇：论文 04 →</a>
+      </nav>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <p>来源声明：本页全部性能数字与机制描述均取自论文《Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving》（FAST '25）已核验门控页（Fig.1 p2；Figs.3–4 pp5–6；trace pp7–8；CPP/调度 pp9–11；早期拒绝 pp13–14；实验 p15–p17），并通过 <span class="mono">sources/mooncake.summary.json</span> 与 <span class="mono">sources/mooncake.evidence.json</span> 逐条对应；编辑推断与部署建议已用 I 标注，本页不含任何代码仓库声明或链接。许可提醒：论文内容版权归原作者与出版方所有，引用以论文原文为准。本地生成：2026-09-14 · 输入 PDF <span class="mono">03_Mooncake_2407.00079.pdf</span> · 数据路径图 <span class="mono">assets/diagrams/mooncake-data-path.svg</span>。</p>
+  </footer>
+  <script src="../assets/js/site.js" defer></script>
+</body>
+</html>

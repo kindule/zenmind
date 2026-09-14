@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1630" width="1000" height="1630" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="fi-dp-title fi-dp-desc" font-family="'Noto Sans SC','PingFang SC','Hiragino Sans GB','Microsoft YaHei','WenQuanYi Zen Hei',system-ui,sans-serif">
+  <title id="fi-dp-title">FlashInfer 推理注意力数据路径图（request/context 到 logits/tokens）</title>
+  <desc id="fi-dp-desc">自上而下十个阶段：1 请求/上下文：prompt 与已生成 token 构成请求，各请求查询打包为 ragged 无填充张量（P，p.4 §3.1.1）。2 服务运行时：SGLang、vLLM、MLC-Engine 已集成，通过 AttentionWrapper(变体规格, 任务信息, workspace) 使用，运行时输入为序列长度信息（P，p.1-2、p.7-8 §3.4）。3 Attention State 选择：规范 kernel 输出为 output 与 LSE，配可结合/交换的组合算子，据此选择 split-KV 分块与共享前缀分解（P，p.3 §2.2）。4 BSR/可组合 KV-Cache：非连续页表布局统一为块稀疏行 BSR 矩阵，可组合格式只计算 index/indptr、不搬运 KV 数据（P，p.4-5 §3.1 加 Fig.2/Fig.3）。5 Attention 模板与变体仿函数：FA2（sm75-89）与 FA3（Hopper sm90a）CUDA/CUTLASS 模板，Query/Key/Value/Output/LogitsTransform 与 LogitsMask 仿函数可融合 RoPE、归一化、掩码（P，p.5-6 §3.2 加 Fig.5）。6 JIT 编译与缓存：按变体规格生成优化 kernel，经 PyTorch JIT 编译并注册为自定义算子，init 时编译、缓存复用（P，p.6 §3.2.3、p.7-8 §3.4）。7 负载均衡 plan：CPU 每步执行，按代价模型分派工作队列，生成约简映射与 workspace 偏移，计划跨层复用，不被 CUDAGraph 捕获（P，p.7 Alg.1、§3.3.1/§3.4）。8 CUDAGraph 兼容静态缓冲：workspace 按最大容量分配、段偏移固定，plan 信息经 cudaMemcpyAsync 从锁页主机缓冲异步下发，短请求可直写输出（P，p.7 §3.3.1、p.19 App.D）。9 GPU attention kernel/TMA：attention 与 split-KV 约简合并为单一持久 kernel，grid 编译期固定；分散 KV 块经 128B LDGSTS 汇聚至共享内存，TMA 仅用于 Hopper 连续 KV-Cache（P，p.5 §3.2.1、p.19 App.D）。10 logits/tokens：规范输出 Attention State 写回 ragged 输出张量，交回运行时采样（P，p.3 §2.2；端到端闭环为编辑推断 I）。实线箭头为数据流（请求、Q/KV、部分输出、logits），虚线箭头为控制流（规格、JIT 产物、调度、图捕获）；P 表示论文事实并附页码/章节，I 表示编辑推断；本图不含性能数字。来源：arXiv:2501.01005v2（MLSys 2025）。</desc>
+
+  <defs>
+    <marker id="fi-dp-arr-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#1e40af"/>
+    </marker>
+    <marker id="fi-dp-arr-ctrl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="fi-dp-arr-kv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6d28d9"/>
+    </marker>
+  </defs>
+
+  <!-- ======== 可见标题区 ======== -->
+  <text x="60" y="38" font-size="18" font-weight="700" fill="#12274a">FlashInfer 注意力数据路径图</text>
+  <text x="60" y="60" font-size="12" fill="#334155">自上而下阅读；实线箭头=数据流，虚线箭头=控制流；图例与来源见底部</text>
+  <text x="940" y="38" text-anchor="end" font-size="12" fill="#334155">无性能数字 · P=论文事实 · I=编辑推断</text>
+
+  <!-- ======== ① 请求/上下文 ======== -->
+  <rect x="60" y="84" width="760" height="104" rx="10" fill="#e8effc" stroke="#1e40af" stroke-width="2"/>
+  <circle cx="60" cy="136" r="16" fill="#ffffff" stroke="#1e40af" stroke-width="2"/>
+  <text x="60" y="141" text-anchor="middle" font-size="14" font-weight="700" fill="#14335c">1</text>
+  <text x="88" y="112" font-size="17" font-weight="700" fill="#14335c">请求/上下文 · request/context</text>
+  <text x="88" y="136" font-size="13" fill="#263449">prompt 与已生成 token 构成请求；各请求的查询打包为 ragged</text>
+  <text x="88" y="155" font-size="13" fill="#263449">（不规则、无填充）张量，注意力输出采用同一 ragged 布局</text>
+  <rect x="88" y="164" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="176" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="176" font-size="11.5" fill="#475569">p.4 §3.1.1（ragged 查询/输出张量）</text>
+
+  <line x1="440" y1="190" x2="440" y2="221" stroke="#1e40af" stroke-width="2.2" marker-end="url(#fi-dp-arr-data)"/>
+  <text x="452" y="211" font-size="11" fill="#334155">prompt / 新 token（数据）</text>
+
+  <!-- ======== ② 服务运行时 ======== -->
+  <rect x="60" y="224" width="760" height="104" rx="10" fill="#e8effc" stroke="#1e40af" stroke-width="2"/>
+  <circle cx="60" cy="276" r="16" fill="#ffffff" stroke="#1e40af" stroke-width="2"/>
+  <text x="60" y="281" text-anchor="middle" font-size="14" font-weight="700" fill="#14335c">2</text>
+  <text x="88" y="252" font-size="17" font-weight="700" fill="#14335c">服务运行时 · serving runtime</text>
+  <text x="88" y="276" font-size="13" fill="#263449">SGLang / vLLM / MLC-Engine 已集成 FlashInfer；按 Listing 1 构造</text>
+  <text x="88" y="295" font-size="13" fill="#263449"><tspan font-family="ui-monospace,Consolas,monospace">AttentionWrapper(attn_spec, task_info, workspace)</tspan>；运行时输入=序列长度信息</text>
+  <rect x="88" y="304" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="316" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="316" font-size="11.5" fill="#475569">p.1-2 Abstract/§1 + p.7-8 §3.4 Listing 1 + p.2 Fig.1</text>
+
+  <line x1="440" y1="330" x2="440" y2="361" stroke="#475569" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#fi-dp-arr-ctrl)"/>
+  <text x="452" y="351" font-size="11" fill="#334155">任务信息 / 序列长度信息（控制）</text>
+
+  <!-- ======== ③ Attention State 选择 ======== -->
+  <rect x="60" y="364" width="760" height="104" rx="10" fill="#e8effc" stroke="#1e40af" stroke-width="2"/>
+  <circle cx="60" cy="416" r="16" fill="#ffffff" stroke="#1e40af" stroke-width="2"/>
+  <text x="60" y="421" text-anchor="middle" font-size="14" font-weight="700" fill="#14335c">3</text>
+  <text x="88" y="392" font-size="17" font-weight="700" fill="#14335c">Attention State 选择 · attention-state selection</text>
+  <text x="88" y="416" font-size="13" fill="#263449">规范 kernel 输出 =（output, LSE），配可结合/交换的组合算子</text>
+  <text x="88" y="435" font-size="13" fill="#263449">据此选择 split-KV 分块求积与共享前缀分解的组成方式</text>
+  <rect x="88" y="444" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="456" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="456" font-size="11.5" fill="#475569">p.3 §2.2</text>
+
+  <line x1="440" y1="470" x2="440" y2="501" stroke="#475569" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#fi-dp-arr-ctrl)"/>
+  <text x="452" y="491" font-size="11" fill="#334155">状态组合与 KV 格式选择（控制）</text>
+
+  <!-- ======== ④ BSR / 可组合 KV-Cache ======== -->
+  <rect x="60" y="504" width="760" height="104" rx="10" fill="#ede7fa" stroke="#6d28d9" stroke-width="2"/>
+  <circle cx="60" cy="556" r="16" fill="#ffffff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="60" y="561" text-anchor="middle" font-size="14" font-weight="700" fill="#3f2074">4</text>
+  <text x="88" y="532" font-size="17" font-weight="700" fill="#3f2074">BSR/可组合 KV-Cache · BSR/composable KV-cache</text>
+  <text x="88" y="556" font-size="13" fill="#263449">PageAttention 页表、基数树等非连续 KV 布局统一为块稀疏行（BSR）矩阵</text>
+  <text x="88" y="575" font-size="13" fill="#263449">可组合格式拆成多个块稀疏子矩阵：只计算 index/indptr，不搬运 KV 数据</text>
+  <rect x="88" y="584" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="596" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="596" font-size="11.5" fill="#475569">p.4-5 §3.1.1/§3.1.2 + Fig.2/Fig.3</text>
+
+  <!-- KV 数据旁路：④ 直达 ⑨（数据，不经过控制面） -->
+  <path d="M 820 556 H 868 V 1256 H 828" fill="none" stroke="#6d28d9" stroke-width="2.2" marker-end="url(#fi-dp-arr-kv)"/>
+  <text transform="rotate(90 892 906)" x="892" y="906" text-anchor="middle" font-size="11" fill="#6d28d9">BSR KV 块读取 → attention kernel（数据）</text>
+
+  <line x1="440" y1="610" x2="440" y2="641" stroke="#475569" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#fi-dp-arr-ctrl)"/>
+  <text x="452" y="631" font-size="11" fill="#334155">KV-Cache 布局规格 = 编译时输入（控制，Fig.1）</text>
+
+  <!-- ======== ⑤ Attention 模板 + 变体仿函数 ======== -->
+  <rect x="60" y="644" width="760" height="104" rx="10" fill="#e8effc" stroke="#1e40af" stroke-width="2"/>
+  <circle cx="60" cy="696" r="16" fill="#ffffff" stroke="#1e40af" stroke-width="2"/>
+  <text x="60" y="701" text-anchor="middle" font-size="14" font-weight="700" fill="#14335c">5</text>
+  <text x="88" y="672" font-size="17" font-weight="700" fill="#14335c">Attention 模板+变体仿函数 · attention template + variant functors</text>
+  <text x="88" y="696" font-size="13" fill="#263449">CUDA/CUTLASS 模板：FA2（sm75-89）与 FA3（Hopper sm90a）；query tile=1 走 CUDA Cores</text>
+  <text x="88" y="715" font-size="13" fill="#263449">变体仿函数 Query/Key/Value/Output/LogitsTransform 与 LogitsMask：可融合 RoPE、归一化、掩码等</text>
+  <rect x="716" y="654" width="88" height="20" rx="10" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+  <text x="760" y="668" text-anchor="middle" font-size="11" fill="#14335c">编译时输入</text>
+  <rect x="88" y="724" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="736" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="736" font-size="11.5" fill="#475569">p.5-6 §3.2-§3.2.3 + Fig.5</text>
+
+  <line x1="440" y1="750" x2="440" y2="781" stroke="#475569" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#fi-dp-arr-ctrl)"/>
+  <text x="452" y="771" font-size="11" fill="#334155">变体规格 + 任务信息 = 编译时输入（控制，Fig.1）</text>
+
+  <!-- ======== ⑥ JIT 编译与缓存 ======== -->
+  <rect x="60" y="784" width="760" height="104" rx="10" fill="#e8effc" stroke="#1e40af" stroke-width="2"/>
+  <circle cx="60" cy="836" r="16" fill="#ffffff" stroke="#1e40af" stroke-width="2"/>
+  <text x="60" y="841" text-anchor="middle" font-size="14" font-weight="700" fill="#14335c">6</text>
+  <text x="88" y="812" font-size="17" font-weight="700" fill="#14335c">JIT 编译与缓存 · JIT compile/cache</text>
+  <text x="88" y="836" font-size="13" fill="#263449">JIT 编译器按变体规格生成优化 kernel；经 PyTorch JIT 编译并注册为自定义算子</text>
+  <text x="88" y="855" font-size="13" fill="#263449">init 时编译、结果缓存复用；DLPack 接口供其他运行时框架调用</text>
+  <rect x="700" y="794" width="104" height="20" rx="10" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+  <text x="752" y="808" text-anchor="middle" font-size="11" fill="#14335c">编译时 · init</text>
+  <rect x="88" y="864" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="876" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="876" font-size="11.5" fill="#475569">p.6 §3.2.3 + p.7-8 §3.4</text>
+
+  <line x1="440" y1="890" x2="440" y2="921" stroke="#475569" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#fi-dp-arr-ctrl)"/>
+  <text x="452" y="911" font-size="11" fill="#334155">编译缓存完成后进入每步运行时（控制）</text>
+
+  <!-- ======== ⑦ 负载均衡 plan ======== -->
+  <rect x="60" y="924" width="760" height="104" rx="10" fill="#e8effc" stroke="#1e40af" stroke-width="2"/>
+  <circle cx="60" cy="976" r="16" fill="#ffffff" stroke="#1e40af" stroke-width="2"/>
+  <text x="60" y="981" text-anchor="middle" font-size="14" font-weight="700" fill="#14335c">7</text>
+  <text x="88" y="952" font-size="17" font-weight="700" fill="#14335c">负载均衡 plan · load-balanced plan</text>
+  <text x="88" y="976" font-size="13" fill="#263449">CPU 每步执行 <tspan font-family="ui-monospace,Consolas,monospace">plan()</tspan>：按 <tspan font-family="ui-monospace,Consolas,monospace">cost=α·l_q+β·l_kv</tspan> 均衡分派工作队列</text>
+  <text x="88" y="995" font-size="13" fill="#263449">生成约简映射与 workspace 偏移；计划跨层复用，不被 CUDAGraph 捕获（CPU 侧）</text>
+  <rect x="674" y="934" width="130" height="20" rx="10" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+  <text x="739" y="948" text-anchor="middle" font-size="11" fill="#14335c">运行时 · CPU 每步</text>
+  <rect x="88" y="1004" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="1016" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="1016" font-size="11.5" fill="#475569">p.7 Alg.1 + §3.3.1/§3.4</text>
+
+  <line x1="440" y1="1030" x2="440" y2="1061" stroke="#475569" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#fi-dp-arr-ctrl)"/>
+  <text x="452" y="1051" font-size="11" fill="#334155">plan 信息 <tspan font-family="ui-monospace,Consolas,monospace">cudaMemcpyAsync</tspan> 下发（控制）</text>
+
+  <!-- ======== ⑧ CUDAGraph 兼容静态缓冲 ======== -->
+  <rect x="60" y="1064" width="760" height="104" rx="10" fill="#ede7fa" stroke="#6d28d9" stroke-width="2"/>
+  <circle cx="60" cy="1116" r="16" fill="#ffffff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="60" y="1121" text-anchor="middle" font-size="14" font-weight="700" fill="#3f2074">8</text>
+  <text x="88" y="1092" font-size="17" font-weight="700" fill="#3f2074">CUDAGraph 兼容静态缓冲 · CUDA Graph-compatible static buffers</text>
+  <text x="88" y="1116" font-size="13" fill="#263449">用户 workspace 按最大容量分配、段偏移固定 → kernel 指针各步保持不变</text>
+  <text x="88" y="1135" font-size="13" fill="#263449">plan 信息由锁页（pinned）主机缓冲异步下发；短请求可直写输出、旁路 workspace</text>
+  <rect x="674" y="1074" width="130" height="20" rx="10" fill="#ffffff" stroke="#6d28d9" stroke-width="1"/>
+  <text x="739" y="1088" text-anchor="middle" font-size="11" fill="#3f2074">GPU 显存 · 地址恒定</text>
+  <rect x="88" y="1144" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="1156" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="1156" font-size="11.5" fill="#475569">p.7 §3.3.1 + p.19 App.D.1-D.3</text>
+
+  <line x1="440" y1="1170" x2="440" y2="1201" stroke="#1e40af" stroke-width="2.2" marker-end="url(#fi-dp-arr-data)"/>
+  <text x="452" y="1191" font-size="11" fill="#334155">workspace / 输出缓冲读写（数据）</text>
+
+  <!-- ======== ⑨ GPU attention kernel / TMA ======== -->
+  <rect x="60" y="1204" width="760" height="104" rx="10" fill="#d9f2f6" stroke="#0e7490" stroke-width="2"/>
+  <circle cx="60" cy="1256" r="16" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="60" y="1261" text-anchor="middle" font-size="14" font-weight="700" fill="#0c4a5c">9</text>
+  <text x="88" y="1232" font-size="17" font-weight="700" fill="#0c4a5c">GPU attention kernel/TMA</text>
+  <text x="88" y="1256" font-size="13" fill="#263449">attention 与 split-KV 约简合并为单一持久 kernel，grid 规模编译期固定</text>
+  <text x="88" y="1275" font-size="13" fill="#263449">分散 KV 块经 128B LDGSTS 异步拷贝汇聚至连续共享内存；TMA 仅用于 Hopper 连续 KV-Cache</text>
+  <rect x="694" y="1214" width="110" height="20" rx="10" fill="#ffffff" stroke="#0e7490" stroke-width="1"/>
+  <text x="749" y="1228" text-anchor="middle" font-size="11" fill="#0c4a5c">GPU · 每步执行</text>
+  <rect x="88" y="1284" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="1296" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="1296" font-size="11.5" fill="#475569">p.5 §3.2.1 + p.19 App.D</text>
+
+  <line x1="440" y1="1310" x2="440" y2="1341" stroke="#1e40af" stroke-width="2.2" marker-end="url(#fi-dp-arr-data)"/>
+  <text x="452" y="1331" font-size="11" fill="#334155">（output, LSE）→ logits（数据）</text>
+
+  <!-- ======== ⑩ logits / tokens ======== -->
+  <rect x="60" y="1344" width="760" height="104" rx="10" fill="#d9f2f6" stroke="#0e7490" stroke-width="2"/>
+  <circle cx="60" cy="1396" r="16" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="60" y="1401" text-anchor="middle" font-size="14" font-weight="700" fill="#0c4a5c">10</text>
+  <text x="88" y="1372" font-size="17" font-weight="700" fill="#0c4a5c">logits/tokens</text>
+  <text x="88" y="1396" font-size="13" fill="#263449">规范输出 Attention State =（output, LSE）写回 ragged 输出张量</text>
+  <text x="88" y="1415" font-size="13" fill="#263449">logits/token 交回服务运行时继续采样生成 —— 该端到端闭环为编辑装配</text>
+  <rect x="88" y="1424" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="99" y="1436" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="118" y="1436" font-size="11.5" fill="#475569">p.3 §2.2</text>
+  <rect x="206" y="1424" width="22" height="16" rx="4" fill="#fef3c7" stroke="#b45309" stroke-width="1"/>
+  <text x="217" y="1436" text-anchor="middle" font-size="11" font-weight="700" fill="#7c2d12">I</text>
+  <text x="236" y="1436" font-size="11.5" fill="#475569">端到端流程装配（编辑推断，不作论文结论）</text>
+
+  <!-- ======== 图例 ======== -->
+  <rect x="60" y="1470" width="880" height="96" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <line x1="76" y1="1490" x2="122" y2="1490" stroke="#1e40af" stroke-width="2.5" marker-end="url(#fi-dp-arr-data)"/>
+  <text x="134" y="1494" font-size="12" fill="#1f2937">数据流（张量）：请求、Q/KV、部分输出、logits</text>
+  <line x1="500" y1="1490" x2="546" y2="1490" stroke="#475569" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#fi-dp-arr-ctrl)"/>
+  <text x="558" y="1494" font-size="12" fill="#1f2937">控制流：规格、JIT 产物、调度、CUDAGraph 捕获</text>
+  <rect x="76" y="1512" width="22" height="16" rx="4" fill="#dcfce7" stroke="#15803d" stroke-width="1"/>
+  <text x="87" y="1524" text-anchor="middle" font-size="11" font-weight="700" fill="#14532d">P</text>
+  <text x="106" y="1524" font-size="12" fill="#1f2937">P = 论文事实（附 PDF 页码/章节）</text>
+  <rect x="370" y="1512" width="22" height="16" rx="4" fill="#fef3c7" stroke="#b45309" stroke-width="1"/>
+  <text x="381" y="1524" text-anchor="middle" font-size="11" font-weight="700" fill="#7c2d12">I</text>
+  <text x="400" y="1524" font-size="12" fill="#1f2937">I = 编辑推断（本图端到端装配即属此类）</text>
+  <rect x="76" y="1542" width="16" height="16" rx="3" fill="#e8effc" stroke="#1e40af" stroke-width="1.5"/>
+  <text x="100" y="1554" font-size="11.5" fill="#1f2937">深蓝 = CPU/控制平面</text>
+  <rect x="330" y="1542" width="16" height="16" rx="3" fill="#d9f2f6" stroke="#0e7490" stroke-width="1.5"/>
+  <text x="354" y="1554" font-size="11.5" fill="#1f2937">青 = GPU 计算/输出</text>
+  <rect x="560" y="1542" width="16" height="16" rx="3" fill="#ede7fa" stroke="#6d28d9" stroke-width="1.5"/>
+  <text x="584" y="1554" font-size="11.5" fill="#1f2937">紫 = KV-Cache/显存缓冲</text>
+  <text x="790" y="1554" font-size="11" fill="#475569">颜色均配文字/线型冗余编码</text>
+
+  <!-- ======== 来源 ======== -->
+  <text x="60" y="1592" font-size="11" fill="#334155">来源（除 I 标注外均为 P 级论文证据）：FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving，arXiv:2501.01005v2，MLSys 2025。</text>
+  <text x="60" y="1610" font-size="11" fill="#334155">引用页码：p.2 Fig.1 · p.3 §2.2 · p.4-5 §3.1 + Fig.2/3 · p.5-6 §3.2 + Fig.5 · p.7 Alg.1/§3.3.1 · p.7-8 §3.4 + Listing 1 · p.18-19 App.A/D · p.11 §7。端到端装配=I。最后核验：2026-09-14。</text>
+</svg>

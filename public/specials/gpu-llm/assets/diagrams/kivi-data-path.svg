@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 920" role="img" aria-labelledby="kivi-svg-title kivi-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="kivi-svg-title">KIVI 数据路径图：key 按通道、value 按 token 的非对称 2bit KV 缓存量化与缓存读写闭环</title>
+  <desc id="kivi-svg-desc">流程自上而下：当前 token 经前向投影得到 t_K、t_V、t_Q；写路径上，key 向量追加进全精度残差缓冲 X_Kr，value 向量进入 FIFO 队列 X_Vr；触发量化时，key 残差攒满 R 个 token 后按通道维分组（每组 G 等于 32 个 token）量化为 2bit 并入分组 key 缓存 Q(X_Kg)，value 队列超过 R 个时弹出最旧的 token、按 token 维量化并入 Q(X_Vg) 并保留最新 R 个；读路径上，注意力得分由两段拼接——量化分组 key 经 Q_MatMul（反量化融合进矩阵乘的混合精度算子）与查询相乘，全精度残差 key 直接与查询相乘——拼接后做 softmax，输出为量化 value 与全精度 value 两段加权和；显存中的 KV 缓存四元组为 Q(X_Kg)、X_Kr、Q(X_Vg)、X_Vr，其中残差不超过 R 个 token、开销可忽略；每步解码循环写-读-回写。右侧面板给出参数（G=32、R=128、2bit 公式含零点与缩放）、非对称量化依据（key 少数固定通道幅值大、value 是注意力输出混合器且注意力稀疏 84.3%）与收益风险（峰值显存降至约 1/2.6、批至多 4 倍、吞吐 2.35 至 3.47 倍，条件为单卡 A100-80GB、Llama-2-7B、ShareGPT 均值输入 161 输出 338；风险为 Falcon 等 MQA 模型 2bit 掉精度、GSM8K 依赖全精度滑窗、组大小取 128 时精度下降）。依据论文 arXiv:2402.02750v2 图 3、第 3.3 节与第 4 节绘制。</desc>
+  <defs>
+    <marker id="kv-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="kv-arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/>
+    </marker>
+    <marker id="kv-arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f3a5f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="920" fill="#ffffff"/>
+  <text x="30" y="34" font-size="19" font-weight="700" fill="#14385c">KIVI：key 按通道 / value 按 token 的非对称 2bit KV 缓存量化——缓存读写数据路径</text>
+  <text x="30" y="56" font-size="12" fill="#4b5563">方向：token 前向 → 写缓存（残差→触发量化并入分组）→ 读缓存（Q_MatMul 融合反量化注意力）→ 回写循环　｜　依据：arXiv:2402.02750v2 图 3、§3.3、§4（PMLR 235）</text>
+
+  <!-- 图例 -->
+  <g font-size="11.5" fill="#374151">
+    <rect x="30" y="70" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="49" y="81">GPU 计算路径（实线，青）</text>
+    <rect x="216" y="70" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="235" y="81">KV 缓存读/写与存储（紫）</text>
+    <rect x="432" y="70" width="14" height="14" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="451" y="81">控制流 / 阈值判定（虚线）</text>
+    <rect x="628" y="70" width="14" height="14" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+    <text x="647" y="81">风险点（琥珀）</text>
+  </g>
+
+  <!-- ① 前向投影 -->
+  <rect x="40" y="104" width="600" height="62" rx="6" fill="#e6f7fb" stroke="#0e7490" stroke-width="2"/>
+  <text x="52" y="126" font-size="12.5" font-weight="700" fill="#155e75">① 当前 token 前向：投影出 query / key / value</text>
+  <text x="52" y="144" font-size="10.5" fill="#374151">t_Q = t·W_Q，t_K = t·W_K，t_V = t·W_V（每层、每注意力头各一份）</text>
+  <text x="52" y="160" font-size="10.5" fill="#374151">prefill 逐层传递精确张量；解码期每步只来一个 token（流式写入）</text>
+
+  <line x1="340" y1="166" x2="340" y2="188" stroke="#334155" stroke-width="2.5" marker-end="url(#kv-arr)"/>
+
+  <!-- ② 写路径：追加进残差 -->
+  <rect x="40" y="192" width="600" height="128" rx="6" fill="#ffffff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="52" y="214" font-size="12.5" font-weight="700" fill="#5b21b6">② 写缓存：新 token 先进「全精度残差」（key 按通道需成组、value 天然流式）</text>
+  <rect x="56" y="226" width="286" height="80" rx="5" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+  <text x="199" y="246" font-size="11.5" font-weight="700" text-anchor="middle" fill="#5b21b6">Key 路径：残差缓冲 X_Kr（FP16，≤R 个 token）</text>
+  <text x="66" y="266" font-size="10.5" fill="#374151">t_K 直接追加进 X_Kr（保持全精度）</text>
+  <text x="66" y="282" font-size="10.5" fill="#374151">按通道量化跨 token 成组，不能来一个算一个</text>
+  <text x="66" y="298" font-size="10.5" fill="#374151">攒满 R 个才量化，R 需能被 G 整除</text>
+  <rect x="354" y="226" width="286" height="80" rx="5" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+  <text x="497" y="246" font-size="11.5" font-weight="700" text-anchor="middle" fill="#5b21b6">Value 路径：FIFO 队列 X_Vr（FP16，最新 R 个）</text>
+  <text x="364" y="266" font-size="10.5" fill="#374151">t_V 入队 X_Vr（保持全精度）</text>
+  <text x="364" y="282" font-size="10.5" fill="#374151">按 token 量化与自回归流式天然对齐</text>
+  <text x="364" y="298" font-size="10.5" fill="#374151">队列超过 R：弹出最旧的 token 去量化</text>
+
+  <line x1="340" y1="320" x2="340" y2="342" stroke="#334155" stroke-width="2.5" marker-end="url(#kv-arr)"/>
+
+  <!-- ③ 触发量化并入分组 -->
+  <rect x="40" y="346" width="600" height="126" rx="6" fill="#eef3fa" stroke="#1f3a5f" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="52" y="368" font-size="12.5" font-weight="700" fill="#1f3a5f">③ 阈值触发量化（控制流）：残差 → 2bit 分组缓存</text>
+  <rect x="56" y="380" width="286" height="78" rx="5" fill="#ffffff" stroke="#1f3a5f" stroke-width="1.4"/>
+  <text x="66" y="400" font-size="11" font-weight="700" fill="#1f3a5f">len(X_Kr) = R → KeyQuant</text>
+  <text x="66" y="418" font-size="10.5" fill="#374151">沿通道维分组：每 G=32 个 token 一组，</text>
+  <text x="66" y="434" font-size="10.5" fill="#374151">组内按通道各算零点/缩放，量化为 2bit；</text>
+  <text x="66" y="450" font-size="10.5" fill="#374151">并入 Q(X_Kg)，X_Kr 清空</text>
+  <rect x="354" y="380" width="286" height="78" rx="5" fill="#ffffff" stroke="#1f3a5f" stroke-width="1.4"/>
+  <text x="364" y="400" font-size="11" font-weight="700" fill="#1f3a5f">len(X_Vr) &gt; R → 弹出最旧 → GroupQuant</text>
+  <text x="364" y="418" font-size="10.5" fill="#374151">被弹出 token 沿 token 维分组量化为 2bit，</text>
+  <text x="364" y="434" font-size="10.5" fill="#374151">按 token 维并入 Q(X_Vg)，</text>
+  <text x="364" y="450" font-size="10.5" fill="#374151">队列保留最新 R 个全精度 value</text>
+
+  <line x1="340" y1="472" x2="340" y2="494" stroke="#334155" stroke-width="2.5" marker-end="url(#kv-arr)"/>
+
+  <!-- ④ 读路径：注意力 -->
+  <rect x="40" y="498" width="600" height="140" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="52" y="520" font-size="12.5" font-weight="700" fill="#155e75">④ 读缓存：两段拼接的注意力（Q_MatMul 融合反量化）</text>
+  <rect x="56" y="532" width="286" height="66" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="199" y="551" font-size="11" font-weight="700" text-anchor="middle" fill="#155e75">分组段（2bit）：A_g = t_Q · Q(X_Kg)ᵀ</text>
+  <text x="66" y="569" font-size="10.5" fill="#374151">Q_MatMul＝反量化融合进矩阵乘（tiling 级，CUDA）</text>
+  <text x="66" y="585" font-size="10.5" fill="#374151">value 端：A_g · Q(X_Vg)（反量化在乘法内完成）</text>
+  <rect x="354" y="532" width="286" height="66" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="497" y="551" font-size="11" font-weight="700" text-anchor="middle" fill="#155e75">残差段（FP16）：A_r = t_Q · X_Krᵀ</text>
+  <text x="364" y="569" font-size="10.5" fill="#374151">最近 token 全精度参与注意力（滑窗）</text>
+  <text x="364" y="585" font-size="10.5" fill="#374151">value 端：A_r · X_Vr（直接全精度加权）</text>
+  <text x="52" y="622" font-size="10.5" fill="#374151">拼接：A = Concat([A_g, A_r]) → Softmax → 输出 t_O = A_g·Q(X_Vg) + A_r·X_Vr；全精度滑窗对 GSM8K 等硬任务至关重要</text>
+
+  <line x1="340" y1="638" x2="340" y2="660" stroke="#334155" stroke-width="2.5" marker-end="url(#kv-arr)"/>
+
+  <!-- ⑤ 存储布局 -->
+  <rect x="40" y="664" width="600" height="92" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="52" y="686" font-size="12.5" font-weight="700" fill="#5b21b6">⑤ 显存中的 KV 缓存（每层 × 每头一个四元组）</text>
+  <text x="52" y="706" font-size="10.5" fill="#374151">⟨ Q(X_Kg) 2bit＋零点/缩放 · X_Kr 全精度 ≤R · Q(X_Vg) 2bit＋零点/缩放 · X_Vr 全精度 R ⟩</text>
+  <text x="52" y="724" font-size="10.5" fill="#374151">序列长度通常远大于 R（实验取 R≤128），残差开销可忽略；prefill 后内存仅保留量化 KV</text>
+  <text x="52" y="742" font-size="10.5" fill="#374151">与 weight-only 权重量化、token 驱逐（H2O 等）、分页系统（vLLM 等）正交、可叠加</text>
+
+  <line x1="340" y1="756" x2="340" y2="778" stroke="#334155" stroke-width="2.5" marker-end="url(#kv-arr)"/>
+
+  <!-- ⑥ 循环与收益 -->
+  <rect x="40" y="782" width="600" height="92" rx="6" fill="#ffffff" stroke="#334155" stroke-width="2"/>
+  <text x="52" y="804" font-size="12.5" font-weight="700" fill="#14385c">⑥ 逐步解码循环 → 资源收益</text>
+  <text x="52" y="822" font-size="10.5" fill="#374151">每 token 重复 ②→④ 并回写四元组；KV 显存 ↓（峰值含权重约 1/2.6）→ 同卡可容 batch ↑（至多 4×）</text>
+  <text x="52" y="838" font-size="10.5" fill="#374151">→ 吞吐 ↑（2.35×~3.47×；单卡 A100-80GB、Llama-2-7B、ShareGPT 负载均值输入 161/输出 338，第 8 页图 5）</text>
+  <text x="52" y="854" font-size="10.5" fill="#374151">上下文/输出越长收益越大；量化若再与前序算子融合还有提升空间（论文留作未来工作）</text>
+
+  <!-- 循环箭头 -->
+  <path d="M40 828 C 14 828, 14 135, 36 135" fill="none" stroke="#6d28d9" stroke-width="2.2" stroke-dasharray="6 4" marker-end="url(#kv-arr-purple)"/>
+  <text x="6" y="480" font-size="10.5" fill="#6d28d9" transform="rotate(-90 18 480)">下一解码步（循环）</text>
+
+  <!-- 右侧面板 1：参数与公式 -->
+  <rect x="652" y="104" width="298" height="176" rx="8" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="666" y="126" font-size="13" font-weight="700" fill="#1f3a5f">参数与量化公式（论文实验口径）</text>
+  <text x="666" y="148" font-size="10.5" fill="#374151">组大小 G = 32（全部实验）；残差 R = 128（R≤128）</text>
+  <text x="666" y="166" font-size="10.5" fill="#374151">KIVI-2＝KV 存 2bit；KIVI-4＝4bit（Falcon 等用）</text>
+  <text x="666" y="186" font-size="10.5" fill="#374151">B-bit 量化：Q(X) = ⌊(X − z_X) / s_X⌉</text>
+  <text x="666" y="202" font-size="10.5" fill="#374151">反量化 X′ = Q(X)·s_X + z_X；z_X = min X</text>
+  <text x="666" y="218" font-size="10.5" fill="#374151">s_X = (max X − min X) / (2^B − 1)</text>
+  <text x="666" y="238" font-size="10.5" fill="#374151">精度评测：CoQA/TruthfulQA/GSM8K、LongBench、NIAH</text>
+  <text x="666" y="254" font-size="10.5" fill="#374151">效率：ShareGPT 负载（均值 161/338），batch 增至 OOM</text>
+  <text x="666" y="272" font-size="10.5" fill="#374151">实现：CUDA 融合 Q_MatMul ＋ Triton 组量化 kernel</text>
+
+  <!-- 右侧面板 2：非对称依据 -->
+  <rect x="652" y="296" width="298" height="212" rx="8" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+  <text x="666" y="318" font-size="13" font-weight="700" fill="#155e75">为什么 K / V 量化维度必须不同</text>
+  <rect x="664" y="330" width="274" height="80" rx="5" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.2"/>
+  <text x="674" y="348" font-size="11" font-weight="700" fill="#5b21b6">Key：少数固定通道幅值极大（图 2）</text>
+  <text x="674" y="366" font-size="10.5" fill="#374151">按通道分组把误差锁在通道内：</text>
+  <text x="674" y="382" font-size="10.5" fill="#374151">重建误差 4.55 vs 13.67；注意力分数误差</text>
+  <text x="674" y="398" font-size="10.5" fill="#374151">9.60 vs 47.00（按 token 差约 5×，表 2）</text>
+  <rect x="664" y="418" width="274" height="80" rx="5" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.2"/>
+  <text x="674" y="436" font-size="11" font-weight="700" fill="#5b21b6">Value：无明显离群，是输出「混合器」</text>
+  <text x="674" y="454" font-size="10.5" fill="#374151">注意力稀疏 84.3%，输出只加权少数 token：</text>
+  <text x="674" y="470" font-size="10.5" fill="#374151">按 token 把误差锁在单 token 内，</text>
+  <text x="674" y="486" font-size="10.5" fill="#374151">输出误差 ∆ 3.55 vs 49.89（约 15×，表 2）</text>
+
+  <!-- 右侧面板 3：收益与风险 -->
+  <rect x="652" y="524" width="298" height="212" rx="8" fill="#ffffff" stroke="#92400e" stroke-width="1.6"/>
+  <text x="666" y="546" font-size="13" font-weight="700" fill="#92400e">收益（P）与风险点（琥珀）</text>
+  <text x="666" y="568" font-size="10.5" fill="#374151">✓ 峰值显存（含权重）降至约 1/2.6（Llama-2-7B）</text>
+  <text x="666" y="586" font-size="10.5" fill="#374151">✓ 相近峰值显存下 batch 至多 4×、吞吐 2.35×~3.47×</text>
+  <text x="666" y="604" font-size="10.5" fill="#374151">✓ 免调优/免校准（RTN），即插即用</text>
+  <rect x="664" y="616" width="274" height="110" rx="5" fill="#fef3c7" stroke="#92400e" stroke-width="1.2"/>
+  <text x="674" y="634" font-size="10.5" fill="#92400e">⚠ Falcon 等 MQA 单头 KV 已高度压缩：2bit 掉精度明显</text>
+  <text x="674" y="650" font-size="10.5" fill="#92400e">　 需 KIVI-4（CoQA 57.48 vs 16bit 59.83，表 3）</text>
+  <text x="674" y="666" font-size="10.5" fill="#92400e">⚠ 全精度滑窗配置不当，GSM8K 等硬任务先受伤</text>
+  <text x="674" y="682" font-size="10.5" fill="#92400e">⚠ 组大小 G=128 时精度显著下降（GSM8K 17.29）</text>
+  <text x="674" y="698" font-size="10.5" fill="#92400e">⚠ 论文未报 TTFT/TPOT 与量化算子绝对开销</text>
+  <text x="674" y="714" font-size="10.5" fill="#92400e">⚠ 吞吐峰值出现在较大 batch；基线小 batch 反而更高</text>
+
+  <!-- 右侧面板 4：图 5 读图 -->
+  <rect x="652" y="752" width="298" height="122" rx="8" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="666" y="774" font-size="13" font-weight="700" fill="#1f3a5f">图 5 读图近似（I，读坐标估读）</text>
+  <text x="666" y="794" font-size="10.5" fill="#374151">FP16 基线：batch ~96 / ~60GB 处 OOM；</text>
+  <text x="666" y="810" font-size="10.5" fill="#374151">吞吐峰值 ~760 tokens/s（batch ~32，再大回落）</text>
+  <text x="666" y="826" font-size="10.5" fill="#374151">KIVI-R128：batch ~256 / ~56GB、~1780 tokens/s</text>
+  <text x="666" y="842" font-size="10.5" fill="#374151">KIVI-R32：batch ~384 / ~54GB、~2640 tokens/s</text>
+  <text x="666" y="860" font-size="10" fill="#4b5563">论文只承诺 4× / 2.35×~3.47×；逐点值为读图近似</text>
+
+  <text x="30" y="900" font-size="10.5" fill="#6b7280">来源：KIVI（arXiv:2402.02750v2，ICML 2024 / PMLR 235）图 1-3、表 1-3、图 5、§3.3、§4；编号 ①-⑥ 对应页面文字序列；P＝论文，I＝编辑读图/整理。</text>
+</svg>

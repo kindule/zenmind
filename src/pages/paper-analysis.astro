@@ -1,0 +1,279 @@
+---
+import Layout from '~/layouts/Layout.astro'
+
+// 专项快照清单：从 public/specials/gpu-llm/papers/ 的实际文件推导，
+// 保证「核心 X/16 已发布」的数字永远与真实文件一致，不会手写漂移。
+const paperFiles = Object.keys(
+  import.meta.glob('../../public/specials/gpu-llm/papers/*.html'),
+).map((path) => path.split('/').pop() ?? '')
+
+const CORE_PLANNED = 16
+
+// 核心 16 篇的规划清单与中文名（与快照站首页卡片一致）。
+const CORE_CATALOG: { slug: string; name: string; theme: string }[] = [
+  { slug: '01-distserve', name: 'DistServe', theme: '推理服务与资源调度' },
+  { slug: '02-sarathi-serve', name: 'Sarathi-Serve', theme: '推理服务与资源调度' },
+  { slug: '03-mooncake', name: 'Mooncake', theme: '推理服务与资源调度' },
+  { slug: '04-vattention', name: 'vAttention', theme: '推理服务与资源调度' },
+  { slug: '05-flashinfer', name: 'FlashInfer', theme: '推理服务与资源调度' },
+  { slug: '06-eagle', name: 'EAGLE', theme: '解码加速与量化' },
+  { slug: '07-medusa', name: 'Medusa', theme: '解码加速与量化' },
+  { slug: '08-kivi', name: 'KIVI', theme: '解码加速与量化' },
+  { slug: '09-quarot', name: 'QuaRot', theme: '解码加速与量化' },
+  { slug: '10-qserve', name: 'QServe', theme: '解码加速与量化' },
+  { slug: '11-flashattention-3', name: 'FlashAttention-3', theme: '训练、并行与 GPU Kernel' },
+  { slug: '12-liger-kernel', name: 'Liger Kernel', theme: '训练、并行与 GPU Kernel' },
+  { slug: '13-megascale', name: 'MegaScale', theme: '训练、并行与 GPU Kernel' },
+  { slug: '14-torchtitan', name: 'TorchTitan', theme: '训练、并行与 GPU Kernel' },
+  { slug: '15-galore', name: 'GaLore', theme: '训练、并行与 GPU Kernel' },
+  { slug: '16-deepseek-v3', name: 'DeepSeek-V3', theme: '训练、并行与 GPU Kernel' },
+]
+
+const presentSlugs = new Set(paperFiles.map((f) => f.replace(/\.html$/, '')))
+const corePresent = CORE_CATALOG.filter((p) => presentSlugs.has(p.slug))
+const coreMissing = CORE_CATALOG.filter((p) => !presentSlugs.has(p.slug))
+// 奠基论文（F01）：独立于核心 16 篇的内容，出现即单列展示（存无扩展名 slug）。
+const foundationPresent = paperFiles
+  .filter((f) => /^f01-/.test(f))
+  .map((f) => f.replace(/\.html$/, ''))
+
+const REPORT_ROOT = '/specials/gpu-llm/'
+const F01_URL = '/specials/gpu-llm/papers/f01-attention-is-all-you-need.html'
+const SNAPSHOT_DATE = '2026-09-14'
+---
+
+<Layout
+  title="专项论文分析"
+  description="ZenMind 专项扩展：GPU 大模型系统论文中文精读（2024–2025）静态快照，含奠基论文 Attention Is All You Need（F01）。"
+>
+  <article class="special" lang="zh-CN">
+    <header class="special-header">
+      <h1>专项论文分析</h1>
+      <p class="lede">
+        这是 ZenMind 的专项扩展栏目：一份独立维护的
+        <strong>GPU 大模型系统论文中文精读</strong>（2024–2025）静态报告快照。
+        它与本博客的随笔文章相互独立：报告以云计算架构师视角组织，
+        每篇论文按统一的 13 节模板精读，并用 P/R/E/I 四级证据标签
+        （论文 / 官方仓库 / 外部资料 / 编辑推断）区分「论文声称」与「编辑解读」。
+      </p>
+    </header>
+
+    <section aria-labelledby="status-title" class="special-section">
+      <h2 id="status-title">发布状态（截至 <time datetime={SNAPSHOT_DATE}>{SNAPSHOT_DATE}</time> 快照）</h2>
+      <p>
+        完整报告规划核心论文 <strong>{CORE_PLANNED}</strong> 篇；
+        本快照当前包含核心论文页 <strong>{corePresent.length}</strong> 篇，
+        其余 <strong>{coreMissing.length}</strong> 篇尚未完成、暂未收录。
+        快照只包含可直接阅读的 HTML 页面与静态资源（不含论文 PDF、原始提取文本与构建脚本）。
+      </p>
+      <p class="stat-line" role="status">
+        核心论文页：<strong>{corePresent.length} / {CORE_PLANNED}</strong> 已发布
+      </p>
+
+      {
+        corePresent.length > 0 && (
+          <div class="present-block">
+            <h3>已收录的核心论文页</h3>
+            <ul class="paper-list">
+              {corePresent.map((p) => (
+                <li>
+                  <a href={`${REPORT_ROOT}papers/${p.slug}.html`}>{p.name}</a>
+                  <span class="paper-theme">（{p.theme}）</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      }
+      {
+        coreMissing.length > 0 && (
+          <details class="missing-block">
+            <summary>尚未收录的 {coreMissing.length} 篇（{coreMissing.map((p) => p.name).join('、')}）</summary>
+            <p>
+              这些论文的解读仍在建设中。完整站点的首页保留了它们的入口规划；
+              待对应页面交付后，会随下一次快照更新一并收录。
+            </p>
+          </details>
+        )
+      }
+
+      <p>
+        <a class="button-link" href={REPORT_ROOT}>进入完整报告站 →</a>
+      </p>
+    </section>
+
+    <section aria-labelledby="foundation-title" class="special-section foundation">
+      <h2 id="foundation-title">奠基论文（独立内容，非核心 16 篇）</h2>
+      <p>
+        除核心 16 篇外，快照另收录<strong>奠基论文</strong>：提出于更早、被核心合集反复引用的机制原始文献。
+        奠基论文按同样的 13 节模板与证据规则精读，但单列展示，
+        不计入核心论文数量、筛选与统计。
+      </p>
+      {
+        foundationPresent.includes('f01-attention-is-all-you-need') ? (
+          <div class="foundation-card">
+            <h3>
+              <a href={F01_URL}>F01 · Attention Is All You Need（Transformer）</a>
+            </h3>
+            <p>
+              2017 年提出 Transformer 的原始论文（NIPS 2017；快照 PDF 为 arXiv v7，2023-08-02 修订版）。
+              详情页显式区分这两条发表记录、原样保留英法 BLEU 41.8（摘要/表 2）与 41.0（§6.1）的文内差异，
+              并将论文链接的 Tensor2Tensor 标注为「官方历史实现，已归档（2026-09-14 核验）」；
+              decoder-only、RoPE、RMSNorm、GQA、FlashAttention、现代 KV-cache 服务等后续工作均不归于该论文。
+            </p>
+            <p>
+              <a class="button-link" href={F01_URL}>阅读 F01 奠基论文解读 →</a>
+            </p>
+          </div>
+        ) : (
+          <p>奠基论文页尚未收录。</p>
+        )
+      }
+    </section>
+
+    <section aria-labelledby="evidence-title" class="special-section">
+      <h2 id="evidence-title">如何阅读这份报告</h2>
+      <ul>
+        <li>
+          每个数字都带完整条件（硬件、模型、精度、批量、基线与 PDF 页码）；
+          论文未披露的字段会明确写出，不会留空。
+        </li>
+        <li>
+          <strong>P</strong>＝论文正文（含页码），<strong>R</strong>＝核验过的官方仓库，
+          <strong>E</strong>＝外部资料（仅用于部署映射与版本核对），<strong>I</strong>＝编辑推断。
+        </li>
+        <li>
+          报告不做跨论文性能数字的横向排名：各篇硬件、模型与负载口径不同，
+          任何倍数请回到对应详情页核对完整条件。
+        </li>
+      </ul>
+    </section>
+  </article>
+</Layout>
+
+<style>
+  /*
+   * 专项页样式：原生 HTML/CSS，仅使用主题语义令牌（--theme-*），
+   * 跟随站点的 60+ 主题与明暗模式；桌面端遵循 8px 间距基线、
+   * 细边框、弱阴影与清晰层级，不在 2K/4K 屏上拉伸到全宽
+   *（外层布局已限定内容宽度）。
+   */
+  .special {
+    display: block;
+    line-height: 1.7;
+  }
+  .special-header {
+    margin: 0 0 24px;
+  }
+  .special-header h1 {
+    margin: 16px 0 8px;
+  }
+  .lede {
+    margin: 0;
+    color: color-mix(in srgb, var(--theme-foreground) 85%, transparent);
+  }
+
+  .special-section {
+    margin: 0 0 32px;
+    padding: 16px;
+    border: 1px solid color-mix(in srgb, var(--theme-foreground) 12%, transparent);
+    border-radius: 8px;
+  }
+  .special-section h2 {
+    margin: 0 0 12px;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+  .special-section h3 {
+    margin: 0 0 8px;
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+  .special-section > p {
+    margin: 0 0 12px;
+  }
+
+  .stat-line {
+    padding: 8px 12px;
+    border: 1px solid color-mix(in srgb, var(--theme-accent) 30%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--theme-accent) 8%, transparent);
+  }
+  .stat-line strong {
+    font-size: 1.1em;
+  }
+
+  .present-block {
+    margin: 0 0 16px;
+  }
+  .paper-list {
+    margin: 0;
+    padding: 0 0 0 20px;
+  }
+  .paper-list li {
+    margin: 4px 0;
+  }
+  .paper-theme {
+    color: color-mix(in srgb, var(--theme-foreground) 70%, transparent);
+  }
+
+  .missing-block {
+    margin: 0 0 16px;
+    padding: 8px 12px;
+    border: 1px dashed color-mix(in srgb, var(--theme-foreground) 20%, transparent);
+    border-radius: 8px;
+  }
+  .missing-block summary {
+    cursor: pointer;
+    min-height: 32px;
+    line-height: 32px;
+  }
+  .missing-block p {
+    margin: 8px 0;
+  }
+
+  .foundation {
+    border-color: color-mix(in srgb, var(--theme-accent) 30%, transparent);
+  }
+  .foundation-card {
+    padding: 12px 16px;
+    border: 1px solid color-mix(in srgb, var(--theme-foreground) 12%, transparent);
+    border-left: 4px solid color-mix(in srgb, var(--theme-accent) 70%, transparent);
+    border-radius: 8px;
+  }
+  .foundation-card p {
+    margin: 0 0 12px;
+  }
+  .foundation-card p:last-of-type {
+    margin-bottom: 0;
+  }
+
+  .button-link {
+    display: inline-block;
+    padding: 8px 16px;
+    border: 2px solid color-mix(in srgb, var(--theme-accent) 40%, transparent);
+    border-radius: 8px;
+    color: var(--theme-link);
+    text-decoration: none;
+  }
+  .button-link:hover {
+    background: color-mix(in srgb, var(--theme-accent) 12%, transparent);
+  }
+  .button-link:focus-visible {
+    outline: 2px solid var(--theme-accent);
+    outline-offset: 2px;
+  }
+
+  @media (min-width: 1920px) {
+    /* 2K/4K 桌面：内容宽度由布局约束，这里仅保持节奏一致 */
+    .special-section {
+      padding: 24px;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .special-section {
+      padding: 12px;
+    }
+  }
+</style>

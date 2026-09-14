@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="880" viewBox="0 0 1240 880" role="img" aria-labelledby="vattention-data-path-title vattention-data-path-desc" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="vattention-data-path-title">vAttention data path: client request to token output over a contiguous virtual KV cache and dynamic 64 KB physical GPU pages</title>
+  <desc id="vattention-data-path-desc">Numbered flow: (1) a client sends a generate request to the vLLM server; (2) vLLM's scheduler admits it and the vAttention step reserves KV cache space; (3) vAttention reserves one contiguous, aligned virtual address range for the request's KV cache; (4) CUDA virtual memory management (VMM) maps and unmaps memory via cuMemCreate, cuMemMap, cuMemSetAccess and cuMemUnmap; (5) physical 64 KB GPU pages are allocated on demand, only as the KV cache grows; (6) unmodified attention kernels access GPU memory through the same flat virtual addresses no matter where pages live; (7) the sampled token is streamed back to the client. A side panel contrasts the two views: the virtual layout stays contiguous (adjacent slots V0 to V7), while physical pages are scattered, dynamic 64 KB pages mapped wherever free. A legend explains line and box styles. Sources: vAttention paper, pages 1 and 2, sections 1 and 4.</desc>
+
+  <defs>
+    <marker id="arrowDark" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#334155"/>
+    </marker>
+    <marker id="arrowTeal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#0f766e"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="880" fill="#ffffff"/>
+
+  <!-- Header -->
+  <text x="620" y="40" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">vAttention data path — contiguous virtual KV cache on dynamic 64 KB physical pages</text>
+  <text x="620" y="64" text-anchor="middle" font-size="13" fill="#475569">How vLLM + vAttention take a client request to token output while physical GPU memory is mapped on demand</text>
+
+  <!-- ============ Left column: numbered pipeline (steps 1-7) ============ -->
+  <text x="60" y="114" font-size="13" font-weight="700" fill="#334155">Numbered flow — steps 1 → 7</text>
+
+  <!-- Step 1 -->
+  <rect x="60" y="132" width="340" height="64" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="87" cy="164" r="16" fill="#1d4ed8"/>
+  <text x="87" y="169" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">1</text>
+  <text x="112" y="153" font-size="14" font-weight="700" fill="#1e3a8a">Client request</text>
+  <text x="112" y="171" font-size="12" fill="#334155">prompt arrives at the vLLM API server</text>
+  <line x1="230" y1="198" x2="230" y2="224" stroke="#334155" stroke-width="2" marker-end="url(#arrowDark)"/>
+
+  <!-- Step 2 -->
+  <rect x="60" y="228" width="340" height="64" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="87" cy="260" r="16" fill="#1d4ed8"/>
+  <text x="87" y="265" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">2</text>
+  <text x="112" y="249" font-size="14" font-weight="700" fill="#1e3a8a">vLLM vAttention step</text>
+  <text x="112" y="267" font-size="12" fill="#334155">vLLM scheduler admits the request;</text>
+  <text x="112" y="283" font-size="12" fill="#334155">vAttention reserves KV cache space</text>
+  <line x1="230" y1="294" x2="230" y2="320" stroke="#334155" stroke-width="2" marker-end="url(#arrowDark)"/>
+
+  <!-- Step 3 -->
+  <rect x="60" y="324" width="340" height="64" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="87" cy="356" r="16" fill="#1d4ed8"/>
+  <text x="87" y="361" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">3</text>
+  <text x="112" y="345" font-size="14" font-weight="700" fill="#1e3a8a">Contiguous virtual KV range</text>
+  <text x="112" y="363" font-size="12" fill="#334155">per-request KV range in the virtual</text>
+  <text x="112" y="379" font-size="12" fill="#334155">address space — contiguous, aligned</text>
+  <line x1="230" y1="390" x2="230" y2="416" stroke="#334155" stroke-width="2" marker-end="url(#arrowDark)"/>
+
+  <!-- Step 4 -->
+  <rect x="60" y="420" width="340" height="64" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="87" cy="452" r="16" fill="#1d4ed8"/>
+  <text x="87" y="457" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">4</text>
+  <text x="112" y="441" font-size="14" font-weight="700" fill="#1e3a8a">CUDA VMM map / unmap</text>
+  <text x="112" y="459" font-size="12" fill="#334155">map: cuMemCreate + cuMemMap +</text>
+  <text x="112" y="475" font-size="12" fill="#334155">cuMemSetAccess; unmap frees (§4)</text>
+  <line x1="230" y1="486" x2="230" y2="512" stroke="#334155" stroke-width="2" marker-end="url(#arrowDark)"/>
+
+  <!-- Step 5 -->
+  <rect x="60" y="516" width="340" height="64" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="87" cy="548" r="16" fill="#1d4ed8"/>
+  <text x="87" y="553" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">5</text>
+  <text x="112" y="537" font-size="14" font-weight="700" fill="#1e3a8a">64 KB pages on demand</text>
+  <text x="112" y="555" font-size="12" fill="#334155">physical 64 KB GPU pages allocated</text>
+  <text x="112" y="571" font-size="12" fill="#334155">only as the KV cache grows</text>
+  <line x1="230" y1="582" x2="230" y2="608" stroke="#334155" stroke-width="2" marker-end="url(#arrowDark)"/>
+
+  <!-- Step 6 -->
+  <rect x="60" y="612" width="340" height="64" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="87" cy="644" r="16" fill="#1d4ed8"/>
+  <text x="87" y="649" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">6</text>
+  <text x="112" y="633" font-size="14" font-weight="700" fill="#1e3a8a">Attention kernel GPU access</text>
+  <text x="112" y="651" font-size="12" fill="#334155">attention kernels unchanged — GPU</text>
+  <text x="112" y="667" font-size="12" fill="#334155">access via flat virtual addresses</text>
+  <line x1="230" y1="678" x2="230" y2="704" stroke="#334155" stroke-width="2" marker-end="url(#arrowDark)"/>
+
+  <!-- Step 7 -->
+  <rect x="60" y="708" width="340" height="64" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <circle cx="87" cy="740" r="16" fill="#1d4ed8"/>
+  <text x="87" y="745" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">7</text>
+  <text x="112" y="729" font-size="14" font-weight="700" fill="#1e3a8a">Token output</text>
+  <text x="112" y="747" font-size="12" fill="#334155">sampled token streams back to the</text>
+  <text x="112" y="763" font-size="12" fill="#334155">client; KV grows for the next step</text>
+
+  <!-- ============ Right panel: virtual vs physical memory ============ -->
+  <rect x="468" y="96" width="724" height="606" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="830" y="126" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">KV memory: virtual layout vs physical allocation (p1–p2, §4)</text>
+
+  <!-- Virtual address space (contiguous) -->
+  <rect x="480" y="150" width="690" height="150" rx="8" fill="#ecfeff" stroke="#0e7490" stroke-width="1.5"/>
+  <text x="496" y="174" font-size="13.5" font-weight="700" fill="#155e75">VIRTUAL — per-request KV cache: contiguous virtual address range</text>
+  <circle cx="1146" cy="169" r="13" fill="#1d4ed8"/>
+  <text x="1146" y="174" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">3</text>
+
+  <rect x="496" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <rect x="576" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <rect x="656" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <rect x="736" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <rect x="816" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <rect x="896" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <rect x="976" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <rect x="1056" y="190" width="76" height="52" fill="#cffafe" stroke="#0891b2" stroke-width="1"/>
+  <text x="534" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V0</text>
+  <text x="614" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V1</text>
+  <text x="694" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V2</text>
+  <text x="774" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V3</text>
+  <text x="854" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V4</text>
+  <text x="934" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V5</text>
+  <text x="1014" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V6</text>
+  <text x="1094" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#155e75">V7</text>
+  <text x="825" y="274" text-anchor="middle" font-size="12" fill="#0f766e">one flat range: base + i × 64 KB — unmodified attention kernels access it directly (steps 3 · 6)</text>
+
+  <!-- Mapping: dashed VMM map lines virtual -> physical -->
+  <line x1="534" y1="244" x2="588" y2="466" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <line x1="614" y1="244" x2="780" y2="466" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <line x1="694" y1="244" x2="972" y2="466" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <line x1="774" y1="244" x2="652" y2="530" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <line x1="854" y1="244" x2="908" y2="530" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <line x1="934" y1="244" x2="524" y2="594" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <line x1="1014" y1="244" x2="780" y2="594" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <line x1="1094" y1="244" x2="1036" y2="594" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+
+  <!-- Step-4 label over the mapping gap -->
+  <rect x="575" y="324" width="500" height="52" fill="#f8fafc"/>
+  <circle cx="686" cy="340" r="13" fill="#1d4ed8"/>
+  <text x="686" y="345" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">4</text>
+  <text x="836" y="345" text-anchor="middle" font-size="13" font-weight="700" fill="#0f766e">step 4 · CUDA VMM map / unmap (§4)</text>
+  <text x="825" y="366" text-anchor="middle" font-size="12" fill="#334155">cuMemCreate 64 KB → cuMemMap + cuMemSetAccess · cuMemUnmap frees</text>
+
+  <!-- Physical GPU memory (dynamic, scattered) -->
+  <rect x="480" y="430" width="690" height="260" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="496" y="452" font-size="13.5" font-weight="700" fill="#92400e">PHYSICAL — GPU memory: dynamic 64 KB pages, mapped on demand</text>
+  <circle cx="1146" cy="447" r="13" fill="#1d4ed8"/>
+  <text x="1146" y="452" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">5</text>
+
+  <!-- Row 0 -->
+  <rect x="496" y="470" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="524" y="503" text-anchor="middle" font-size="11" fill="#94a3b8">free</text>
+  <rect x="560" y="470" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="588" y="503" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V0</text>
+  <rect x="624" y="470" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="688" y="470" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="752" y="470" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="780" y="503" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V1</text>
+  <rect x="816" y="470" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="880" y="470" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="944" y="470" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="972" y="503" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V2</text>
+  <rect x="1008" y="470" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="1072" y="470" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <!-- Row 1 -->
+  <rect x="496" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="560" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="624" y="534" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="652" y="567" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V3</text>
+  <rect x="688" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="752" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="780" y="567" text-anchor="middle" font-size="11" fill="#94a3b8">free</text>
+  <rect x="816" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="880" y="534" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="908" y="567" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V4</text>
+  <rect x="944" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="1008" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="1072" y="534" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <!-- Row 2 -->
+  <rect x="496" y="598" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="524" y="631" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V5</text>
+  <rect x="560" y="598" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="624" y="598" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="652" y="631" text-anchor="middle" font-size="11" fill="#94a3b8">other</text>
+  <rect x="688" y="598" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="752" y="598" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="780" y="631" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V6</text>
+  <rect x="816" y="598" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="880" y="598" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="944" y="598" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <rect x="1008" y="598" width="56" height="56" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="1036" y="631" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">V7</text>
+  <rect x="1072" y="598" width="56" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="1100" y="631" text-anchor="middle" font-size="11" fill="#94a3b8">free</text>
+
+  <text x="825" y="676" text-anchor="middle" font-size="12" fill="#92400e">pages land wherever free — scattered, unordered; KV grows / shrinks token-by-token via map / unmap (§4)</text>
+
+  <!-- ============ Legend ============ -->
+  <rect x="480" y="706" width="690" height="92" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="496" y="724" font-size="12" font-weight="700" fill="#0f172a">Legend</text>
+
+  <line x1="496" y1="740" x2="536" y2="740" stroke="#334155" stroke-width="2" marker-end="url(#arrowDark)"/>
+  <text x="546" y="744" font-size="12" fill="#334155">request / data flow (steps 1 → 7)</text>
+
+  <line x1="496" y1="760" x2="536" y2="760" stroke="#0f766e" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <text x="546" y="764" font-size="12" fill="#334155">CUDA VMM map: virtual page → physical page</text>
+
+  <circle cx="508" cy="782" r="10" fill="#1d4ed8"/>
+  <text x="508" y="786" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">1</text>
+  <text x="526" y="786" font-size="12" fill="#334155">numbered execution order (panel tags 3 · 4 · 5)</text>
+
+  <rect x="880" y="731" width="16" height="16" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+  <text x="904" y="744" font-size="12" fill="#334155">64 KB page mapped to this request</text>
+
+  <rect x="880" y="753" width="16" height="16" fill="#ffffff" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="904" y="766" font-size="12" fill="#334155">free / mapped to another request</text>
+
+  <text x="880" y="786" font-size="12" fill="#64748b">V0–V7 labels tie physical pages to virtual slots</text>
+
+  <!-- ============ Sources ============ -->
+  <text x="60" y="830" font-size="12" fill="#64748b">Sources: vAttention paper PDF — p1 &amp; §1: motivation (memory-management-bound KV cache); p2: design overview.</text>
+  <text x="60" y="848" font-size="12" fill="#64748b">§4: VMM-based implementation — cuMem* APIs, on-demand 64 KB physical pages, map / unmap, contiguous virtual reservations.</text>
+</svg>
