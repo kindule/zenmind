@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MegaScale：把 LLM 训练扩展到超过 10,000 GPU 的生产系统（论文 13 解读）</title>
+<meta name="description" content="基于本地论文 PDF（13_MegaScale_2402.15627.pdf，arXiv:2402.15627v1）的中文架构解读：MegaScale 以算法-系统协同设计（PTB/SWA/LAMB）、3D 并行通信-计算重叠、高效算子、数据管道、通信组初始化与网络调优，在 12,288 GPU 上训练 175B 模型达 55.2% MFU（1.34× 于 Megatron-LM），并以稳健训练框架与深度可观测保障万卡稳定性，含数据路径、云上映射、成本与决策清单。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="prev" href="12-liger-kernel.html">
+<link rel="next" href="14-torchtitan.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">训练、并行与 GPU Kernel</a></li>
+    <li aria-current="page">MegaScale</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>MegaScale：超过 10,000 GPU 的生产级 LLM 训练系统</h1>
+<p class="lede">本页为第 13 篇（训练、并行与 GPU Kernel 类），全部定量内容取自本地论文 PDF <code>13_MegaScale_2402.15627.pdf</code>（arXiv:2402.15627v1，cs.LG，水印 2024-02-23），并逐条标注 PDF 页码与章节；PDF 共 16 页，全部完成版式文本核对，其中第 2、4、5、6、8–12 页另经原页渲染逐项目检（第 13–16 页为参考文献）。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：训练（LLM 预训练，生产系统）</li>
+    <li>形态：专用 AI 集群上的全栈训练系统（3D 并行 + 全栈优化，&gt;10,000 GPU）</li>
+    <li>目标硬件：NVIDIA Ampere GPU（论文口径，具体型号未披露）；Hopper 集群在建（论文时点）</li>
+    <li>核心资源：GPU 算力 · 节点间 RDMA 网络 · HDFS 类检查点存储 · 共享内存数据管道</li>
+    <li>证据状态：P + R（正文含 E/I 标签）</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-15">2026-09-15</time>（PDF 全部 16 页文本核对 + 9 页原页渲染目检；论文链接的仓库已在线核验）。</p>
+  <p><strong>证据完整度：</strong>关键定量结论均带 PDF 页码/表号与完整测试条件，未获取的字段一律写明「论文未明确披露」；论文脚注指向的组件仓库 veScale 与基线仓库 Megatron-LM 经在线核验（<span class="ev ev-r">R</span>）；云上产品映射为示例（<span class="ev ev-e">E</span>，未逐一核验规格与价格）；成本公式、放置与运维建议为参数化推断（<span class="ev ev-i">I</span>）。本页不设任何评分。</p>
+  <p><strong>开源边界：</strong>MegaScale 生产系统本体未随论文开源；论文脚注 3 以「组件开源进行中」指向 <code>github.com/volcengine/veScale</code> <span class="ev ev-p">P</span>（第 2 页）+ <span class="ev ev-r">R</span>（2026-09-15 核验）。veScale 不应被当作 MegaScale 的官方完整实现引用。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文明确链接且经核验的仓库">R＝核验仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="12-liger-kernel.html" rel="prev">上一篇：12 Liger Kernel</a>
+  <a href="14-torchtitan.html" rel="next">下一篇：14 TorchTitan</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（第 1-2 页）</caption>
+    <tbody>
+      <tr><th scope="row">标题</th><td>MegaScale: Scaling Large Language Model Training to More Than 10,000 GPUs（编辑译名：把大语言模型训练扩展到超过 10,000 GPU）</td></tr>
+      <tr><th scope="row">作者与机构</th><td>Ziheng Jiang、Haibin Lin、Yinmin Zhong（三人同等贡献）、Qi Huang、Yangrui Chen、Zhi Zhang、Yanghua Peng、Xiang Li、Cong Xie、Shibiao Nong、Yulu Jia、Sun He、Hongmin Chen、Zhihao Bai、Qi Hou、Shipeng Yan、Ding Zhou、Yiyao Sheng、Zhuo Jiang、Haohan Xu、Haoran Wei、Zhang Zhang、Pengfei Nie、Leqi Zou、Sida Zhao、Liang Xiang、Zherui Liu、Zhe Li、Xiaoying Jia、Jianxi Ye、Xin Jin（通讯）、Xin Liu（通讯），共 32 人；ByteDance、Peking University <span class="ev ev-p">P</span>（第 1 页与脚注）</td></tr>
+      <tr><th scope="row">arXiv / 版本</th><td>arXiv:2402.15627v1（cs.LG），水印 2024-02-23；正文未标注会议录用信息，第 13 页致谢提及 NSDI 匿名审稿人与 shepherd（指向 NSDI 评审流程；正式发表信息属站外事实，本页不据以声称） <span class="ev ev-p">P</span>（第 1、13 页）</td></tr>
+      <tr><th scope="row">代码</th><td>MegaScale 系统本体<strong>未随论文开源</strong>。论文脚注 3 以「working on open-sourcing components」链接 <code>github.com/volcengine/veScale</code>（组件仓库）<span class="ev ev-p">P</span>（第 2 页）+ <span class="ev ev-r">R</span>（2026-09-15 核验，见 <a href="#links">#links</a>）；基线为 Megatron-LM 仓库 commit <code>285068c8</code> <span class="ev ev-p">P</span>（第 9 页 §6.1）</td></tr>
+      <tr><th scope="row">评估范围</th><td>175B / 530B Transformer 模型；256–12,288 GPU（175B）与 2,240–11,200 GPU（530B）；生产运行：专有模型、数万亿（multi-trillion）tokens、数周 <span class="ev ev-p">P</span>（第 9-11 页 §6）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> MegaScale 的价值不在单项技术，而在「把算法、通信、算子、数据管道、网络、容错拧成一个在万卡上仍保持 55.2% MFU 与 &gt;90% 有效训练时间率的生产闭环」。对云平台团队，它是「万卡预训练平台该长什么样」的参考架构：算法层技巧（PTB/SWA/LAMB）可移植，而通信重叠、网络定制与稳健训练框架只有在自控集群时才能复刻；其不可复刻性（专有集群、专有模型、系统本体未开源）决定了它更像蓝图而非可引入的组件。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>万卡 LLM 训练有两大挑战——效率（模型切分后 GPU 间重度通信，MFU 直接决定训练速度）与稳定性（作业长达数周，失败与掉队是常态而非例外，且很多稳定性问题只在大规模出现）<span class="ev ev-p">P</span>（第 1 页 §1）。</li>
+  <li><strong>方案：</strong>全栈协同设计：算法层（并行 transformer block、滑窗注意力、LAMB 批量 4×）+ 3D 并行通信-计算重叠（DP/PP/TP-SP）+ 高效算子（FlashAttention-2、融合 LayerNorm/GeLU）+ 数据管道（共享内存树状加载）+ 通信组初始化加速 + 定制网络（Tomahawk 4、multi-rail、Swift+DCQCN）+ 稳健训练框架与深度可观测 <span class="ev ev-p">P</span>（第 3-9 页 §3-§5）。</li>
+  <li><strong>论文声称的主要结果：</strong>175B 模型、12,288 GPU：55.2% MFU、1.34× 于 Megatron-LM（迭代 6.34s、1,984k tokens/s、300B tokens 训练时间 1.75 天）；消融显示各项叠加共 +17.6% MFU（256 GPU 口径）；生产运行数周重启逾 100 次、&gt;90% 故障自动修复、有效训练时间率 &gt;90% <span class="ev ev-p">P</span>（第 1、10-12 页；条件见 <a href="#experiments">#experiments</a>）。</li>
+  <li><strong>云上含义：</strong><span class="ev ev-i">I</span> 吞吐来自「通信躲进计算」（TP/SP 融合、PP 解耦收发、DP 预取+优先级），可用性来自「心跳 → 诊断 → 驱逐补位 → 断点恢复」的自动化闭环；前者决定 GPU 租用成本，后者决定万卡集群的有效训练时间占比。</li>
+  <li><strong>主要限制：</strong>系统本体与数据集未开源、专有模型细节未披露；GPU 仅称「NVIDIA Ampere」未给型号，部分结论（网络、容错）依赖自控集群前提；MFU 依赖峰值 FLOPs 假设口径；仓库侧仅论文脚注指向的 veScale 组件库 <span class="ev ev-p">P</span>（第 2、9 页）+ <span class="ev ev-r">R</span>（2026-09-15 核验）+ <span class="ev ev-i">I</span>。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>效率挑战：</strong>LLM 训练不是易并行的——模型切分到多卡后 GPU 间重度通信，通信之外的算子优化、数据预处理与显存占用同样显著影响 MFU（观测吞吐 ÷ 100% 峰值 FLOPs 假设下的理论吞吐）<span class="ev ev-p">P</span>（第 1 页 §1）。<span class="ev ev-i">I</span> 对架构师而言，MFU 是万卡集群「每元算力产出」的第一决定项，1 个百分点的 MFU 差异在数周作业里就是数万美元级。</p>
+
+<p><strong>稳定性挑战：</strong>LLM 训练周期以周计，失败与掉队是常态；失败恢复代价高、掉队拖慢整个作业；许多硬稳定性问题只在大规模出现，必须靠「深度可观测性」而非人工逐例排查 <span class="ev ev-p">P</span>（第 1-2 页 §1）。</p>
+
+<p><strong>并行策略底座（论文 §2 的背景知识）：</strong><span class="ev ev-p">P</span>（第 2-3 页 §2）</p>
+<ol>
+  <li><strong>数据并行 + ZeRO：</strong>复制模型、均分数据；ZeRO 把优化器状态/梯度分片（第 2 阶段常用：分片两者且无额外通信开销），把 all-reduce 分解为 reduce-scatter + all-gather（图 1）。</li>
+  <li><strong>流水线并行：</strong>按层切 stage、批切微批流水执行；Megatron-LM 的交错 1F1B 把每个 stage 细分为多个虚拟 stage（model chunk），warm-up → steady（1F1B）→ cool-down（图 2）。</li>
+  <li><strong>张量/序列并行：</strong>TP 拆分计算密集算子（GEMM 需通信），LayerNorm/Dropout 等沿序列维 SP 分片省激活内存。</li>
+  <li><strong>3D 组合规则：</strong>TP 通信最好限制在单节点内；DP 与 PP 更适合跨节点；优先把 DP 组建在 PP 之上，缓解跨 minipod 的 DP 通信。</li>
+</ol>
+
+<p><strong>相关工作站位：</strong>既有 LLM 技术报告（GPT-3/GPT-4/GShard/PaLM 与 OPT/BLOOM/Llama/Llama-2 等）多聚焦模型性能对比、略去系统基础设施细节，本文从系统视角补足超过 10,000 GPU 端到端预训练经验 <span class="ev ev-p">P</span>（第 12 页 §7）。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 算法层优化（不损收敛前提下换效率）</h3>
+<ul>
+  <li><strong>并行 transformer block（PTB）：</strong>把标准串行块 y = x + MLP(LN(x + Attention(LN(x)))) 改写为并行形式，attention 与 MLP 两支并行执行以缩短计算时间；引前人工作称对千亿参数模型质量无退化 <span class="ev ev-p">P</span>（第 3 页 §3.1 式 1-2）。</li>
+  <li><strong>滑窗注意力（SWA）：</strong>固定窗口稀疏注意力，复杂度 O(s×w) 优于全注意力 O(s×s)（w ≪ s）；前人工作与本文微基准表明堆叠窗口层可保留全域信息 <span class="ev ev-p">P</span>（第 3-4 页 §3.1）。</li>
+  <li><strong>LAMB 优化器：</strong>把批量扩至 4× 而无损精度（LLM 实验口径）；交错流水线下，4 步 1× 批量的气泡为 (4/v)·(p−1)/m、1 步 4× 批量为 (1/v)·(p−1)/(4m)，论文据此称流水线气泡减少 87.5% <span class="ev ev-p">P</span>（第 4 页 §3.1；分数式经 300dpi 放大核对）。</li>
+</ul>
+
+<h3>3.2 3D 并行的通信-计算重叠</h3>
+<div class="table-scroll">
+  <table>
+    <caption>三个并行维度的通信与重叠手法（机制均为论文事实 <span class="ev ev-p">P</span>；「运维要点」列为编辑整理 <span class="ev ev-i">I</span>）</caption>
+    <thead>
+      <tr><th scope="col">维度</th><th scope="col">关键通信</th><th scope="col">重叠手法</th><th scope="col">页码</th><th scope="col">运维要点（I）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">DP（ZeRO-2）</th>
+        <td>forward 前参数 all-gather；backward 后梯度 reduce-scatter（图 1）</td>
+        <td>首个 all-gather 无法隐藏 → 受 PyTorch FSDP 启发在迭代开始预取、与数据加载重叠，通信时间按 1/(2·vpp_size) 因子缩短；高优先级通信先行（优先级＝依赖该通信结果的计算算子顺序）</td>
+        <td><span class="ev ev-p">P</span> 第 4 页 §3.2</td>
+        <td>首个 AG/末个 RS 是结构性暴露段；vpp_size（虚拟 stage 数）越大暴露越小</td>
+      </tr>
+      <tr>
+        <th scope="row">PP（交错 1F1B）</th>
+        <td>阶段间点对点 send/receive</td>
+        <td>warm-up 前向只依赖前一 receive → 解耦 send/receive（解除「被较慢一方阻塞」），send 与计算重叠；cool-down 反向应用同法；steady 阶段收发全部异步（图 4）</td>
+        <td><span class="ev ev-p">P</span> 第 4-5 页 §3.2 与图 4</td>
+        <td>send/recv 解耦是调度器级改动，复现时注意与框架自带实现的差异</td>
+      </tr>
+      <tr>
+        <th scope="row">TP/SP</th>
+        <td>输入 all-gather / 输出 reduce-scatter（在关键路径上）</td>
+        <td>与 FFN 路径并行 Linear 融合（FFN GEMM 大、隐藏更好）；再把 GEMM kernel 切小块与通信流水执行；backward 同法；3D 下按 model chunk 粒度实施（图 3）</td>
+        <td><span class="ev ev-p">P</span> 第 4-5 页 §3.2 与图 3</td>
+        <td>通信融合进 kernel 是「需要改算子实现」的深水区，借库不如自研或跟上游</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>3.3 高效算子、数据管道与初始化</h3>
+<ul>
+  <li><strong>算子：</strong>attention 用 FlashAttention-2（改进 thread block/warp 工作划分）；LayerNorm/GeLU 由细粒度 kernel 融合为单 kernel，减少启动开销、优化内存访问 <span class="ev ev-p">P</span>（第 5 页 §3.3）。</li>
+  <li><strong>数据管道：</strong>预处理不在关键路径、与步末梯度同步重叠；同机 GPU worker 属同一 TP 组、每步输入相同 → 两层树状加载：每机单一专用 dataloader 读入共享内存，各 worker 拷贝到显存，消除冗余磁盘读 <span class="ev ev-p">P</span>（第 5 页 §3.4）。</li>
+  <li><strong>通信组初始化：</strong>Megatron-LM 在 2,048 NVIDIA Ampere GPU 初始化约 1047 秒，阻碍例行测试与快恢复；TCPStore（单线程阻塞读写）→ Redis（非阻塞异步）降至 361 秒；再以通信组初始化顺序设计消除全局 barrier（O(n²)→O(n)），2,048 GPU 降到 5 秒内、&gt;10,000 GPU 降到 30 秒内 <span class="ev ev-p">P</span>（第 5-6 页 §3.5）。</li>
+</ul>
+
+<h3>3.4 网络性能调优</h3>
+<ul>
+  <li><strong>拓扑：</strong>交换机基于 Broadcom Tomahawk 4（单芯片 25.6 Tbps、64×400Gbps 端口）；三层 CLOS 连接 &gt;10,000 GPU；每层下行:上行＝1:1（32+32 口），小直径高带宽 <span class="ev ev-p">P</span>（第 6 页 §3.6）。</li>
+  <li><strong>ECMP 冲突抑制：</strong>ToR 级把一个 400G 下行以特定 AOC 线缆分裂为两个 200G 下行（上行带宽双倍于下行、降低冲突概率）；服务器 8×200G NIC 以 multi-rail 接 8 台不同交换机；同组 ToR 最多连接 64 台 GPU 服务器，并把数据密集节点调度到同一 ToR 下、减少交换跳数 <span class="ev ev-p">P</span>（第 6 页 §3.6）。</li>
+  <li><strong>拥塞控制：</strong>all-to-all 在默认 DCQCN 下引发 PFC 与队头阻塞；自研算法融合 Swift（RTT 精确测量）与 DCQCN（ECN 快速响应），显著提升吞吐、降低 PFC 拥塞 <span class="ev ev-p">P</span>（第 6 页 §3.6）。</li>
+  <li><strong>重传超时：</strong>调 NCCL 重传计时/重试参数，并启用 NIC <code>adap_retrans</code> 缩短重传间隔，加快链路闪断恢复 <span class="ev ev-p">P</span>（第 6 页 §3.6）。</li>
+</ul>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝稳健训练框架（Driver + 定制 Kubernetes + Executor 心跳 + 诊断/驱逐/补位 + 检查点恢复触发，§4）；<strong>数据面</strong>＝数据管道、微批计算与 3D 通信、优化器更新、检查点读写（§3）。该划分仅影响叙述，不改变论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/megascale-data-path.svg"
+       alt="MegaScale 数据路径示意图：控制面（虚线）为稳健训练框架——Driver 与定制 Kubernetes 按节点分配 Executor（Pod），训练守护进程周期发送心跳，异常或心跳超时即暂停全集群、运行轻量自检诊断（主机内 RNIC 测试与 NCCL 测试）、屏蔽故障 IP 并等量补位，再从最新检查点恢复；数据面（实线）为一次训练迭代的关键路径：数据管道以每机单一 dataloader 写共享内存、预处理异步执行；启动期把 TCPStore 换为 Redis 并重排通信组初始化顺序，使 NCCL 初始化从 1047 秒降至 30 秒内；微批前向反向计算采用并行 transformer block（y = x + MLP(LN(x)) + Attention(LN(x))）、滑窗注意力、FlashAttention-2 与融合 LayerNorm/GeLU；TP/SP 把 all-gather 与 reduce-scatter 融合进 FFN 并行 Linear 并切块 GEMM 流水重叠，首个 all-gather 预取使通信时间按 1/(2·vpp_size) 缩短；PP 交错 1F1B 解耦 send/recv 异步重叠，LAMB 四倍批量把流水线气泡削减 87.5%；DP 梯度 reduce-scatter 与参数 all-gather 重叠且高优先级通信先行；LAMB 优化器更新后进入两阶段快速检查点——GPU 状态先写主机内存（数秒、训练不停），后台异步写 HDFS，恢复时组内单 worker 读取共享分区后广播；底部两条支撑带为定制数据中心网络（Tomahawk 4、三层 CLOS、1:1 无收敛、multi-rail、ECMP 抑制、Swift+DCQCN、adap_retrans）与可观测旁路（CUDA event 热力图约 0.5% 慢机、分布式 trace、3D 并行可视化、Kafka 实时入库）。" width="980" height="840">
+  <figcaption>图 1：MegaScale 训练数据路径与关键路径（⑨控制面 + ①–⑧数据面步骤 + 两条支撑带）。实线＝数据面关键路径，虚线＝控制面与可观测旁路；编号对应下方文字序列。依据论文第 2-9 页图 1-图 8 与 §3-§5 绘制 <span class="ev ev-p">P</span>；平面划分、配色与编号为编辑标注（论文本身无此图）<span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（①–⑨；与图中编号一致）</h3>
+<ol>
+  <li><strong>① 数据管道（卸出关键路径）：</strong>预处理异步执行、与步末梯度同步重叠；每机单一专用 dataloader 读入共享内存，各 GPU worker 拷贝所需数据到显存（两层树状、消除冗余磁盘读）<span class="ev ev-p">P</span>（第 5 页 §3.4）。</li>
+  <li><strong>② 启动期（一次性）：</strong>建立 NCCL 通信组——TCPStore 换 Redis（2,048 GPU 初始化 1047s→361s），再以组初始化顺序设计消除全局 barrier（O(n²)→O(n)），2,048 GPU &lt;5s、&gt;10,000 GPU &lt;30s，为例行测试与快恢复扫清障碍 <span class="ev ev-p">P</span>（第 5-6 页 §3.5）。</li>
+  <li><strong>③ 微批前向/反向计算（关键路径主干）：</strong>PTB 并行块（y = x + MLP(LN(x)) + Attention(LN(x))）+ SWA 滑窗注意力 + FlashAttention-2 + 融合 LayerNorm/GeLU；微批按交错 1F1B 流经各 PP stage；激活驻留 HBM，通信操作交由 ④⑤⑥ 与计算重叠 <span class="ev ev-p">P</span>（第 3-5 页 §3.1/§3.3、第 3 页图 2）。</li>
+  <li><strong>④ TP/SP 重叠：</strong>all-gather/reduce-scatter 与 FFN 并行 Linear 融合，GEMM 切小块与通信流水执行（backward 同法）；按 model chunk 粒度；首个 all-gather 预取与数据加载重叠，通信时间按 1/(2·vpp_size) 因子缩短 <span class="ev ev-p">P</span>（第 4-5 页 §3.2 与图 3）。</li>
+  <li><strong>⑤ PP 重叠 + 气泡压缩：</strong>交错 1F1B 的 send/receive 解耦异步发起，warm-up 只依赖前一 receive、steady 收发与计算全重叠、cool-down 反向应用同法；LAMB 把批量扩至 4×，流水线气泡减少 87.5% <span class="ev ev-p">P</span>（第 4 页 §3.1/§3.2）。</li>
+  <li><strong>⑥ DP 梯度同步重叠：</strong>ZeRO-2 语义下梯度 reduce-scatter 聚合、参数 all-gather 取回；高优先级通信先行（优先级＝依赖该通信结果的计算顺序）；这些集合通信由底部「通信基座」承载（Tomahawk 4 三层 CLOS、1:1 无收敛、multi-rail、Swift+DCQCN）<span class="ev ev-p">P</span>（第 4 页 §3.2、第 6 页 §3.6、第 2-3 页图 1）。</li>
+  <li><strong>⑦ 优化器更新：</strong>LAMB 以 4× 批量更新（微基准：13B 模型、约 250B tokens 后与 ADAM 1× 批量损失一致，随后在生产开启）<span class="ev ev-p">P</span>（第 4 页 §3.1、第 11 页图 10b）。</li>
+  <li><strong>⑧ 两阶段快速检查点：</strong>阶段一 GPU 片上状态写主机内存（优化序列化 + pinned memory，数秒、训练不停）；阶段二后台进程异步转存 HDFS；恢复时利用 DP 组共享分区：组内单 worker 读取后广播，线性缓解 HDFS 带宽瓶颈 <span class="ev ev-p">P</span>（第 7-8 页 §4.4）。</li>
+  <li><strong>⑨ 控制面（旁路常驻）：</strong>Driver + 定制 Kubernetes 按节点起 Executor（Pod）；训练守护进程周期发心跳（携带状态、日志、RDMA 指标）；异常/心跳超时 → 暂停全集群 → 轻量自检诊断（主机内 RNIC 回环/全互联、节点内 all-to-all、同 ToR 跨机 all-reduce）→ 屏蔽 IP、驱逐并等量补位 → 自最新检查点恢复；可观测旁路提供 CUDA event 热力图（约 0.5% 慢机）、分布式 trace 与 3D 并行可视化（超时定位故障节点）<span class="ev ev-p">P</span>（第 6-9 页 §4-§5 与图 5-图 8）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键数字与容量事实（口径非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LAMB 气泡：(4/v)·(p−1)/m → (1/v)·(p−1)/(4m)，即减少 87.5%（批量 1×、4 步 → 4×、1 步）</td><td>交错流水线，p＝阶段数、v＝虚拟 stage 数、m＝微批数</td><td><span class="ev ev-p">P</span> 第 4 页 §3.1</td></tr>
+      <tr><td>首个 all-gather 预取：通信时间按 1/(2·vpp_size) 因子缩短；高优先级通信先行</td><td>DP all-gather/reduce-scatter 重叠</td><td><span class="ev ev-p">P</span> 第 4 页 §3.2</td></tr>
+      <tr><td>NCCL 通信组初始化：1047s（Megatron-LM/TCPStore）→ 361s（Redis）→ &lt;5s（2,048 GPU）/ &lt;30s（&gt;10,000 GPU）；barrier O(n²)→O(n)</td><td>2,048 NVIDIA Ampere GPU 起测（与 §6 同集群类型）</td><td><span class="ev ev-p">P</span> 第 5-6 页 §3.5</td></tr>
+      <tr><td>网络：Tomahawk 4 单芯片 25.6 Tbps、64×400G；三层 CLOS &gt;10,000 GPU；下行:上行 1:1（32+32）；400G→2×200G（AOC）；8×200G NIC multi-rail；同组 ToR ≤64 台服务器</td><td>自建数据中心网络</td><td><span class="ev ev-p">P</span> 第 6 页 §3.6</td></tr>
+      <tr><td>检查点：阶段一写主机内存降至数秒（pinned + 优化序列化，高 PCIe 带宽）；阶段二后台异步写 HDFS；恢复按 DP 组单读多播</td><td>自建部署（分布式文件系统为 HDFS）</td><td><span class="ev ev-p">P</span> 第 7-8 页 §4.4</td></tr>
+      <tr><td>诊断套件：主机内 RNIC 回环 + full-mesh；同主机 RNIC 互测；节点内 NCCL all-to-all；同 ToR 跨机 all-reduce</td><td>轻量自检（时间与准确率折中）</td><td><span class="ev ev-p">P</span> 第 7 页 §4.3</td></tr>
+      <tr><td>监控：心跳含 IP/Pod/硬件/进程状态/stdout/stderr/RDMA 指标；毫秒级精度；流量完全停止自动触发恢复</td><td>生产常开、开销可忽略</td><td><span class="ev ev-p">P</span> 第 7 页 §4.2、第 8 页 §5.1</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong><span class="ev ev-p">P</span> 口径提醒：</strong>论文网络与容错机制描述均以「自建数据中心 + 自研 Driver/Kubernetes + HDFS」为前提（第 6-8 页）。把这些数字（如初始化 &lt;30s、诊断 &lt;10 分钟）外推到共享集群或托管服务时，前提不再成立——引用时必须连带前提条件。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>专用特化 ↔ 通用性</h3>
+    <p><span class="ev ev-p">P</span> MegaScale 是「为 LLM 训练特化的专用系统」，全栈协同设计（第 2 页 §1）。<span class="ev ev-i">I</span> 代价是迁移面：换模型形态（如非 Transformer、多模态）、换硬件代际或换集群环境时，特化假设（TP 同机、multi-rail、HDFS）逐一失效；系统本体未开源，复刻成本高。</p>
+  </li>
+  <li>
+    <h3>批量上限 ↔ 收敛风险（LAMB）</h3>
+    <p><span class="ev ev-p">P</span> LAMB 批量 4× 使气泡 −87.5%，微基准在约 250B tokens 后与 ADAM 损失一致（第 4、11 页）。<span class="ev ev-i">I</span> 「损失最终一致」不等于「任意步数下逐点一致」：早期训练动力学有差异，对下游评测敏感的团队应在自有数据上复跑收敛对照后再全量启用。</p>
+  </li>
+  <li>
+    <h3>通信重叠收益 ↔ 结构性暴露段</h3>
+    <p><span class="ev ev-p">P</span> 首个 all-gather 与最后 reduce-scatter 无法被隐藏，只能预取/优先级调度压缩（第 4 页 §3.2）。<span class="ev ev-i">I</span> 1/(2·vpp_size) 的收益与虚拟 stage 数耦合：加深 vpp 换通信隐藏，但增加调度与内存压力；这是吞吐调参的权衡点而非免费午餐。</p>
+  </li>
+  <li>
+    <h3>算法改块（PTB/SWA）↔ 生态兼容</h3>
+    <p><span class="ev ev-p">P</span> PTB 改写注意力与 MLP 的执行结构、SWA 改注意力稀疏模式，均有收敛验证支撑（第 3-4 页；第 10-11 页图 10a）。<span class="ev ev-i">I</span> 两者都会影响下游生态（微调、推理引擎对标准块结构的假设）；论文验证到预训练损失与生产运行，未给下游任务评测数据。</p>
+  </li>
+  <li>
+    <h3>检查点频率 ↔ 关键路径开销</h3>
+    <p><span class="ev ev-p">P</span> 高频检查点缩小故障回退窗口，但写入在关键路径上；两阶段法把关键路径压到「数秒写主机内存」，HDFS 转移移出关键路径（第 7-8 页 §4.4）。<span class="ev ev-i">I</span> 主机内存缓冲占用节点内存、异步窗口内状态未落盘——故障恰在窗口内时回退更多步数；窗口大小论文未明确披露。</p>
+  </li>
+  <li>
+    <h3>诊断灵敏度 ↔ 误杀与停机</h3>
+    <p><span class="ev ev-p">P</span> 自检诊断存在「执行时间 vs 准确率」折中：诊断过久侵占有效训练时间、误报会错杀好机器（第 7 页 §4.3）。<span class="ev ev-i">I</span> 阈值治理（心跳超时、NCCL 超时、诊断通过线）是这套框架运营期的主要调参对象，论文只给了结果值（&lt;10 分钟、15 分钟内追平）未给调参过程。</p>
+  </li>
+  <li>
+    <h3>网络定制收益 ↔ 可复刻性</h3>
+    <p><span class="ev ev-p">P</span> 1:1 无收敛 CLOS + multi-rail + 定制拥塞控制是万卡吞吐的网络前提（第 6 页 §3.6）。<span class="ev ev-i">I</span> 共享云网络难以完整复刻该前提（收敛比、拥塞控制权在厂商）；租用环境下的预期收益应打折并实测。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>MegaScale 需求/机制 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求/机制</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算：大规模同代 GPU（论文口径 NVIDIA Ampere，&gt;10,000 卡；每服务器 8×200G NIC）</th>
+        <td><span class="ev ev-e">E</span> 8×GPU 高带宽整机实例（各云 H100/A100 档 GPU 主机），同代同型整池；节点内 NVSwitch、节点间高带宽 RDMA</td>
+        <td>GPU 代际与 NIC 配置为论文口径 <span class="ev ev-p">P</span>（第 6、9 页；具体 Ampere 型号论文未明确披露）；实例命名为云目录示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">网络：三层 CLOS、1:1 无收敛、multi-rail（8×200G/服务器）、定制拥塞控制（Swift+DCQCN 融合）</th>
+        <td><span class="ev ev-e">E</span> RoCEv2/InfiniBand 后端网络、非收敛比（1:1）组网档、拓扑感知放置（TP 同机、DP/PP 跨机）；拥塞控制用云厂商 ECN/PFC 配置近似</td>
+        <td>组网原则为论文事实 <span class="ev ev-p">P</span>（第 6 页 §3.6）；自研拥塞控制在共享云环境通常不可复刻，以厂商配置近似 <span class="ev ev-e">E</span>+<span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">存储：检查点两阶段写（主机内存数秒 → 异步分布式文件系统 HDFS）；恢复组内单读多播</th>
+        <td><span class="ev ev-e">E</span> 高吞吐对象存储/并行文件系统（Lustre/GPFS 类）承载分片检查点；节点本地内存作一阶缓冲</td>
+        <td>两阶段机制与「单 worker 读 + 广播」为论文事实 <span class="ev ev-p">P</span>（第 7-8 页 §4.4）；HDFS→云存储的吞吐换算需按目录压测 <span class="ev ev-e">E</span>/<span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">编排：定制 Kubernetes + Driver + 每节点 Executor（Pod）+ 心跳；故障节点屏蔽 IP、驱逐、等量补位</th>
+        <td><span class="ev ev-e">E</span> Kubernetes + 自定义控制器/训练作业编排、节点污点与驱逐、自动换补；或托管批调度服务</td>
+        <td>控制面机制为论文事实 <span class="ev ev-p">P</span>（第 6 页 §4.1、图 5）；云上控制器实现为工程示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：心跳聚合日志 + RDMA 指标 + 毫秒级监控；CUDA event 热力图/trace/3D 可视化；Kafka→分析库</th>
+        <td><span class="ev ev-e">E</span> 日志/指标接入云监控（Prometheus/Grafana、托管 Kafka）；GPU 事件计时自研采集 + 仪表盘</td>
+        <td>监控形态为论文事实 <span class="ev ev-p">P</span>（第 7-9 页 §4.2/§5）；云产品接入为实践示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性：从检查点跨节点拓扑恢复（驱逐/补位后继续训练）；训练中动态换入健康节点</th>
+        <td><span class="ev ev-e">E</span> 节点池维护 + 检查点续训（set 自动换卡重调度）；把「换入节点需过诊断」固化为准入钩子</td>
+        <td>恢复语义为论文事实 <span class="ev ev-p">P</span>（第 6-8 页 §4）；云上准入钩子为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> 依论文组网：TP 组必须同机（节点内高速互联），DP 组优先于 PP 组跨 minipod 铺开（第 3 页 §2）；数据密集节点尽量同置一个 ToR 域以减少 ECMP 冲突（第 6 页）。若云上只能拿到收敛比组网，优先保 TP 同机与 PP 邻机架，DP 慢一点影响最小（其通信已大幅重叠）。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 训练场景的「SLO」口径</h3>
+<p>预训练没有在线时延 SLO，平台 SLA 通常转化为：<span class="ev ev-i">I</span> ①<strong>吞吐目标</strong>（tokens/s 或 MFU）；②<strong>有效训练时间占比</strong>；③<strong>故障 MTTR</strong>；④<strong>收敛里程碑</strong>。论文对四者均给出参考：<span class="ev ev-p">P</span> 有效训练时间率 &gt;90%（迭代数×迭代训练时长 ÷ 总训练时长，第 12 页 §6.3）；故障检测+诊断平均 &lt;10 分钟、崩溃后 15 分钟内自最新检查点追平（第 12 页）；吞吐/MFU 见 <a href="#experiments">#experiments</a>；收敛里程碑对应生产运行损失持续收敛（第 11 页图 11）。</p>
+
+<h3>7.2 成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+预计 GPU 时（小时）≈ 总 token 数 ÷ (单作业吞吐 tokens/s × 3600)（吞吐带完整条件，见表 2 口径）<br>
+算力成本 ≈ GPU 时 × 当时单价（记录查询日期）<br>
+MFU 杠杆：吞吐 ×(MFU_new/MFU_old) → 同规模作业 GPU 时等比例缩短<br>
+有效成本/token ≈ 算力成本 ÷ 总 token 数 ÷ 有效训练时间占比
+</div>
+<p><span class="ev ev-i">I</span> 公式中由论文支撑的变量是吞吐与 MFU（带完整条件，见 <a href="#experiments">#experiments</a>）与有效训练时间率（&gt;90%，第 12 页）；单价、能耗与存储价论文未披露，本页不给伪精确数字。</p>
+
+<h3>7.3 敏感项排序（论文口径，条件互不可比）</h3>
+<p><span class="ev ev-p">P</span> 256 GPU 消融口径下，各项叠加对 MFU 的贡献：通信重叠（TP/PP/DP）+6.2%（合并披露）＞ 算法（PTB+SWA）+5.6% ＞ LAMB 批量 256→768 +3.0% ＞ 高效算子 +1.7% ＞ 数据管道与问题代码消除 +1.1%；合计 +17.6%（第 10 页 §6.1、第 11 页表 3）。<span class="ev ev-i">I</span> 成本治理含义：先拿「不改算子实现」的算法与 LAMB 项，通信重叠与网络定制收益更大但工程更深；万卡规模上稳定性项（&gt;90% 自动修复、15 分钟追平）对有效产出的影响可能大于最后一个 MFU 点。</p>
+
+<h3>7.4 数据缺口</h3>
+<ul>
+  <li>端到端 TCO、云价格、能耗、机柜功率：<span class="ev ev-i">I</span> 论文未披露，需部署时自测。</li>
+  <li>GPU 具体型号/显存/峰值 FLOPs 假设：<span class="ev ev-p">P</span> 论文未明确披露（仅称 NVIDIA Ampere），MFU 无法跨集群复算。</li>
+  <li>检查点大小/频率/主机内存占用、异步窗口的回退步数：<span class="ev ev-p">P</span> 论文未明确披露（机制见第 7-8 页 §4.4）。</li>
+  <li>专有生产模型的参数量、数据构成与下游评测：<span class="ev ev-p">P</span> 论文未明确披露（第 11 页图 11 仅给归一化损失曲线）。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>训练数据合规：</strong><span class="ev ev-p">P</span> 生产运行训练「专有模型」（第 11 页），数据构成未披露。<span class="ev ev-i">I</span> 自建平台需完成语料许可/隐私/版权审查；本文不提供数据面合规方案。</li>
+  <li><strong>检查点即核心资产：</strong><span class="ev ev-i">I</span> 检查点含全部模型/优化器状态（<span class="ev ev-p">P</span> 第 7 页 §4.4），且会集中写入分布式文件系统——应按最高敏资产分级：静态加密、最小权限、副本策略与删除审计；HDFS 类集中存储是横向移动的高价值目标。</li>
+  <li><strong>监控/日志敏感性：</strong><span class="ev ev-i">I</span> 心跳与 CUDA event 数据含 rank 拓扑、主机 IP、Pod 名、代码段耗时（<span class="ev ev-p">P</span> 第 7-8 页），可间接暴露模型结构与集群布局；监控栈（Kafka/分析库）应与训练网络隔离并设保留期。</li>
+  <li><strong>控制面权限：</strong><span class="ev ev-i">I</span> Driver 可暂停全集群、驱逐节点并改写 Kubernetes 资源（<span class="ev ev-p">P</span> 第 6 页 §4.1）——该权限被滥用即等于集群级拒绝服务；需最小化授权、操作审计与手动驱逐入口的双人复核。</li>
+  <li><strong>供应链：</strong><span class="ev ev-p">P</span> 论文基线为 Megatron-LM commit <code>285068c8</code> 时点（第 9 页 §6.1）；<span class="ev ev-r">R</span> 论文脚注指向的 veScale 为 Apache-2.0（2026-09-15 核验）。<span class="ev ev-i">I</span> 复刻时应 pin commit + 镜像 digest + CVE 扫描；veScale 是组件库而非 MegaScale 本体，引入前按组件做安全评估。</li>
+</ul>
+
+<h3>8.2 可运维性</h3>
+<ul>
+  <li><strong>故障自动化闭环：</strong><span class="ev ev-p">P</span> 心跳异常 → 全集群暂停 → 自检诊断 → 驱逐/补位 → 检查点恢复；&gt;90% 软硬件故障自动识别修复，检测+诊断 &lt;10 分钟、15 分钟内追平进度（第 6-8 页 §4、第 11-12 页 §6.3）。<span class="ev ev-i">I</span> 平台化时应把「自动恢复率、MTTR、有效训练时间率」作为一线运营指标持续跟踪，而不是当作论文静态数字。</li>
+  <li><strong>掉队治理：</strong><span class="ev ev-p">P</span> 约 0.5% 机器显著慢（热力图识别），效率由最慢机器决定，剔除后峰值 MFU 稳定；特定慢主机（前向多约 10% 耗时）移除后 MFU +0.7%（第 8 页 §5.1、第 12 页 §6.3）。<span class="ev ev-i">I</span> 「慢机驱逐」应固化为常态化流程：基线画像 → 热力图定位 → 灰度隔离 → 复检归档。</li>
+  <li><strong>性能退化排查：</strong><span class="ev ev-p">P</span> MFU 随时间下降案例：步时增长集中于 DP reduce-scatter 发起时差，根因是 GC 与部分 PyTorch 算子等代码段，修改后不再显著下降（第 12 页 §6.3、图 12）；网卡 link flapping 案例要求显式调大 NCCL 超时并做底层信号质量控制（第 12 页）。<span class="ev ev-i">I</span> 建议写入 runbook：MFU 周环比告警 → CUDA event 热力图 → trace 定位 → 代码段归因。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-p">P</span> 检查点/恢复路径是升级的高风险面（序列化机制被优化过，第 7 页）。<span class="ev ev-i">I</span> 框架/驱动升级须演练「旧版本写检查点 → 新版本读取」；诊断套件与监控栈随之回归；保留「上一可用镜像 + 兼容检查点 + 配置」回滚组合。</li>
+  <li><strong>已知陷阱速查：</strong><span class="ev ev-p">P</span> ①默认 NCCL 超时在网卡闪断时过快报错——显式调大（第 12 页）；②TCPStore 阻塞初始化是万卡启动与快恢复的隐性瓶颈（第 5-6 页）；③掉队主机的单 GPU GEMM 微基准可能测不出异常（第 8 页 §5.1）——单卡基准正常 ≠ 集群正常。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>数千至数万卡自建/专有集群上的 LLM 预训练。</strong>触发：作业以周计、MFU 与稳定性同时是主要矛盾。理由：论文全部机制与数字均在该场景验证（175B/12,288 GPU 55.2% MFU；生产运行 &gt;90% 有效训练时间率）<span class="ev ev-p">P</span>（第 1、10-12 页）。</li>
+  <li><strong>可自控网络与编排的环境（自建数据中心或专属托管）。</strong>触发：能定制 CLOS 组网、拥塞控制与 Kubernetes 控制器。理由：通信重叠收益与容错闭环都建立在自控前提上 <span class="ev ev-p">P</span>（第 6 页 §3.6、第 6-8 页 §4）。</li>
+  <li><strong>以 3D 并行为底座、基于 Megatron-LM 生态演进的平台。</strong>触发：已在用 Megatron-LM（论文用其 commit 285068c8 做基线）。理由：MegaScale 构建于 Megatron-LM 之上，各优化项可直接对照消融表排优先级 <span class="ev ev-p">P</span>（第 9-11 页）。</li>
+  <li><strong>万卡作业的故障/掉队治理体系建设。</strong>触发：失败与掉队频发、人工排障不可扩展。理由：心跳→诊断→驱逐→恢复闭环 + 热力图/trace/3D 可视化是成套方法论 <span class="ev ev-p">P</span>（第 6-9 页 §4-§5）。</li>
+  <li><strong>研究「生产级 LLM 训练系统该怎么设计」的团队。</strong>触发：需要系统视角的参考架构与踩坑清单。理由：论文价值正在于公开了常规技术报告省略的系统细节 <span class="ev ev-p">P</span>（第 12 页 §7）+ <span class="ev ev-i">I</span>。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>期望「引入即用」的开源训练框架。</strong>触发：想 pip install 一个 MegaScale。理由：系统本体未开源，论文脚注指向的 veScale 是组件库（Apache-2.0，进行中），不是 MegaScale 官方完整实现 <span class="ev ev-p">P</span>（第 2 页脚注 3）+ <span class="ev ev-r">R</span>（2026-09-15 核验）。</li>
+  <li><strong>数百卡以下的小规模训练。</strong>触发：单机或数机作业。理由：万卡特化机制（通信组初始化、multi-rail、稳健训练框架）的收益在小规模不成比例；论文最小实验口径也是 256 GPU <span class="ev ev-p">P</span>（第 10 页）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>共享/托管环境想完整复刻网络前提。</strong>触发：无法控制收敛比、拥塞控制与机架放置。理由：1:1 无收敛 CLOS、multi-rail、自研拥塞控制是吞吐与稳定性的前提，租用环境不可复制 <span class="ev ev-p">P</span>（第 6 页 §3.6）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>推理服务或微调为主的工作负载。</strong>触发：拿本文数字预估 serving/微调收益。理由：论文范畴是预训练系统，不含服务化组件与微调实验 <span class="ev ev-p">P</span>（第 1 页 §1）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>要求全部组件可复现审计的合规环境。</strong>触发：需要逐组件源码审计。理由：专有模型、数据集与部分自研组件（Driver、诊断、拥塞控制算法）细节未公开 <span class="ev ev-p">P</span>（第 6-11 页）+ <span class="ev ev-i">I</span>。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span>（第 9 页 §6.1）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（论文事实）</caption>
+    <tbody>
+      <tr><th scope="row">基线与框架</th><td>MegaScale 构建于 Megatron-LM 之上；对比基线为 Megatron-LM 仓库 commit <code>285068c8</code>（实验开始数月前选定）；MegaScale 与 Megatron-LM 使用相同批量（公平对比）</td></tr>
+      <tr><th scope="row">模型</th><td>175B：hidden 12,288 / heads 128 / layers 96 / TP 8 / PP 8；530B：hidden 20,480 / heads 160 / layers 105 / TP 8 / PP 35（表 1）；交错流水线交错数：175B 为 6、530B 为 3；序列长 2,048、词表 64,000</td></tr>
+      <tr><th scope="row">硬件</th><td>NVIDIA Ampere GPU（生产集群口径，截至 2023 年 9 月最大集群 &gt;10,000 卡）；<strong>具体型号/显存/峰值 FLOPs：论文未明确披露</strong></td></tr>
+      <tr><th scope="row">口径</th><td>MFU ＝ 观测吞吐 ÷ 100% 峰值 FLOPs 假设下的理论吞吐（第 1 页引 [7]）；表 2 训练时间按 300B tokens 计；消融在 256 GPU/批量 256 进行且网络优化双方均开启（第 10 页）</td></tr>
+      <tr><th scope="row">收敛验证</th><td>微基准受资源所限用 13B 模型：PTB+SWA 在 &gt;100B tokens 后损失与基线相当；LAMB 4× 批量在约 250B tokens 后与 ADAM 1× 损失一致（第 10-11 页图 10）；生产运行为专有模型、数万亿（multi-trillion）tokens（第 11 页图 11）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 强扩展主结果（论文表 2 全量转录）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>175B 强扩展训练性能（<span class="ev ev-p">P</span>，第 10 页表 2；批量 6144 用于 3072–12288 GPU、768 用于 256–1024 GPU（GPU 内存所限）；训练时间按 300B tokens；MFU 列括号内为 MegaScale 对 Megatron-LM 加速比）</caption>
+    <thead>
+      <tr><th scope="col">批量</th><th scope="col">方法</th><th scope="col" class="num">GPUs</th><th scope="col" class="num">迭代时间 (s)</th><th scope="col" class="num">吞吐 (tokens/s)</th><th scope="col" class="num">训练时间 (天)</th><th scope="col" class="num">MFU</th><th scope="col" class="num">聚合 PFlops/s</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="8">768</th><th scope="row" rowspan="4">Megatron-LM</th><td class="num">256</td><td class="num">40.0</td><td class="num">39.3k</td><td class="num">88.35</td><td class="num">53.0%</td><td class="num">43.3</td></tr>
+      <tr><td class="num">512</td><td class="num">21.2</td><td class="num">74.1k</td><td class="num">46.86</td><td class="num">49.9%</td><td class="num">77.6</td></tr>
+      <tr><td class="num">768</td><td class="num">15.2</td><td class="num">103.8k</td><td class="num">33.45</td><td class="num">46.7%</td><td class="num">111.9</td></tr>
+      <tr><td class="num">1024</td><td class="num">11.9</td><td class="num">132.7k</td><td class="num">26.17</td><td class="num">44.7%</td><td class="num">131.9</td></tr>
+      <tr><th scope="row" rowspan="4">MegaScale</th><td class="num">256</td><td class="num">32.0</td><td class="num">49.0k</td><td class="num">70.86</td><td class="num">65.3% (1.23×)</td><td class="num">52.2</td></tr>
+      <tr><td class="num">512</td><td class="num">16.5</td><td class="num">95.1k</td><td class="num">36.51</td><td class="num">63.5% (1.27×)</td><td class="num">101.4</td></tr>
+      <tr><td class="num">768</td><td class="num">11.5</td><td class="num">136.7k</td><td class="num">25.40</td><td class="num">61.3% (1.31×)</td><td class="num">146.9</td></tr>
+      <tr><td class="num">1024</td><td class="num">8.9</td><td class="num">176.9k</td><td class="num">19.62</td><td class="num">59.0% (1.32×)</td><td class="num">188.5</td></tr>
+      <tr><th scope="row" rowspan="8">6144</th><th scope="row" rowspan="4">Megatron-LM</th><td class="num">3072</td><td class="num">29.02</td><td class="num">433.6k</td><td class="num">8.01</td><td class="num">48.7%</td><td class="num">466.8</td></tr>
+      <tr><td class="num">6144</td><td class="num">14.78</td><td class="num">851.6k</td><td class="num">4.08</td><td class="num">47.8%</td><td class="num">916.3</td></tr>
+      <tr><td class="num">8192</td><td class="num">12.24</td><td class="num">1027.9k</td><td class="num">3.38</td><td class="num">43.3%</td><td class="num">1106.7</td></tr>
+      <tr><td class="num">12288</td><td class="num">8.57</td><td class="num">1466.8k</td><td class="num">2.37</td><td class="num">41.2%</td><td class="num">1579.5</td></tr>
+      <tr><th scope="row" rowspan="4">MegaScale</th><td class="num">3072</td><td class="num">23.66</td><td class="num">531.9k</td><td class="num">6.53</td><td class="num">59.1% (1.21×)</td><td class="num">566.5</td></tr>
+      <tr><td class="num">6144</td><td class="num">12.21</td><td class="num">1030.9k</td><td class="num">3.37</td><td class="num">57.3% (1.19×)</td><td class="num">1098.4</td></tr>
+      <tr><td class="num">8192</td><td class="num">9.56</td><td class="num">1315.6k</td><td class="num">2.64</td><td class="num">54.9% (1.26×)</td><td class="num">1400.6</td></tr>
+      <tr><td class="num">12288</td><td class="num">6.34</td><td class="num">1984.0k</td><td class="num">1.75</td><td class="num">55.2% (1.34×)</td><td class="num">2166.3</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span> 正文口径（第 10 页 §6.1）：全部设置加速 1.19×–1.34×；GPU 增多时 MegaScale MFU 从 59.1% 降至 55.2%（批量固定、计算通信比下降）；12,288 GPU 处原文表述为领先 Megatron-LM「by 14% MFU」。<span class="ev ev-i">I</span> 编辑注：55.2% − 41.2% ＝ 14.0 个百分点，与 1.34× 一致；「14%」应按百分点差理解，不应再乘算。</p>
+
+<h3>10.3 弱扩展与消融</h3>
+<div class="table-scroll">
+  <table>
+    <caption>弱扩展（图 9，530B，批量随 GPU 等比放大；MFU 读图）与消融（表 3，175B、256 GPU、批量 256；<span class="ev ev-p">P</span>，第 10-11 页）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col" class="num">2240 GPU / 基线</th><th scope="col" class="num">4480 GPU / +PTB</th><th scope="col" class="num">11200 GPU / +SWA</th><th scope="col">说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">图 9：Megatron-LM MFU</th><td class="num">49.20%</td><td class="num">48.80%</td><td class="num">48.20%</td><td>正文称随掉队与通信下降 1.6%（第 10 页）<span class="ev ev-i">I</span>（柱标 49.20→48.20 点差 1.0，换算口径论文未说明，照录不调和）</td></tr>
+      <tr><th scope="row">图 9：MegaScale MFU</th><td class="num">54.30%</td><td class="num">54.10%</td><td class="num">54.30%</td><td>领先至多 6.1%；3D 通信重叠带来近线性扩展（第 9-10 页）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>消融：MFU 分解（<span class="ev ev-p">P</span>，第 11 页表 3；175B、256 GPU、批量 256；基线 Megatron-LM 47.7%，网络优化双方均开启；Δ 为相对基线累计）</caption>
+    <thead>
+      <tr><th scope="col">Idx</th><th scope="col">叠加项</th><th scope="col" class="num">MFU</th><th scope="col" class="num">ΔMFU</th><th scope="col">备注（编辑整理 <span class="ev ev-i">I</span>）</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="num">1</td><td>baseline</td><td class="num">47.7%</td><td class="num">—</td><td>原版 Megatron-LM</td></tr>
+      <tr><td class="num">2</td><td>(1) with PTB</td><td class="num">52.3%</td><td class="num">+4.6%</td><td>算法：并行 transformer block</td></tr>
+      <tr><td class="num">3</td><td>(2) with SWA</td><td class="num">53.3%</td><td class="num">+5.6%</td><td>算法累计口径（正文「两项算法 +5.6%」）</td></tr>
+      <tr><td class="num">4</td><td>(3) with TP overlap</td><td class="num">55.5%</td><td class="num">+7.8%</td><td rowspan="3">通信重叠合计 +6.2%（正文口径，第 10 页）</td></tr>
+      <tr><td class="num">5</td><td>(4) with PP overlap</td><td class="num">58.0%</td><td class="num">+10.3%</td></tr>
+      <tr><td class="num">6</td><td>(5) with DP overlap</td><td class="num">59.5%</td><td class="num">+11.8%</td></tr>
+      <tr><td class="num">7</td><td>(6) with efficient operators</td><td class="num">61.2%</td><td class="num">+13.5%</td><td>FlashAttention-2 + 融合 LayerNorm/GeLU</td></tr>
+      <tr><td class="num">8</td><td>(7) with misc optimizations</td><td class="num">62.3%</td><td class="num">+14.6%</td><td>数据管道优化 + §6.3 问题代码消除</td></tr>
+      <tr><td class="num">9</td><td>(8) with LAMB (BS×3)</td><td class="num">65.3%</td><td class="num">+17.6%</td><td>批量 256→768（LAMB 扩批量）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.4 稳定性与生产运行</h3>
+<div class="table-scroll">
+  <table>
+    <caption>稳定性数字与生产运行（<span class="ev ev-p">P</span>，第 8、11-12 页）</caption>
+    <thead>
+      <tr><th scope="col">指标/事件</th><th scope="col">论文数字与口径</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">掉队机器占比</th><td class="num">约 0.5%</td><td>热力图识别显著慢机；剔除后各次运行峰值 MFU 一致（第 8 页图 6/图 7）</td></tr>
+      <tr><th scope="row">慢主机影响</th><td class="num">前向约 +10% 耗时 → 移除后 MFU +0.7%</td><td>计算掉队案例（第 12 页 §6.3）</td></tr>
+      <tr><th scope="row">生产运行</th><td class="num">&gt;10,000 GPU、数周、重启 &gt;100 次</td><td>专有模型、数千亿级参数（hundreds of billions）、数万亿（multi-trillion）tokens；损失持续收敛（第 11 页图 11）</td></tr>
+      <tr><th scope="row">故障自动修复率</th><td class="num">&gt;90%</td><td>其余经排障工具处理；异常多为 CUDA error、段错误（第 11-12 页 §6.3）</td></tr>
+      <tr><th scope="row">MTTR 分解</th><td class="num">检测+诊断 &lt;10 分钟；崩溃后 &lt;15 分钟追平</td><td>自最新检查点续训（第 12 页 §6.3）</td></tr>
+      <tr><th scope="row">有效训练时间率</th><td class="num">&gt;90%</td><td>＝迭代数×迭代训练时长 ÷ 总训练时长（第 12 页 §6.3）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①MFU 依赖「100% 峰值 FLOPs」假设，而论文未披露 GPU 具体型号与峰值算力（第 1、9 页），MFU 不可跨集群复算；②表 2 各行批量不同（768/6144），且 GPU 数与 3D 并行配置在 175B 与 530B 实验间不同（12,288 vs 11,200，第 10 页）；③消融仅在 256 GPU/批量 256 进行，网络优化双方均开启，各项增益不可外推到万卡（第 10 页）；④收敛微基准用 13B 模型（资源所限），非 175B/530B 本体（第 11 页）；⑤生产运行的模型/数据为专有、未披露细节（第 11 页）。<span class="ev ev-i">I</span> 各项百分比分属不同规模/基线，禁止跨行相加或与站内其他论文数字直接比较。</div>
+
+<h3>10.5 建议复现/验证步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 以 Megatron-LM 为底座复现基线：pin 论文同源 commit 谱系 + 同代 GPU，先在 256 GPU 验证 47.7% MFU 量级（表 3 基线口径，含网络优化）。</li>
+  <li><span class="ev ev-i">I</span> 按消融表顺序逐项叠加（PTB → SWA → TP/PP/DP 重叠 → 算子 → 数据管道 → LAMB），每项跑 13B 级收敛对照后再上大规模（对齐论文微基准口径，第 10-11 页）。</li>
+  <li><span class="ev ev-i">I</span> 专项验证通信组初始化：&gt;2,000 卡集群测启动时间，确认 Redis 替换与初始化顺序收益（目标 5 秒/30 秒量级，第 5-6 页）。</li>
+  <li><span class="ev ev-i">I</span> 演练容错闭环：注入进程级故障与慢机，验证心跳检出、诊断定位、驱逐补位与 15 分钟内追平（对齐第 12 页口径，验收阈值自定）。</li>
+  <li><span class="ev ev-i">I</span> 固化有效训练时间率与 MTTR 到平台报表；把热力图/trace 工具常开并验证开销可忽略（对齐第 8-9 页口径）。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；只链接论文印明的 URL，不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2402.15627" rel="noopener noreferrer">https://arxiv.org/abs/2402.15627</a></td>
+        <td><span class="ev ev-p">P</span> v1（cs.LG），水印 2024-02-23；本地 PDF：<code>13_MegaScale_2402.15627.pdf</code>（16 页，全部文本核对 + 9 页原页渲染目检）；<span class="ev ev-r">R</span> 2026-09-15 在线核验 HTTPS 200</td>
+      </tr>
+      <tr>
+        <th scope="row">论文脚注指向的组件仓库（veScale）</th>
+        <td><a href="https://github.com/volcengine/veScale" rel="noopener noreferrer">https://github.com/volcengine/veScale</a></td>
+        <td><span class="ev ev-p">P</span> 第 2 页脚注 3（「working on open-sourcing components」）；<span class="ev ev-r">R</span> 2026-09-15 在线核验：可达（HTTPS 200）、volcengine 组织（字节跳动火山引擎）、Apache-2.0、自述 “Byted PyTorch Distributed for Hyperscale Training of LLMs and RLs”、main 分支最近提交 2026-03-03（commits atom feed）。<strong>注意：veScale 是论文脚注指向的组件开源仓库，MegaScale 系统本体未开源，不得把 veScale 标为 MegaScale 官方完整实现</strong></td>
+      </tr>
+      <tr>
+        <th scope="row">基线框架仓库（Megatron-LM）</th>
+        <td><a href="https://github.com/NVIDIA/Megatron-LM" rel="noopener noreferrer">https://github.com/NVIDIA/Megatron-LM</a></td>
+        <td><span class="ev ev-p">P</span> 论文第 9 页 §6.1 引用（基线为 commit <code>285068c8</code> 时点）与参考文献 [21]；<span class="ev ev-r">R</span> 2026-09-15 在线核验可达（HTTPS 200）；<span class="ev ev-i">I</span> 仓库现状已远超论文所用 commit，复现对比须自行 pin 论文时点版本</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库</th>
+        <td>不提供</td>
+        <td><span class="ev ev-i">I</span> 遵循本站「不猜测仓库」策略：论文未印明 URL 的第三方镜像/复现/封装（包括各社区 MegaScale 复刻）一律不链接、不标官方。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 目标规模 ≥ 数千卡且作业以周计——低于该规模时本文机制的性价比需要重新论证（P：第 1、10 页；I：规模判断）</label></li>
+      <li><label><input type="checkbox"> 明确目标是预训练系统参考而非可引入组件：MegaScale 本体不开源（P：第 2 页脚注 3；R：veScale 2026-09-15）</label></li>
+      <li><label><input type="checkbox"> 估出 token 预算并用表 2 口径反推 GPU 时与日历时间（P：第 10 页；I：§7.2 公式）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 硬件为同代 NVIDIA GPU 大池，且能说明所用峰值 FLOPs 假设（论文未披露型号，MFU 需自行对齐口径）（P：第 1、9 页；I：口径治理）</label></li>
+      <li><label><input type="checkbox"> 网络前提可满足或可近似：节点内高速互联（TP 同机）、跨节点高带宽低收敛、拥塞控制可控（P：第 3、6 页；I：云上近似）</label></li>
+      <li><label><input type="checkbox"> 编排面可承载自定义控制器（心跳、诊断、驱逐、补位）与集中式日志/指标栈（P：第 6-8 页；E/I：云上实现）</label></li>
+      <li><label><input type="checkbox"> 检查点存储吞吐可支撑「两阶段写 + 组内单读多播」的恢复目标（P：第 7-8 页；I：容量核算）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（2-4 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 256 GPU 基线复现（Megatron-LM + 网络优化），MFU 与 47.7% 同数量级（P：第 10-11 页表 3；I：验收阈值自定）</label></li>
+      <li><label><input type="checkbox"> 按消融顺序叠加 1-2 项（建议先 PTB/SWA 或 LAMB），每项配 13B 级收敛对照（P：第 4、10-11 页；I：流程设计）</label></li>
+      <li><label><input type="checkbox"> 容错演练：杀进程 + 慢机注入，测心跳检出、诊断定位与检查点恢复时长（P：第 6-8、12 页；I：验收阈值自定）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量与拓扑</strong>
+    <ul>
+      <li><label><input type="checkbox"> 并行规划：TP 限节点内、DP 组优先于 PP 组跨 minipod、数据密集节点同置 ToR 域（P：第 3、6 页；I：放置执行）</label></li>
+      <li><label><input type="checkbox"> 虚拟 stage 数（vpp）与首个 AG 预取的权衡纳入调参清单（通信隐藏 ↔ 调度/内存压力）（P：第 4 页；I：权衡归档）</label></li>
+      <li><label><input type="checkbox"> 检查点：主机内存缓冲占用、异步窗口回退步数、HDFS/对象存储吞吐三项自测补齐（P：机制第 7-8 页；数值论文未明确披露）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义有效训练时间率目标并按论文口径统计（迭代数×迭代训练时长 ÷ 总时长）（P：第 12 页；I：平台化）</label></li>
+      <li><label><input type="checkbox"> 定义 MTTR 分解目标（检出/诊断/恢复），对齐「&lt;10 分钟、15 分钟追平」量级（P：第 12 页；I：阈值自定）</label></li>
+      <li><label><input type="checkbox"> NCCL 超时显式调大并纳入配置基线（网卡闪断陷阱）（P：第 12 页；I：配置管理）</label></li>
+      <li><label><input type="checkbox"> 收敛里程碑与判废标准：生产开启全部算法优化前完成 LAMB/PTB/SWA 收敛对照（P：第 10-11 页；I：流程）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以「当时单价 + 查询日期」估算；不用本页数字报价（I）</label></li>
+      <li><label><input type="checkbox"> 把消融各档增益写入成本敏感项分析，标注 256 GPU 口径与不可加总性（P：第 10-11 页；I：解读）</label></li>
+      <li><label><input type="checkbox"> 把稳定性项（自动修复率、有效训练时间率）计入产出模型，而非只看 MFU（P：第 11-12 页；I：模型设计）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> 检查点集中存储按最高敏资产治理：加密、最小权限、副本与删除审计（I；机制 P：第 7 页）</label></li>
+      <li><label><input type="checkbox"> Driver 控制面权限最小化 + 操作审计 + 手动驱逐双人复核（I；能力 P：第 6 页）</label></li>
+      <li><label><input type="checkbox"> 监控/日志（心跳、CUDA event、trace）网络隔离与保留期策略（I；形态 P：第 7-9 页）</label></li>
+      <li><label><input type="checkbox"> 供应链 pin：Megatron-LM 时点 commit + 镜像 digest；veScale 按 Apache-2.0 组件引入评估（P：第 9 页；R：2026-09-15）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 慢机治理流程化：基线画像 → 热力图定位 → 灰度隔离 → 复检归档（P：第 8、12 页；I：流程化）</label></li>
+      <li><label><input type="checkbox"> MFU 周环比告警 + CUDA event 热力图 + trace 定位的排障 runbook（P：第 8-9、12 页；I：runbook）</label></li>
+      <li><label><input type="checkbox"> 升级演练覆盖「旧检查点 → 新版本读取」；回滚三件套（镜像/检查点/配置）（I；机制 P：第 7 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 评估回到 Megatron-LM 原生/社区栈的迁移面：算法项可平移、通信与网络项随环境失效（I；基线 P：第 9 页）</label></li>
+      <li><label><input type="checkbox"> 跟踪 veScale 组件路线是否覆盖所需能力，再评估引入（R：2026-09-15；I：跟踪策略）</label></li>
+      <li><label><input type="checkbox"> 归档全部配置、口径（MFU 假设）、演练证据与容量档案，保证可重建可审计（I）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与在线核验记录见构建文件 <code>sources/megascale.evidence.json</code>。核验日期均为 <time datetime="2026-09-15">2026-09-15</time>。</p>
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名/32 位作者/机构（ByteDance、Peking University）/arXiv v1（cs.LG，2024-02-23 水印）；正文未标注录用会议（致谢提及 NSDI 审稿人）</td><td><span class="ev ev-p">P</span></td><td>第 1、13 页</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>摘要级结论：&gt;10,000 GPU 生产系统；175B/12,288 GPU 55.2% MFU、1.34× 于 Megatron-LM；全栈协同设计 + 容错与可观测</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要（另见第 10、13 页）</td><td>已核验（PDF 原页；条件见 EV-21/22/32）</td></tr>
+      <tr><td>两大挑战（效率/稳定性）与两条原则（算法-系统协同设计、深度可观测）；系统本体未开源、脚注指向 veScale</td><td><span class="ev ev-p">P</span></td><td>第 1-2 页 §1 与脚注 3</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>并行底座：ZeRO-2、交错 1F1B、TP/SP、3D 组合规则（TP 限节点内、DP 组优先于 PP）</td><td><span class="ev ev-p">P</span></td><td>第 2-3 页 §2 与图 1/图 2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>算法层：PTB 公式改写、SWA O(s×w)、LAMB 批量 4× 与气泡 (4/v)(p−1)/m → (1/v)(p−1)/(4m)、−87.5%</td><td><span class="ev ev-p">P</span></td><td>第 3-4 页 §3.1</td><td>已核验（PDF 原页 + 300dpi 放大核对分数式）</td></tr>
+      <tr><td>通信重叠：DP 预取（1/(2·vpp_size)）与优先级、PP 解耦 send/receive、TP/SP 融合 Linear + GEMM 切块（图 3/图 4）</td><td><span class="ev ev-p">P</span></td><td>第 4-5 页 §3.2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>算子（FlashAttention-2、融合 LayerNorm/GeLU）与数据管道（异步预处理、共享内存树状加载）</td><td><span class="ev ev-p">P</span></td><td>第 5 页 §3.3/§3.4</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>初始化加速：1047s → 361s（Redis）→ &lt;5s/&lt;30s；barrier O(n²)→O(n)</td><td><span class="ev ev-p">P</span></td><td>第 5-6 页 §3.5</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>网络：Tomahawk 4（25.6 Tbps、64×400G）、三层 CLOS 1:1、400G→2×200G、8×200G multi-rail、ECMP/Swift+DCQCN/adap_retrans</td><td><span class="ev ev-p">P</span></td><td>第 6 页 §3.6</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>容错：Driver+定制 K8s+Executor 心跳（图 5）、诊断套件（RNIC/NCCL）、两阶段检查点（数秒写主机内存 + 异步 HDFS、单读多播恢复）</td><td><span class="ev ev-p">P</span></td><td>第 6-8 页 §4 与图 5</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>排障：CUDA event 热力图（约 0.5% 慢机）、trace 时间线、3D 可视化超时定位；Kafka 实时入库（图 6-图 8）</td><td><span class="ev ev-p">P</span></td><td>第 8-9 页 §5</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>部署规模：截至 2023-09 生产最大集群 &gt;10,000 NVIDIA Ampere GPU；Hopper 集群在建</td><td><span class="ev ev-p">P</span></td><td>第 2、9 页</td><td>已核验（PDF 原页；具体型号未披露）</td></tr>
+      <tr><td>实验设置：Megatron-LM commit 285068c8、175B/530B 配置（表 1）、seq 2048/vocab 64000、交错数 6/3</td><td><span class="ev ev-p">P</span></td><td>第 9 页 §6.1 与表 1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>表 2 全量 16 行（强扩展 175B：迭代时间/吞吐/训练时间/MFU/聚合 PFlops/s）；图 9 弱扩展读数；正文 59.1%→55.2% 与「by 14% MFU」口径</td><td><span class="ev ev-p">P</span></td><td>第 9-10 页 §6.1、图 9、表 2</td><td>已核验（PDF 原页逐格转录；14% 按百分点理解，编辑注 I）</td></tr>
+      <tr><td>表 3 消融 9 行（47.7% → 65.3%，合计 +17.6%）与正文分解（算法 5.6%/通信 6.2%/算子 1.7%/其他 1.1%/LAMB 3.0%）</td><td><span class="ev ev-p">P</span></td><td>第 10 页 §6.1、第 11 页表 3</td><td>已核验（PDF 原页逐格转录）</td></tr>
+      <tr><td>收敛与生产运行：13B 微基准（&gt;100B/约 250B tokens 口径）、生产运行 &gt;100 次重启、&gt;90% 自动修复、&lt;10 分钟/&lt;15 分钟、有效训练时间率 &gt;90%（图 10/图 11/图 12）</td><td><span class="ev ev-p">P</span></td><td>第 10-12 页 §6.2/§6.3</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>veScale 可达性/归属（volcengine）/Apache-2.0/自述/最近提交（2026-03-03）；Megatron-LM 与 arXiv 页可达</td><td><span class="ev ev-r">R</span></td><td>论文第 2 页脚注 3、第 9 页 §6.1 给出的 URL</td><td>已核验（2026-09-15 在线核验；veScale 非 MegaScale 本体，见 EV-33）</td></tr>
+      <tr><td>云实例/网络/存储/编排/监控映射示例（高带宽 GPU 主机、RoCE/IB 非收敛组网、并行文件/对象存储、K8s 控制器、托管 Kafka/监控）</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>成本公式、SLO 框架、放置与弹性建议、安全与回滚建议、复现步骤、控制面/数据面划分、图文口径编辑注（图 9 的 1.6%、表 2 的 14%）</td><td><span class="ev ev-i">I</span></td><td>本报告 §4-§10、§12；EV-20/21/36</td><td>编辑标注完成；不含伪精确数字</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="12-liger-kernel.html" rel="prev">上一篇：12 Liger Kernel</a>
+  <a href="14-torchtitan.html" rel="next">下一篇：14 TorchTitan</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页全部论文事实基于本地 <code>13_MegaScale_2402.15627.pdf</code>（arXiv:2402.15627v1，全部 16 页文本核对、其中 9 页原页渲染逐项目检）及论文明确引用的材料；云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；论文脚注指向的 veScale 组件仓库许可为 Apache-2.0（2026-09-15 核验，以仓库当时声明为准），MegaScale 系统本体未随论文开源。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-15；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

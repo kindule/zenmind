@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlashAttention-3：用异步与低精度把 attention 推向 Hopper 算力峰值（论文 11 解读）</title>
+<meta name="description" content="基于本地论文 PDF（11_FlashAttention-3_2407.08608.pdf，arXiv:2407.08608v2，2024-07-16）的中文架构解读：FlashAttention-3 以 warp 专化生产者—消费者流水（TMA 装载＋WGMMA 计算）、2-stage GEMM-softmax 软件流水与 pingpong 调度、FP8 块量化＋非相干处理三项技术在 H100 SXM5 上把 FP16 前向推至 740 TFLOPs/s（75% 利用率）、FP8 前向接近 1.2 PFLOPs/s、FP8 数值误差较 per-tensor 基线低 2.6×。含数据路径图、消融与数值误差全表、云上部署映射、成本/SLO、安全运维与决策清单，全部数字带 PDF 页码与完整实验条件。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="prev" href="10-qserve.html">
+<link rel="next" href="12-liger-kernel.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+h4{font-size:1em; margin-top:1.3em}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+p.num{text-align:left; white-space:normal}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc-aside,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">训练、并行与 GPU Kernel</a></li>
+    <li aria-current="page">FlashAttention-3</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>FlashAttention-3：用异步与低精度把 attention 推向 Hopper 算力峰值</h1>
+<p class="lede">本页为第 11 篇（训练、并行与 GPU Kernel 类）。定量内容取自本地论文 PDF <code>11_FlashAttention-3_2407.08608.pdf</code>（arXiv:2407.08608<strong>v2</strong>，水印逐字核验「arXiv:2407.08608v2 [cs.LG] 12 Jul 2024」，正文落款 July 16, 2024，共 22 页）并逐条标注 PDF 页码；关键数字已三轮核验（第 1-12、17-22 页曾渲染原页逐项目检；交付前又以版面保留的文本提取逐条复核，并对图 5/6/7/9 的柱状图以 400dpi 逐柱重读、修正了四处早期读图错误，见 <a href="#evidence">#evidence</a> 与 <code>sources/flashattention-3.evidence.json</code>）。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：训练 + 推理（attention kernel 层，前后向）</li>
+    <li>形态：GPU kernel 算法重写（CUTLASS WGMMA/TMA 抽象实现）</li>
+    <li>目标硬件：NVIDIA H100 80GB SXM5（Hopper；脚注 1 以 Hopper 架构为语境）</li>
+    <li>核心资源：GPU 算力层次（张量核 vs 特殊函数单元）· SMEM/寄存器 · 访存与同步</li>
+    <li>证据状态：P（论文，页码级核验）+ R（脚注印明仓库，已在线核验）+ E/I</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-15">2026-09-15</time>。<strong>证据完整度：</strong>论文核心数字（摘要、表 2/表 3 全量、图 5/6/7/9 柱顶印刷标注值、算法 1-3 与 §2-§5、附录 A/B/C）已回 PDF 原页逐项核验并标注页码与实验条件；两处已知口径差异（正文「740 TFLOPs/s（75%）」vs 图 5(e) 最大柱值 756；反向 1.5-1.75× 文字区间 vs 图 6(a) 短序列单点约 1.37×）逐一对照原页后在页面并排保留；图 5-7、9 为柱状图且论文无数据表，逐点数值按柱顶印刷标注转录、三处图例遮挡点已注明；tokens/s、TTFT/TPOT、显存峰值、能耗与任何成本数据论文未报告，页面写「论文未明确披露」；FP8 利用率约 59% 为编辑推算，单独标 <span class="ev ev-i">I</span>。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文印明并经在线核验的官方仓库/项目页">R＝仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/读图近似，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="10-qserve.html" rel="prev">上一篇：10 QServe</a>
+  <a href="12-liger-kernel.html" rel="next">下一篇：12 Liger Kernel</a>
+</nav>
+
+<aside class="toc-aside" aria-label="本页补充导航">
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+</aside>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（逐字核验自 PDF 第 1-2 页；仓库另经在线核验 <span class="ev ev-r">R</span>）</caption>
+    <tbody>
+      <tr><th scope="row">题名</th><td>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision（编辑译名：FlashAttention-3——以异步与低精度实现更快、更准的 attention）</td></tr>
+      <tr><th scope="row">作者 / 机构</th><td>Jay Shah*、Ganesh Bikshandi*（Colfax Research，* 共同一作，第 1 页脚注 Equal contribution）；Ying Zhang（Meta）；Vijay Thakkar（NVIDIA / Georgia Tech）；Pradeep Ramani（NVIDIA）；Tri Dao（Princeton University / Together AI）（第 1 页作者行与机构角标逐字核验）</td></tr>
+      <tr><th scope="row">发表</th><td>arXiv:2407.08608<strong>v2</strong>（PDF 左侧水印逐字核验「arXiv:2407.08608v2 [cs.LG] 12 Jul 2024」）；正文落款 July 16, 2024；本地 PDF <code>11_FlashAttention-3_2407.08608.pdf</code>（22 页）。PDF 内未标注任何会议/期刊录用信息，本页不作会议归属推断 <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">代码</th><td>论文第 2 页脚注 3 印明 <code>https://github.com/Dao-AILab/flash-attention</code>，以 permissive license 开源（第 2 页）<span class="ev ev-p">P</span>；已在线核验（2026-09-15：BSD-3-Clause、main 分支、未归档；FlashAttention-3 位于 <code>hopper/</code> 子目录、自述 beta release，详见 <a href="#links">#links</a>）<span class="ev ev-r">R</span></td></tr>
+      <tr><th scope="row">实现依赖</th><td>使用 CUTLASS 的 WGMMA、TMA 抽象实现（§4 首句，第 9 页；参考文献 [57] 印明 <code>github.com/NVIDIA/cutlass</code>，第 15 页）<span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">实验硬件</th><td>H100 80GB SXM5（700W），GPU 时钟固定 1830 MHz、每组基准重复 100 次取平均；软件为 2024 年 5 月时点最新版：CUDA 12.3、cuDNN 9.1.1.17、CUTLASS 3.5、FlashAttention 2.5.8、Triton nightly 3.0.0.post20240424212437、PyTorch 2.3.0（附录 C.1/C.2，第 21 页）<span class="ev ev-p">P</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> FlashAttention-3 的论点是：在 Hopper 上 attention 不再主要慢在「读写 HBM」，而是慢在<strong>同步等待与低吞吐的非 GEMM 操作</strong>——FA2 只有 35% 利用率、而优化 GEMM 有 80-90%（第 1 页）。解法是把 kernel 当异步系统来写：生产者 warp 用 TMA 搬数据、消费者 warp 用 WGMMA 算 GEMM，再把 softmax 拆块塞进 GEMM 的影子（2-stage 流水 + 两个 warpgroup 的 pingpong），最后用 FP8 张量核把算力天花板再翻一倍、用块量化＋非相干处理兜住精度。论文口径的结果：FP16 前向对 FA2 加速 1.5-2.0×、最高 740 TFLOPs/s（75% 利用率；图 5(e) 最大柱值 756），反向 1.5-1.75×，FP8 前向接近 1.2 PFLOPs/s，FP8 误差比 per-tensor 基线低 2.6×。<strong>边界必须同时说：</strong>这是 Hopper 专属 kernel、单卡 attention kernel 级基准（2024 年 5 月软件栈），无端到端 tokens/s 或训练时间数据，FP8 仅有前向。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong><span class="ev ev-p">P</span> FlashAttention-2 在 H100 上利用率仅 35%，而优化 GEMM kernel 达 80-90%（第 1 页）；部分原因是 kernel 仍用 Ampere 时代指令而非 Hopper 专用指令，更根本的是 FA2 遵循简化同步模型、设计上未显式利用异步与低精度（第 1-2 页）。ThunderKittens 与 cuDNN 9 已证明用 Hopper 指令和 tile 抽象能加速 attention（第 1 页）。</li>
+  <li><strong>硬件基础：</strong><span class="ev ev-p">P</span> Hopper 把「搬数据」和「算 GEMM」都变成异步单元——GMEM↔SMEM 拷贝由专用 TMA 承担、张量核经 warpgroup 级 WGMMA 指令暴露且可直接从 SMEM 取数（第 3-4 页）；setmaxnreg 允许在 warpgroup 间重分配寄存器（第 4 页）；FP8 WGMMA 吞吐为 FP16 的 2×、但只接受 k-major 操作数布局（第 4 页）。</li>
+  <li><strong>三项技术：</strong><span class="ev ev-p">P</span> ① warp 专化软件流水——生产者/消费者拆进不同 warp，隐藏访存与指令发射延迟（第 2 页）；② 把 softmax 藏进 GEMM——重构 FA2 算法打断顺序依赖，2-stage 流水让「迭代 j 的第二个 WGMMA」与「迭代 j+1 的 softmax」重叠，再用 pingpong 让两个 warpgroup 互把对方的 softmax 藏进自己的 GEMM（第 2、5-7 页）；③ FP8——适配 FP8 张量核（实测 TFLOPs/s 几乎翻倍），in-kernel 转置解决布局约束，块量化＋非相干处理缓解精度损失（第 2、7-9 页）。</li>
+  <li><strong>结果：</strong><span class="ev ev-p">P</span> H100 SXM5 上 FP16 前向对 FA2 加速 1.5-2.0×（最高 740 TFLOPs/s = 75% 利用率）、反向 1.5-1.75×，对标准 attention 最高 3-16×；1k 及以上序列反超 cuDNN（第 2、9 页）；FP8 前向接近 1.2 PFLOPs/s（第 2 页）；消融显示 warp 专化＋GEMM-softmax 流水把吞吐从 570 提到 661 TFLOPs（表 2，第 9、11 页）；FP8 误差比基线低 2.6×（表 3，第 10、12 页）。</li>
+  <li><strong>边界：</strong><span class="ev ev-p">P</span> 全部数字是单卡 H100 SXM5、attention kernel 级基准（第 9、21 页）；FP8 仅有前向（第 9 页；官方仓库当前发布范围同为 FP8 前向 <span class="ev ev-r">R</span>）；hdim 64 的 FP8 才稳定领先 cuDNN，hdim 128/256 有因果掩码时落后（脚注 2，第 2 页）；短序列收益收窄甚至为负（对 cuDNN）<span class="ev ev-p">P</span>（图 5-7、9）。<span class="ev ev-i">I</span> 端到端训练/服务收益需结合 attention 占比自测。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>利用率缺口：</strong><span class="ev ev-p">P</span>（第 1 页引言）FlashAttention 系列的原始思路是把 attention 全部算子融合进单个 kernel、消除中间矩阵对慢速全局内存的读写；FA2 又按序列维并行、改进占用。但 FA2 在 H100 上对优化 GEMM kernel 的利用率只有 35% vs 80-90%——IO 已经不是第一瓶颈，「怎么把 Hopper 的算力真正用起来」才是。</p>
+
+<p><strong>两个层面的原因：</strong><span class="ev ev-p">P</span>（第 1-2 页）实现层：未把 Ampere 指令换成 Hopper 指令（ThunderKittens、cuDNN 9 证明 Hopper 专用指令 + tile 抽象可加速 attention 并简化实现）。算法层（论文认为更根本）：FA2 遵循简化的同步模型，设计上没有显式利用异步与低精度。而 Hopper 的异步恰恰来自硬件专化——张量核（矩阵乘）、TMA（搬运）与 CUDA 核（逻辑/标量）是分工的独立单元；低精度（Hopper FP8、Blackwell FP4，承接 FP16/BF16 的路线）是同等功耗与面积下翻倍/翻两番吞吐的成熟手段（第 2 页）。</p>
+
+<p><strong>技术挑战：</strong><span class="ev ev-p">P</span>（第 2 页）异步要求重叠「matmul 与 softmax」——但二者互相依赖（softmax 吃 GEMM 输出、GEMM 吃 softmax 输出），必须重构算法打断顺序依赖；低精度要求控制量化误差，尤其 LLM 存在远大于其余值的离群特征（第 2 页）。</p>
+
+<p><strong>目标工作负载与定位：</strong><span class="ev ev-p">P</span> attention 是 Transformer 的核心瓶颈层，长上下文（多文档、长代码库、高分辨率多模态、长程 agent）放大其二次方代价（第 1 页）。本文的贡献面是<strong>单 GPU 上的 attention kernel 算法</strong>：前后向按 head/batch 并行（第 2-3 页），对 MQA/GQA 按 FA2 方式调整索引、不在 HBM 复制 K/V（第 6 页）；对大规模训练中低精度 attention 的影响、面向 LLM 推理的优化，论文列为未来工作（第 12 页 §5）。</p>
+
+<p><strong>基线口径：</strong><span class="ev ev-p">P</span>（第 9 页 §4）对比四方——PyTorch 标准 attention 实现、FlashAttention-2、使用 H100 专用指令的 FA2 Triton 版、cuDNN 针对优化的厂商 FA2 实现；库版本固定在 2024 年 5 月时点（附录 C.1，第 21 页）。<span class="ev ev-i">I</span> 因此论文数字回答的是「FA3 比 2024 年中的这些实现强多少」，不代表对 2026 年软件栈的领先幅度。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 计算定义与 Hopper 执行模型（§2）</h3>
+
+<p><span class="ev ev-p">P</span>（第 2-3 页 §2.1）单头 attention：S=αQK⊤、P=softmax(S)、O=PV（α 通常取 1/√d；实践中给 S 减去 rowmax(S) 防指数溢出）；反向链 dV=P⊤dO、dP=dOV⊤、dS=dsoftmax(dP)、dQ=αdSK、dK=αdS⊤Q；前后向都按 head 与 batch 并行。标准 attention（materialize S/P 到 HBM）与 FlashAttention（local softmax + 融合）的对比定义见第 4 页 §2.3。</p>
+
+<p><span class="ev ev-p">P</span>（第 3 页 §2.2 表 1）H100 SXM5 内存层级（逐格转录）：</p>
+<div class="table-scroll">
+  <table>
+    <caption>表 1 转录：NVIDIA Hopper H100 SXM5 的线程—内存层级（<span class="ev ev-p">P</span>，PDF 第 3 页）</caption>
+    <thead>
+      <tr><th scope="col">硬件层级</th><th scope="col">并行代理</th><th scope="col">数据域</th><th scope="col">容量 @ 带宽</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Chip</th><td>Grid</td><td>GMEM（HBM）</td><td class="num">80 GiB @ 3.35 TB/s</td></tr>
+      <tr><th scope="row">GPC</th><td>Threadblock Clusters</td><td>L2</td><td class="num">50 MiB @ 12 TB/s</td></tr>
+      <tr><th scope="row">SM</th><td>Threadblock（CTA）</td><td>SMEM</td><td class="num">每 SM 228 KiB；全 GPU 约 31 TB/s</td></tr>
+      <tr><th scope="row">Thread</th><td>Thread</td><td>RMEM（寄存器）</td><td class="num">每 SM 256 KiB</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="num"><span class="ev ev-p">P</span>（第 3 页及脚注 4）脚注 4 说明 SMEM 带宽按「每 SM 每时钟 128 字节 × 132 SM × 1830 MHz」推算；GMEM 数据透明缓存于 L2；SMEM 是 CTA 内可编程管理的高 bank 片上缓存；每线程至多 256 个私有寄存器。线程层级：threads → warps（32 线程）→ warpgroups（4 个连续 warp）→ threadblocks（CTA）→ threadblock clusters（Hopper 新增）→ grids；同 CTA 共调度于同一 SM、同 cluster 共调度于同一 GPC。</p>
+
+<p><span class="ev ev-p">P</span>（第 3-4 页 §2.2）三个异步/低精度关键件：① GMEM↔SMEM 异步拷贝由专用硬件单元 <strong>TMA</strong> 承担（引 CUDA Programming Guide §7.29）；② 与先前架构不同，Hopper 张量核经 warpgroup 级 <strong>WGMMA</strong> 指令暴露（引 PTX ISA §9.7.14），本身是异步的、且可直接从共享内存取操作数；③ <strong>setmaxnreg</strong>（PTX ISA §9.7.17.1）支持在 warpgroup 之间动态重分配寄存器——做 MMA 的 warp 拿到比只发 TMA 的 warp（单线程即可）更多的 RMEM。</p>
+
+<p><span class="ev ev-p">P</span>（第 4 页 §2.2 末段）FP8 布局约束：对 A×B⊤ 的 GEMM，操作数按外维 M/N 连续为 mn-major、按内维 K 连续为 k-major；FP16 WGMMA 的 SMEM 操作数两种都接受，<strong>FP8 WGMMA 只支持 k-major</strong>。attention 这类单 kernel 内背靠背融合 GEMM 的场景里，FP32 累加器与 FP8 操作数的布局冲突是调用依赖 FP8 WGMMA 的障碍。</p>
+
+<h3>3.2 warp 专化与前向算法（§3.1 算法 1）</h3>
+
+<p><span class="ev ev-p">P</span>（第 4-5 页）CTA 视角：producer warpgroup 用 setmaxnreg 释放寄存器，经 TMA 把 Q_i 与各 K_j、V_j 从 HBM 装入 <strong>s-stage 环形 SMEM buffer</strong> 并 commit 通知；consumer warpgroup 用 setmaxnreg 重分配寄存器，片上初始化 O_i=0、ℓ_i=0、m_i=-∞，主循环为 SS-GEMM（S=Q_iK_j⊤）→ rowmax/在线 softmax（P̃=exp(S−m_i)、ℓ 更新）→ 等待 V_j → RS-GEMM（O_i=<wbr>diag(exp(m_old−<wbr>m_i))⁻¹<wbr>O_i+<wbr>P̃V_j）→ 释放缓冲 stage；循环结束后 O_i=diag(ℓ_i)⁻¹O_i、L_i=m_i+log(ℓ_i) 写回 HBM。SS/RS 前缀表示第一个操作数来自 SMEM/寄存器堆；TMA 发射不阻塞其他 load（异步），producer 主循环前 s 次迭代无需等待。</p>
+
+<p><span class="ev ev-p">P</span>（第 6 页）MQA/GQA 沿用 FlashAttention-2 的做法调整张量索引，避免 K、V 在 HBM 中复制。</p>
+
+<h3>3.3 pingpong 调度：把指数藏进对方 warpgroup 的 GEMM（§3.1）</h3>
+
+<p><span class="ev ev-p">P</span>（第 5-6 页、图 1、脚注 5）动机量化：H100 SXM5 FP16 matmul 吞吐 989 TFLOPS，而指数类特殊函数只有 3.9 TFLOPS（脚注 5：16 ops/SM/时钟 × 132 SM × 1830 MHz）；FP16 前向 hdim 128 时 matmul FLOPS 是指数运算的 512×、吞吐却只差 256×，故指数可占用相对 matmul 50% 的周期；FP8 下更糟（matmul 翻倍、指数不变）。方法：指数在独立硬件单元（multi-function unit）上执行，用 bar.sync 同步屏障强制 warpgroup 1 的 GEMM（GEMM1＝本轮 PV、GEMM0＝下一轮 QK⊤）先于 warpgroup 2 的 GEMM 调度，使 warpgroup 1 的 softmax 落在 warpgroup 2 的 GEMM 期间，然后角色互换（「pingpong」）。论文自述实际效果不如图示干净，但一般有收益：FP16 前向 hdim 128、seqlen 8192 从 570 提到 620-640 TFLOPS。</p>
+
+<h3>3.4 2-stage GEMM-softmax 流水与 3-stage 的负结果（§3.2）</h3>
+
+<p><span class="ev ev-p">P</span>（第 6-7 页、图 2、算法 2）算法 1 的 wait 语句使 softmax 与 GEMM 串行；2-stage 流水在寄存器中保留额外缓冲跨迭代打断依赖——<strong>迭代 j 的第二个 WGMMA（O_i+=P̃_cur·V_{j−1}，commit 但不等待）与迭代 j+1 的 softmax 重叠</strong>（算法 2 行 11/13），S_next 复制为 S_cur 后进入下一轮。代价：每线程块额外约 Br×Bc×sizeof(float) 的寄存器（S_next），与「加大 tile」这一同样吃寄存器的优化相互制约，应按 profiling 权衡。</p>
+
+<p><span class="ev ev-p">P</span>（第 7 页、第 19 页附录 B.2）编译器重排与 SASS 验证：伪代码是理想化顺序，NVCC 常重排指令；SASS 分析显示编译器按预期生成重叠代码——softmax 被重排到最前（先于第一个 WGMMA）；第一个 WGMMA 与 softmax 及 S 的 FP32→FP16 转换交错（WGMMA 与非 WGMMA 并行）；exp2/row_sum/O rescaling/FP32→FP16 彼此交错；第二个 WGMMA 不与其他指令重叠（符合预期）。结论：「SASS shows that the 2-stage pipelining idea works as expected」。</p>
+
+<p><span class="ev ev-p">P</span>（第 7 页、第 20-21 页附录 B.3）3-stage 流水（想并行「迭代 j+2 的第一个 WGMMA、迭代 j+1 的 softmax、迭代 j 的第二个 WGMMA」）实测更差：① 编译器未按预期重叠——SASS 显示只有第一个 WGMMA 与 softmax 重叠，原因不明；② 寄存器需求更多（理论需额外存 P̃_i 与 scale_o，共 Br×<wbr>Bc×<wbr>sizeof(input_data_type)+<wbr>Br×<wbr>sizeof(float)），迫使选择更小的 block size。</p>
+
+<h3>3.5 FP8 改造：布局变换、块量化与非相干处理（§3.3）</h3>
+
+<p><span class="ev ev-p">P</span>（第 7-8 页、图 3/图 4、脚注 7/8/9）布局变换：输入 Q/K/V 通常按 head 维连续，而第二个 GEMM 的 FP8 WGMMA 要求 V 瓦片按 sequence-length 维连续（k-major），且 TMA load 不能改变连续维。三个选项——(1a) 把转置融合进前趋步骤（如 rotary embedding）的 epilogue：难以做成标准库；(1b) 独立前处理转置 kernel：在推理这类访存受限场景太浪费；(2) <strong>选定方案：SMEM 装入后用 LDSM/STSM（warp 级 128 字节粒度）在 producer warpgroup 内做 in-kernel 转置</strong>，首轮之后下一个 V 瓦片的转置可藏进涉及前一 V 与当前 K 的两个 WGMMA 的影子中。此外 FP8 WGMMA 的 FP32 累加器寄存器布局与操作数 A 布局不同，用 byte permute 指令把第一个 WGMMA 的累加器按 {d0 d1 d4 d5 d2 d3 d6 d7} 重排（每 8 字节重复）——逻辑上等价于对 P 瓦片的列置换（如列 0189 变为前四列），并让 in-kernel 转置写出匹配的 V 瓦片行排列（脚注 9：该自由度免除了 shuffle 指令换寄存器属主）。</p>
+
+<p><span class="ev ev-p">P</span>（第 8 页）<strong>块量化</strong>：FP8 e4m3 只有 3 位尾数、4 位指数，误差高于 FP16/BF16；大模型的离群特征使量化更难，常用做法是 per-tensor scaling（每张量一个标量）。块量化改为每块一个标量——对 Q/K/V 按 Br×d 或 Bc×d 分块分别量化；该量化可融合到 attention 前的操作（如 rotary embedding）里、无额外减速（RoPE 受显存带宽限制），且 FlashAttention-3 天然按块运算，可对 S 的每个块做相应缩放、零计算成本。</p>
+
+<p><span class="ev ev-p">P</span>（第 9 页）<strong>非相干处理</strong>：量化前给 Q、K 各乘一个随机正交矩阵 M——因 MM⊤=I，(QM)(KM)⊤=QK⊤ 不改变输出；QM/KM 的每个元素成为 Q/K 元素的随机求和，从而摊平离群、降低量化误差。实践中循 QuIP/QuIP# 取 M=随机 ±1 对角矩阵与 Hadamard 矩阵之积，乘法 O(d log d) 而非 O(d²)，且可与 rotary embedding 融合、零额外计算成本。论文验证两项技术合计把 FP8 数值误差最多降 2.6×（§4.3，表 3）。</p>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝流水线对象与屏障同步（s-stage 缓冲的 commit/wait、bar.sync、pingpong 的角色切换）、warpgroup 角色分配与寄存器预算（setmaxnreg）、tile/流水深度的 profiling 权衡；<strong>数据面</strong>＝TMA 装载、WGMMA 的 SS/RS GEMM、在线 softmax（含 multi-function unit 上的指数）、in-kernel V 转置与 byte permute、块缩放。该划分只影响叙述，不改变论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/flashattention-3-data-path.svg"
+       alt="FlashAttention-3 数据路径图：HBM 中的 Q、K、V 经生产者 warpgroup 的 TMA 异步装载进入 s-stage 环形共享内存缓冲，消费者 warpgroup 在片上做 SS-GEMM（S=Q·K 转置）、在线 softmax 与 RS-GEMM（O 更新）并释放缓冲 stage；2-stage 软件流水把迭代 j 的第二个 WGMMA 与迭代 j+1 的 softmax 重叠，pingpong 调度让两个消费者 warpgroup 互把 softmax 藏进对方 GEMM（矩阵乘 989 对特殊函数 3.9 TFLOPS，FP16 前向 hdim 128、seqlen 8192 从 570 提到 620-640 TFLOPS）；尾注把 O 除以 l、算出 L=m+log(l) 写回 HBM，反向另有 dQ-writer warp 用信号量原子累加 dQ。右侧面板为 FP8 改造（FP8 WGMMA 仅 k-major，用 LDSM/STSM 在 kernel 内转置 V 瓦片，byte permute 重排累加器为 d0 d1 d4 d5 d2 d3 d6 d7，块量化与非相干处理可融合进 rotary embedding）、论文指出的风险点（寄存器压力与 tile 制约、3-stage 负收益、FP8 短序列加因果掩码落后 cuDNN、FP8 仅前向）与引用数字必读的完整实验条件。" width="980" height="980">
+  <figcaption>图 1：FlashAttention-3 前向（FP16 与 FP8）在 Hopper 上的端到端数据路径，附反向要点。实线＝运行时数据流，虚线＝软件流水/同步控制；深蓝＝条件/事实面板，青＝GPU 计算，紫＝HBM/显存，琥珀＝论文指出的风险点；编号 ①-⑤ 对应下方文字序列。依据论文算法 1/2、图 1-4 与 §2-§4（arXiv:2407.08608v2）绘制 <span class="ev ev-p">P</span>；编号与面板编排为本页编辑标注 <span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① HBM 驻留与并行划分：</strong>Q_i（Br×d）、K/V（N×d，按 Bc 分块）驻留 HBM；前向按 batch×head×query 序列长度并行，每个 CTA 处理一个 Q 块产出对应 O 块；MQA/GQA 调整索引、K/V 不复制<span class="ev ev-p">P</span>（第 4-6 页）。</li>
+  <li><strong>② 生产者 warpgroup：</strong>setmaxnreg 释放寄存器 → TMA 异步装载 Q_i、K_j、V_j 到 s-stage 环形 SMEM 缓冲 → commit 通知；TMA 发射不阻塞其他装载，前 s 次迭代无需等待<span class="ev ev-p">P</span>（第 3-5 页）。</li>
+  <li><strong>③ 消费者 warpgroup 主循环：</strong>setmaxnreg 重分配寄存器 → SS-GEMM（WGMMA 直读 SMEM）→ 在线 softmax（指数在 multi-function unit，中间量保 FP32）→ 等 V_j → RS-GEMM → 释放缓冲 stage<span class="ev ev-p">P</span>（第 5 页算法 1）。</li>
+  <li><strong>④ 软件流水与调度：</strong>2-stage 流水重叠「迭代 j 的第二个 WGMMA」与「迭代 j+1 的 softmax」（额外寄存器 S_next）；pingpong 用 bar.sync 让两个消费者 warpgroup 交替 GEMM/softmax，把 3.9 TFLOPS 的指数运算藏进 989 TFLOPS 的 matmul 影子里；SASS 证实 2-stage 按设计重叠、3-stage 为负收益<span class="ev ev-p">P</span>（第 5-7、19-21 页）。</li>
+  <li><strong>⑤ 尾注与写回：</strong>O_i=diag(ℓ_i)⁻¹O_i、L_i=m_i+log(ℓ_i) 写回 HBM；反向（附录 B.1）：前处理 kernel 先算 D=rowsum(dO∘O)，第三个角色 dQ-writer warp 用信号量把各线程块的 dQ 局部块原子累加进全局 dQ，避免阻塞其余 warp 的下一个 matmul<span class="ev ev-p">P</span>（第 5、18 页）。FP8 时在 ③ 前后叠加 in-kernel V 转置、byte permute 与块缩放（见 <a href="#mechanism">#mechanism</a> 3.5）<span class="ev ev-p">P</span>（第 7-9 页）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与事实（机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>生产者＝TMA 装载（单线程发射即可），消费者＝WGMMA 计算；setmaxnreg 把寄存器从生产者让给消费者</td><td>warp 专化分工（Hopper 硬件前提：TMA/WGMMA 异步、setmaxnreg）</td><td><span class="ev ev-p">P</span> 第 3-5 页 §2.2/§3.1</td></tr>
+      <tr><td>s-stage 环形 SMEM 缓冲；SS/RS 前缀＝首操作数来自 SMEM/RMEM；commit-wait 管理依赖</td><td>每 CTA 的前向主循环（算法 1）</td><td><span class="ev ev-p">P</span> 第 4-5 页</td></tr>
+      <tr><td>softmax 中间量（含 rescaling）保 FP32；指数在 multi-function unit 执行</td><td>数值与吞吐的交叉点（FP16 误差同 FA2、优于标准实现）</td><td><span class="ev ev-p">P</span> 第 2、5、12 页</td></tr>
+      <tr><td>2-stage 流水额外寄存器 ≈ Br×Bc×sizeof(float)/线程块；3-stage 还需 Br×Bc×sizeof(input)+Br×sizeof(float) 且更慢</td><td>流水深度 vs 寄存器 vs tile 的三角权衡</td><td><span class="ev ev-p">P</span> 第 7、20-21 页</td></tr>
+      <tr><td>FP8：V 瓦片 in-kernel 转置（LDSM/STSM，128B 粒度）；累加器 byte permute {d0 d1 d4 d5 d2 d3 d6 d7}；块缩放零计算成本；Hadamard 乘 O(d log d) 可融合 RoPE</td><td>FP8 前向专用路径（第二 GEMM 的 k-major 约束）</td><td><span class="ev ev-p">P</span> 第 7-9 页 §3.3</td></tr>
+      <tr><td>反向新增 dQ-writer warp（信号量原子累加）＋前处理 D=rowsum(dO∘O)</td><td>backward 的第三个角色（算法 3）</td><td><span class="ev ev-p">P</span> 第 18 页附录 B.1</td></tr>
+      <tr><td>kernel 内 KV 缓存管理、请求调度、分布式并行：不在论文机制范围内</td><td>与服务层/集群层的边界（页面不补写）</td><td><span class="ev ev-p">P</span>（论文范围即单 GPU kernel 算法，§1/§5）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong><span class="ev ev-p">P</span> 口径提醒（读数方式）：</strong>论文性能数字的完整条件是：H100 80GB SXM5、时钟固定 1830 MHz、100 次平均、seqlen 512-16k（总 token 16k）、hidden 2048、hdim 64/128/256、FP16/BF16 前反向与 FP8 前向、对 FA2 2.5.8 / FA2-Triton nightly / cuDNN 9.1.1.17 / PyTorch 2.3.0（2024-05 时点）的 attention kernel 级 TFLOPs/s（第 9、21 页）<span class="ev ev-p">P</span>。引用本页任何吞吐数字必须携带这些条件，且不可与其他论文的数字横向比较。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>异步收益 ↔ 同步复杂度与编译器依赖</h3>
+    <p><span class="ev ev-p">P</span> 收益来自把等待藏掉：TMA 异步装载、WGMMA 异步执行、commit-wait 精细同步（第 4-5 页）。但 2-stage 流水的实际重叠依赖 NVCC 的指令调度——论文必须做 SASS 级分析确认「编译器按预期生成了重叠代码」（第 7、19 页），而 3-stage 上编译器不配合、收益为负且原因不明（第 7、20 页）。<span class="ev ev-i">I</span> 意味着这套设计的性能绑定了编译器版本与 SASS 行为，升级工具链需要重新验证。</p>
+  </li>
+  <li>
+    <h3>流水深度 ↔ 寄存器压力 ↔ tile 大小</h3>
+    <p><span class="ev ev-p">P</span> 2-stage 需要额外的 S_next 寄存器（每线程块约 Br×Bc×sizeof(float)），与「加大 tile」这一同样吃寄存器的常见优化直接冲突；3-stage 需要更多寄存器、迫使更小的 block size，实测更差（第 7、20-21 页）。<span class="ev ev-i">I</span> 没有免费的重叠：流水深度、tile 尺寸、占用率要在目标形状上 profiling 后定。</p>
+  </li>
+  <li>
+    <h3>算力天花板 ↔ 非_GEMM 操作的低吞吐</h3>
+    <p><span class="ev ev-p">P</span> FP16 matmul 989 TFLOPS vs 指数 3.9 TFLOPS；hdim 128 前向指数可占掉相对 matmul 50% 的周期，FP8 下比例更糟（第 5 页）。pingpong/2-stage 只是把指数藏进 GEMM 影子，并没有降低指数总量。<span class="ev ev-i">I</span> 因此「张量核利用率」的上限受 softmax 等非 GEMM 部分制约——这正是 75%（FP16）之后剩下的 25% 里最难榨的部分。</p>
+  </li>
+  <li>
+    <h3>FP8 吞吐翻倍 ↔ 精度工程与适用面收窄</h3>
+    <p><span class="ev ev-p">P</span> FP8 WGMMA 把算力天花板翻倍（近 1.2 PFLOPs/s），但 e4m3 只有 3 位尾数，且离群特征使 per-tensor 缩放不够——块量化＋非相干处理把误差压回 2.6×（第 8-9 页、表 3）。同时 FP8 路径要为布局做 in-kernel 转置与 byte permute（第 7-8 页），且只有前向基准、hdim 128/256 带因果掩码时落后 cuDNN（第 9 页、脚注 2、图 7b）。<span class="ev ev-i">I</span> FP8 是「有条件的快」：无因果/大序列/hdim 64 的前向场景优先受益。</p>
+  </li>
+  <li>
+    <h3>kernel 级收益 ↔ 端到端未验证</h3>
+    <p><span class="ev ev-p">P</span> 论文全部结论是 attention kernel 级 TFLOPs/s（固定时钟、100 次平均）；未报告 tokens/s、TTFT/TPOT、显存峰值、能耗与任何成本数据，也未测与分布式并行、KV 缓存管理的组合（第 9-12、21 页；§5 把「面向 LLM 推理优化」「大规模训练中低精度 attention 的影响」列为未来工作）。<span class="ev ev-i">I</span> 端到端收益 = kernel 加速 × attention 时间占比，占比 unknown 时不能外推；引用时必须区分两个口径。</p>
+  </li>
+  <li>
+    <h3>Hopper 专属设计 ↔ 可移植性</h3>
+    <p><span class="ev ev-p">P</span> 全部机制绑定 Hopper 特性（TMA、warpgroup WGMMA、setmaxnreg、FP8 k-major 布局）；脚注 1 声明算法对任何具备足够异步执行与低精度能力的 GPU 架构均 operative，§5 预期技术可迁移到其他加速器（第 2、12 页）。<span class="ev ev-i">I</span> 「算法思想可迁移」≠「kernel 可移植」：换代际需要按新指令集重写并重新做 SASS 级验证；基线（2024-05 库版本）的绝对数字也会随软件栈演进失效。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>，仓库现状标注 <span class="ev ev-r">R</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>FlashAttention-3 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算：H100 80GB SXM5（Hopper 代际，700W）；算法结论限于具备足够异步与低精度能力的架构（脚注 1）</th>
+        <td><span class="ev ev-e">E</span> GPU 实例选型按「Hopper 代际（H100 80GB 类）优先」；FP8/因果掩码/短序列组合的适用性在目标卡上复测后再放大范围</td>
+        <td>硬件前提为论文事实 <span class="ev ev-p">P</span>（第 2、9、21 页；README 另称需 H100/H800、CUDA ≥ 12.3 <span class="ev ev-r">R</span>）；实例选型为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">交付形态：FA3 位于官方仓库 <code>hopper/</code> 子目录、以 flash-attn-3 包名安装（beta），依赖 CUDA/CUTLASS 工具链</th>
+        <td><span class="ev ev-e">E</span> 容器镜像内置固定版本的 CUDA/cuDNN/CUTLASS/flash-attn-3；镜像 digest 与驱动/CUDA 版本矩阵纳入节点镜像管理</td>
+        <td>仓库结构与包名 2026-09-15 在线核验 <span class="ev ev-r">R</span>；论文基准用 CUDA 12.3 + CUTLASS 3.5 <span class="ev ev-p">P</span>（第 21 页）；容器化落位为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">框架接入：论文计划与 PyTorch、Hugging Face 库集成（计划语气）</th>
+        <td><span class="ev ev-e">E</span> 生产训练/推理框架若已内置等效 attention kernel，优先评估内置路径；自装 FA3 作对照或专项优化</td>
+        <td>「plan to integrate」为论文原文 <span class="ev ev-p">P</span>（第 2 页；论文未给出集成时间表）；当前集成状态需按当时框架文档确认 <span class="ev ev-e">E</span>，选型判断 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">容量规划变量：attention kernel 时间（前向 FLOPs=4·seqlen²·hdim·头数，causal ÷2；反向 ×2.5）× 实测利用率</th>
+        <td><span class="ev ev-e">E</span> 容量模型按 kernel 级吞吐折算单步耗时；与并行策略（TP/SP/上下文并行）与 batch 的组合关系需另行建模</td>
+        <td>FLOPs 口径为论文事实 <span class="ev ev-p">P</span>（第 9 页）；kernel 与端到端之间缺 attention 占比数据（论文未披露）<span class="ev ev-i">I</span>；容量建模为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">精度路线：FP16（前后向，误差同 FA2）与 FP8（仅前向，块量化＋非相干处理，误差 2.6× 于基线）</th>
+        <td><span class="ev ev-e">E</span> 训练作业默认 FP16/BF16 路径；FP8 路径按「无因果/大序列/hdim 64 优先」灰度，上线前跑数值回归</td>
+        <td>各精度适用面为论文事实 <span class="ev ev-p">P</span>（第 2、9-12 页、脚注 2）；灰度策略为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：kernel 级 TFLOPs/s、数值误差（FP64 参照）、时钟/功耗（1830 MHz 固定时钟是论文基准前提）</th>
+        <td><span class="ev ev-e">E</span> 性能回归接入 kernel 基准脚本（仓库含 benchmark_attn.py、benchmark_flash_attention_fp8.py）；监控时钟策略与数值抽样</td>
+        <td>脚本文件名 2026-09-15 在线核验 <span class="ev ev-r">R</span>；固定时钟与 100 次平均口径 <span class="ev ev-p">P</span>（第 21 页）；监控设计 <span class="ev ev-i">I</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> ①FA3 的价值集中在「Hopper 卡的算力兑现」——对训练吞吐瓶颈在 attention 的作业（长上下文、大 hdim）收益最直接；②它是 kernel 层替换，训练/推理框架接入与回退（FA2）成本低，但收益会随框架内置实现演进被稀释；③官方 FA3 仍是 beta 定位（2026-09-15 README <span class="ev ev-r">R</span>），生产引入按「pin 版本 + 双基线回归」对待，不要当稳定 API 依赖。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 指标口径（论文使用的）</h3>
+<p><span class="ev ev-p">P</span>（第 9、21 页）效率主指标＝<strong>attention kernel 运行时换算的 TFLOPs/s</strong>：前向 FLOPs = 4·seqlen²·head dimension·number of heads（causal 除以 2），反向 = 前向 × 2.5（前向 2 个 matmul、反向因重算共 5 个）；H100 SXM5 时钟固定 1830 MHz（989 TFLOPS FP16 理论峰值所用时钟）、重复 100 次取平均。精度指标＝对 FP64 参照实现的 RMSE（合成分布，见 <a href="#experiments">#experiments</a> 表 3）。<strong>TTFT/TPOT/tokens/s、显存峰值、能耗（除标注 700W TGP）、成本：论文未明确披露。</strong></p>
+
+<h3>7.2 主结果上下文（利用率的完整口径）</h3>
+<p><span class="ev ev-p">P</span>（第 9 页）FP16 前向最高 740 TFLOPs/s = 989 的 75%；<span class="ev ev-i">I</span> 图 5(e) 最大柱值为 756（约 76%），与正文 740 为图/文舍入级出入，页面并排保留。FP8「接近 1.2 PFLOPs/s」：论文未给出 FP8 官方利用率；<span class="ev ev-i">I</span> 若按「FP8 峰值 = 2×989 = 1978 TFLOPS」与图 7(a) 16k 柱值 1171 TFLOPs/s 推算，约 59%——此为编辑推算，非论文数字。消融口径：570（无两项改进）→ 661（完整 FA3）TFLOPs，中间态 582/570 见表 2。</p>
+
+<h3>7.3 容量与成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+单次 attention kernel 时间 ≈ FLOPs ÷ 实测 TFLOPs/s<br>
+　（前向 FLOPs = 4·seqlen²·hdim·头数，causal ÷2；反向 ×2.5；TFLOPs/s 取目标形状实测值）<br>
+attention 占单步比例 ≈ attention kernel 时间和 ÷ 单步总时间（论文未披露，需实测）<br>
+端到端收益 ≈ 1 ÷ (1 − attention占比 × (1 − 1/kernel加速比))（占比例已知时）<br>
+成本影响 ≈ （1 − 1/端到端收益）× 作业 GPU 时成本；单价按当时云目录记录查询日期
+</div>
+<p><span class="ev ev-i">I</span> 公式中可由论文支撑的量：kernel 加速比（1.5-2.0× 前向、1.5-1.75× 反向，带完整条件）与 FLOPs 口径（第 9 页）；attention 占比、并行策略交互、单价与作业画像需按部署实测填写，本页不给出伪精确数字。<span class="ev ev-e">E</span> 云单价随时段/区域/折扣变化，核算时以查询当时厂商目录为准并记录日期。</p>
+
+<h3>7.4 敏感项与数据缺口</h3>
+<ul>
+  <li><span class="ev ev-p">P</span> 敏感项（各自条件下）：序列长度（512 档收益小——图 5(c) 512 处 FA3 467 低于 cuDNN 497，1k 起反超）；head dimension（FP8 hdim 64 领先 cuDNN、128/256 无因果打平、有因果落后，脚注 2）；有无因果掩码（图 5/6/7/9 分面板）；流水/调度有效性依赖编译器行为（SASS 验证，附录 B）。</li>
+  <li><span class="ev ev-p">P</span> 数据缺口：端到端 tokens/s 与训练收敛、TTFT/TPOT、显存峰值、能耗、成本；FP8 反向；与 TP/PP/上下文并行及 KV 缓存管理的组合；超过 16k 的序列；多 GPU/多卡扩展性——论文未明确披露。</li>
+  <li><span class="ev ev-i">I</span> 基线陈旧性：2024 年 5 月库版本的绝对数字不代表当前软件栈；官方仓库此后仍在演进（README 已公告 FA4 <span class="ev ev-r">R</span>），决策前应在目标栈复测。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>供应链：</strong><span class="ev ev-r">R</span> 代码来自论文脚注 3 印明的官方仓库 <code>github.com/Dao-AILab/flash-attention</code>（2026-09-15 在线核验：BSD-3-Clause、main 分支、未归档、HEAD 0dc2cb4）。<span class="ev ev-p">P</span> 实现依赖 CUTLASS（§4；参考文献 [57] 印明仓库）。<span class="ev ev-i">I</span> 引入时 pin commit/tag、扫描 CUDA/PTX 与 CUTLASS 依赖、保留可回退版本；FA3 处于 beta 定位（hopper/ 子目录独立包），版本升级视为供应链变更处理。</li>
+  <li><strong>数值输出风险：</strong><span class="ev ev-p">P</span> 量化改变输出分布：FP8 FA3（块量化＋非相干处理）在合成离群分布下 RMSE 9.1e-3，仍显著高于 FP16 路径的 1.9e-4（表 3 条件，第 10、12 页）；训练期低精度 attention 的影响论文自述尚未理解（§5）。<span class="ev ev-i">I</span> 合规与质量审查应以「目标模型 + 目标精度路径的实际输出」为对象；FP8 上线前按表 3 协议（FP64 参照 + 离群合成分布）对业务激活复测。</li>
+  <li><strong>数据驻留与多租户：</strong><span class="ev ev-i">I</span> attention kernel 为无状态计算（输入 Q/K/V、输出 O/L），不管理 KV 缓存与请求状态；数据驻留边界由上层训练/服务框架决定，kernel 替换不改变驻留拓扑，但引入的 CUDA 模块与镜像需纳入租户镜像白名单管理。</li>
+</ul>
+
+<h3>8.2 可运维性（含恢复与回滚）</h3>
+<ul>
+  <li><strong>回退路径：</strong><span class="ev ev-i">I</span> 回退＝切回 FlashAttention-2（论文自身基准的基线，2.5.8；<span class="ev ev-r">R</span> tag v2.5.8 在线确认存在）。注意接口差异：FA3 以独立包（flash-attn-3）提供、调用方式与 FA2 包不同，回退需要适配层或特性开关，不能假设二进制级可互换。</li>
+  <li><strong>升级与灰度：</strong><span class="ev ev-p">P</span> kernel 性能依赖编译器调度（SASS 级验证是论文方法的一部分，附录 B）。<span class="ev ev-i">I</span> 升级 CUDA/NVCC/flash-attn-3 版本时重跑双基线（开/关 FA3 各测 kernel 时间与数值抽样）；按 GPU 代际与精度路径（FP16/FP8）灰度放量；固定时钟策略（如基准 1830 MHz）与生产变频的差异纳入解读。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 建议：①attention kernel 时间相对验收基线的漂移（工具链或形状变化）；②数值误差抽样（FP8 路径按表 3 分布或业务激活）；③训练侧 loss/下游指标（低精度路径的质量哨兵）；④带宽/算力利用率对照论文口径（H100 上 attention 是否回到「非 GEMM 瓶颈」状态）。</li>
+  <li><strong>故障恢复：</strong><span class="ev ev-i">I</span> kernel 层无持久状态，故障恢复＝作业级重启与版本回退；训练作业的容错（checkpoint 等）属框架层，与 FA3 正交（论文未涉及，不补写）。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>Hopper（H100 类）上、序列 ≥1k 的 Transformer 训练/前向，瓶颈在 attention。</strong>触发：profile 显示 attention kernel 占比高、GPU 利用率低。理由：FP16 前向对 FA2 1.5-2.0×、1k 及以上反超 cuDNN，hdim 128 无因果 16k 达 648 TFLOPs/s（vs FA2 370）<span class="ev ev-p">P</span>（第 2、9 页；图 5c）。</li>
+  <li><strong>反向同样瓶颈的训练作业。</strong>触发：backward 的 attention 耗时显著。理由：FP16 反向 1.5-1.75×（对 FA2）；16k 锚点 hdim 128：FA3 561 vs cuDNN 516 vs FA2 322 TFLOPs/s<span class="ev ev-p">P</span>（第 2、9 页；图 6b，16k 读数）。</li>
+  <li><strong>需要可审计、可修改 kernel 的大模型团队。</strong>触发：闭源厂商库（cuDNN）无法满足定制/合规需求。理由：permissive license 开源（论文脚注 3 <span class="ev ev-p">P</span>；BSD-3-Clause 已核验 <span class="ev ev-r">R</span>），实现基于 CUTLASS、算法有完整伪代码与 SASS 级分析<span class="ev ev-p">P</span>（第 4-9、19-21 页）。</li>
+  <li><strong>存在离群特征、想上 FP8 前向的作业。</strong>触发：hdim 64 或无因果掩码、序列较长的前向。理由：内置块量化＋非相干处理，误差比 per-tensor FP8 基线低 2.6×；hdim 64 的 FP8 领先 cuDNN（16k：613 vs 438 TFLOPs/s）<span class="ev ev-p">P</span>（第 8-9、12 页；脚注 2；图 9a）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>非 Hopper GPU（Ampere 及更早、或其他厂商卡）。</strong>触发：目标硬件无 TMA/warpgroup WGMMA/setmaxnreg。理由：全部机制绑定 Hopper 特性（第 3-4 页 §2.2）；脚注 1 的「算法 operative」指思想可迁移、非 kernel 可直接运行<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 此类硬件沿用 FA2/等效实现。</li>
+  <li><strong>短序列（512 档）前向的绝对吞吐优先场景。</strong>触发：seqlen 512、hdim 128、无因果。理由：图 5(c) 512 处 FA3 467 低于 cuDNN 497 TFLOPs/s；反向 hdim 64 512 处对 FA2 仅约 1.37×（272/198，读图除法 <span class="ev ev-i">I</span>），低于文字区间 1.5-1.75× 的下沿<span class="ev ev-p">P</span>（图 5c、6a；区间为第 9 页作者口径）。</li>
+  <li><strong>需要 FP8 反向的作业。</strong>触发：训练希望前后向都走 FP8。理由：论文仅报告 FP8 前向基准（第 9 页 §4.1）<span class="ev ev-p">P</span>；官方仓库当前发布范围同为「FP16/BF16 前向+反向、FP8 前向」<span class="ev ev-r">R</span>（2026-09-15 README）。</li>
+  <li><strong>hdim 128/256、带因果掩码的 FP8 服务路径。</strong>触发：decode/prefill 混合且以因果 FP8 attention 为热点。理由：脚注 2 明确 hdim 128/256 有因果时落后 cuDNN；图 7(b) 16k 处 FA3 1024 vs cuDNN 1099 TFLOPs/s（2k-16k 逐柱落后）<span class="ev ev-p">P</span>（第 2 页脚注 2；图 7b）。FP8 短序列+因果的弱势与「FP8 kernel 无 persistent kernel/负载均衡」有关（脚注 10）<span class="ev ev-p">P</span>。</li>
+  <li><strong>把 kernel 倍数直接当端到端收益的预期管理。</strong>触发：以「训练时间缩短 2×」立项。理由：论文无端到端数据（tokens/s、总训练时间未报告）<span class="ev ev-p">P</span>；<span class="ev ev-i">I</span> 实际收益 = kernel 加速 × attention 占比，须先实测占比。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span>（第 9、21 页）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（页码均已核验）</caption>
+    <tbody>
+      <tr><th scope="row">硬件</th><td>H100 80GB SXM5（700W）；GPU 时钟固定 1830 MHz（计算 989 TFLOPS FP16 理论峰值所用时钟）；每组基准重复 100 次取平均 <span class="ev ev-p">P</span>（第 21 页附录 C.1）</td></tr>
+      <tr><th scope="row">软件（2024-05 时点）</th><td>CUDA 12.3、cuDNN 9.1.1.17、CUTLASS 3.5、FlashAttention 2.5.8、Triton nightly 3.0.0.post20240424212437、PyTorch 2.3.0 <span class="ev ev-p">P</span>（第 21 页）</td></tr>
+      <tr><th scope="row">负载</th><td>FP16：seqlen 512、1k、…、16k，batch 使总 token 数 = 16k；hidden dim 2048，hdim 64/128/256 对应 32/16/8 头；有无 causal mask。FP8 前向：seqlen 512、1024、2048、4224、8448、16896，≥4k 时对齐 132（SM 数）避免 wave quantization <span class="ev ev-p">P</span>（第 9 页 §4.1、第 21 页 C.2）</td></tr>
+      <tr><th scope="row">FLOPs 口径</th><td>前向 = 4·seqlen²·head dimension·number of heads（causal ÷2）；反向 = 前向 ×2.5（前向 2 个 matmul、反向因重算 5 个）<span class="ev ev-p">P</span>（第 9 页）</td></tr>
+      <tr><th scope="row">基线</th><td>PyTorch 标准 attention、FlashAttention-2、FA2 Triton 版（用 H100 专用指令）、cuDNN 厂商 FA2 实现 <span class="ev ev-p">P</span>（第 9 页 §4）</td></tr>
+      <tr><th scope="row">消融与误差配置</th><td>消融：非因果 FP16，{batch, seqlen, nheads, hdim} = {4, 8448, 16, 128}（第 9 页 §4.2）。数值误差：Q/K/V ~ N(0,1) + N(0,100)·Bernoulli(0.001)（0.1% 元素叠加标准差 10 的独立项，模拟 LLM 离群），对 FP64 参照测 RMSE（第 10-11 页 §4.3）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 消融（表 2 全量转录）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 2 转录：Pipelining ablation（<span class="ev ev-p">P</span>，PDF 第 11 页；非因果 FP16，{batch, seqlen, nheads, hdim} = {4, 8448, 16, 128}）</caption>
+    <thead>
+      <tr><th scope="col">配置</th><th class="num" scope="col">时间（ms）</th><th class="num" scope="col">TFLOPs/s</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">FlashAttention-3（完整）</th><td class="num">3.538</td><td class="num">661</td></tr>
+      <tr><th scope="row">无 GEMM-Softmax 流水（保留 warp 专化）</th><td class="num">4.021</td><td class="num">582</td></tr>
+      <tr><th scope="row">有 GEMM-Softmax 流水（无 warp 专化）</th><td class="num">4.105</td><td class="num">570</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 9 页 §4.2）结论句：两项算法改进合计把吞吐从 570 提到 661 TFLOPs。<span class="ev ev-i">I</span> 读法：warp 专化单独贡献很小（570→582，约 2%），大头来自「在 warp 专化之上叠加 GEMM-softmax 流水」（582→661，约 13.6%）——两项是互补而非独立可加。</p>
+
+<h3>10.3 数值误差（表 3 全量转录）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 3 转录：FP16 与 FP8 (e4m3) 的数值误差 RMSE（<span class="ev ev-p">P</span>，PDF 第 12 页；FP64 为参照；输入为含离群的合成分布）</caption>
+    <thead>
+      <tr><th scope="col">精度</th><th scope="col">配置</th><th class="num" scope="col">RMSE</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">FP16</th><td>标准 attention（Baseline）</td><td class="num">3.2e-4</td></tr>
+      <tr><th scope="row">FP16</th><td>FlashAttention-2</td><td class="num">1.9e-4</td></tr>
+      <tr><th scope="row">FP16</th><td>FlashAttention-3</td><td class="num">1.9e-4</td></tr>
+      <tr><th scope="row">FP8</th><td>Baseline（per-tensor scaling、FP32 累加器、FP16 softmax 中间量）</td><td class="num">2.4e-2</td></tr>
+      <tr><th scope="row">FP8</th><td>FlashAttention-3（块量化＋非相干处理）</td><td class="num">9.1e-3</td></tr>
+      <tr><th scope="row">FP8</th><td>FA3，去掉块量化</td><td class="num">9.3e-3</td></tr>
+      <tr><th scope="row">FP8</th><td>FA3，去掉非相干处理</td><td class="num">2.4e-2</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 10-12 页 §4.3）结论：FP16 下 FA2 与 FA3 的 RMSE 均比标准实现低 1.7×（softmax 中间量保 FP32）；FP8 下 FA3 比基线准 2.6×。<span class="ev ev-i">I</span> 消融读法：该合成分布下「非相干处理」是主效（去掉即回到 2.4e-2），块量化单独贡献很小（9.1e-3→9.3e-3）；两项技术是配套使用关系。</p>
+
+<h3>10.4 前向/反向吞吐（图 5/6/7/9 柱顶标注转录）</h3>
+<p><span class="ev ev-p">P</span>（第 10-11、22 页）以下数值为图面柱顶印刷标注（论文无数据表）；单位 TFLOPs/s；OOM＝该设定下超显存。三处标注印在图例框之后（部分遮挡），已注明；未标注处不补写。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>图 5 转录：FP16/BF16 前向（H100 80GB SXM5）（<span class="ev ev-p">P</span>，PDF 第 10 页；图 5(c) hdim 128 无因果、图 5(e) hdim 256 无因果）</caption>
+    <thead>
+      <tr><th scope="col">子图</th><th scope="col">实现</th><th class="num" scope="col">512</th><th class="num" scope="col">1k</th><th class="num" scope="col">2k</th><th class="num" scope="col">4k</th><th class="num" scope="col">8k</th><th class="num" scope="col">16k</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="5">(c) hdim 128</th><th scope="row">标准 attention</th><td class="num">74</td><td class="num">100</td><td class="num">119</td><td class="num">133</td><td class="num">139</td><td class="num">OOM</td></tr>
+      <tr><th scope="row">FlashAttention-2</th><td class="num">309</td><td class="num">350</td><td class="num">362</td><td class="num">368</td><td class="num">370</td><td class="num">370</td></tr>
+      <tr><th scope="row">Triton</th><td class="num">323</td><td class="num">372</td><td class="num">389</td><td class="num">389</td><td class="num">392</td><td class="num">395</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">497</td><td class="num">574*</td><td class="num">617</td><td class="num">609</td><td class="num">600</td><td class="num">595</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">467</td><td class="num">565*</td><td class="num">625</td><td class="num">638</td><td class="num">646</td><td class="num">648</td></tr>
+      <tr><th scope="row" rowspan="3">(e) hdim 256</th><th scope="row">FlashAttention-2</th><td class="num">275</td><td class="num">313</td><td class="num">321</td><td class="num">323</td><td class="num">324</td><td class="num">326</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">470</td><td class="num">546</td><td class="num">580</td><td class="num">581</td><td class="num">580</td><td class="num">581</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">482</td><td class="num">627*</td><td class="num">707</td><td class="num">736</td><td class="num">746</td><td class="num">756</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="num">*＝标注印在图例框后、部分遮挡的读数（5c 1k 的 cuDNN 574 与 FA3 565；5e 1k 的 FA3 627），引用时注明。<span class="ev ev-i">I</span> 图 5(e) 的 FA3 最大柱值 756（16k）与正文「up to 740 TFLOPs/s（75%）」为图/文舍入级出入，并排保留两处口径。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>图 6 转录：FP16/BF16 反向、无因果（H100 80GB SXM5）（<span class="ev ev-p">P</span>，PDF 第 11 页）</caption>
+    <thead>
+      <tr><th scope="col">子图</th><th scope="col">实现</th><th class="num" scope="col">512</th><th class="num" scope="col">1k</th><th class="num" scope="col">2k</th><th class="num" scope="col">4k</th><th class="num" scope="col">8k</th><th class="num" scope="col">16k</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="4">(a) hdim 64</th><th scope="row">标准 attention</th><td class="num">68</td><td class="num">76</td><td class="num">88</td><td class="num">92</td><td class="num">95</td><td class="num">OOM</td></tr>
+      <tr><th scope="row">FlashAttention-2</th><td class="num">198</td><td class="num">238</td><td class="num">264</td><td class="num">279</td><td class="num">287</td><td class="num">291</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">266</td><td class="num">348</td><td class="num">395</td><td class="num">417</td><td class="num">432</td><td class="num">433</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">272</td><td class="num">363</td><td class="num">422</td><td class="num">453</td><td class="num">472</td><td class="num">474</td></tr>
+      <tr><th scope="row" rowspan="4">(b) hdim 128</th><th scope="row">标准 attention</th><td class="num">104</td><td class="num">131</td><td class="num">159</td><td class="num">174</td><td class="num">181</td><td class="num">OOM</td></tr>
+      <tr><th scope="row">FlashAttention-2</th><td class="num">214</td><td class="num">260</td><td class="num">291</td><td class="num">310</td><td class="num">318</td><td class="num">322</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">305</td><td class="num">408</td><td class="num">465</td><td class="num">499</td><td class="num">518</td><td class="num">516</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">316</td><td class="num">424</td><td class="num">501</td><td class="num">542</td><td class="num">559</td><td class="num">561</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 2、9 页）文字口径：反向对 FA2 加速 1.5-1.75×。<span class="ev ev-i">I</span> 读图补充：该区间是作者对中长序列的概括；hdim 64 的 512 档单点为 272/198 ≈ 1.37×（读图除法），低于区间下沿——引用区间时应带序列长度条件。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>图 7 转录：FP8 前向、hdim 256（H100 80GB SXM5）（<span class="ev ev-p">P</span>，PDF 第 11 页；(a) 无因果、(b) 有因果；图 7 与图 9 的 (e)/(f) 面板相同）</caption>
+    <thead>
+      <tr><th scope="col">子图</th><th scope="col">实现</th><th class="num" scope="col">512</th><th class="num" scope="col">1k</th><th class="num" scope="col">2k</th><th class="num" scope="col">4k</th><th class="num" scope="col">8k</th><th class="num" scope="col">16k</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="3">(a) 无因果</th><th scope="row">Triton</th><td class="num">529</td><td class="num">664</td><td class="num">766</td><td class="num">854</td><td class="num">897</td><td class="num">903</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">686</td><td class="num">878</td><td class="num">1001</td><td class="num">1087</td><td class="num">1122</td><td class="num">1139</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">510</td><td class="num">744</td><td class="num">931</td><td class="num">966</td><td class="num">1151</td><td class="num">1171</td></tr>
+      <tr><th scope="row" rowspan="3">(b) 有因果</th><th scope="row">Triton</th><td class="num">299</td><td class="num">425</td><td class="num">520</td><td class="num">591</td><td class="num">628</td><td class="num">663</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">304</td><td class="num">449</td><td class="num">768</td><td class="num">1015</td><td class="num">1056</td><td class="num">1099</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">329</td><td class="num">521</td><td class="num">703</td><td class="num">856</td><td class="num">960</td><td class="num">1024</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 2 页脚注 2、第 11 页）读法：无因果时 FA3 仅在 8k/16k 反超 cuDNN（1151/1171 vs 1122/1139）；有因果时 512/1k 处 FA3 领先（329 vs 304、521 vs 449），2k 起落后，16k 为 1024 vs 1099——与脚注 2「hdim 128/256：无因果打平、有因果落后」的整体口径一致，但「打平/落后」的边界随序列长度移动，引用时应带形状条件。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>图 9 转录：FP8 前向、hdim 64（H100 80GB SXM5）（<span class="ev ev-p">P</span>，PDF 第 22 页；(a) 无因果、(b) 有因果）</caption>
+    <thead>
+      <tr><th scope="col">子图</th><th scope="col">实现</th><th class="num" scope="col">512</th><th class="num" scope="col">1k</th><th class="num" scope="col">2k</th><th class="num" scope="col">4k</th><th class="num" scope="col">8k</th><th class="num" scope="col">16k</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="3">(a) 无因果</th><th scope="row">Triton</th><td class="num">392</td><td class="num">444</td><td class="num">473</td><td class="num">499</td><td class="num">506</td><td class="num">511</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">344</td><td class="num">398</td><td class="num">447</td><td class="num">413</td><td class="num">431</td><td class="num">438</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">240</td><td class="num">396</td><td class="num">462</td><td class="num">568</td><td class="num">596</td><td class="num">613</td></tr>
+      <tr><th scope="row" rowspan="3">(b) 有因果</th><th scope="row">Triton</th><td class="num">234</td><td class="num">325</td><td class="num">393</td><td class="num">440</td><td class="num">459</td><td class="num">481</td></tr>
+      <tr><th scope="row">cuDNN</th><td class="num">194</td><td class="num">258</td><td class="num">317</td><td class="num">324</td><td class="num">464</td><td class="num">483</td></tr>
+      <tr><th scope="row">FlashAttention-3</th><td class="num">164</td><td class="num">244</td><td class="num">369</td><td class="num">475</td><td class="num">533</td><td class="num">572</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 2 页脚注 2、第 12 页脚注 10）读法：hdim 64 是 FA3 FP8 相对 cuDNN 优势最稳的形状（16k 无因果 613 vs 438、有因果 572 vs 483，与脚注 2「hdim 64 领先」一致）；但短序列＋因果掩码端 FA3 落后（512 处 164 vs 194），论文以「FP16 FA3 有 persistent kernel 与负载均衡而 FP8 没有」部分解释（脚注 10）。<span class="ev ev-i">I</span> 图 9(a) 的 cuDNN 序列在 4k 处（447→413）不单调，为图面印刷标注照录，页面不作解释性修匀。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>各结果条件字段完整性（缺项一律显式标注）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col">硬件</th><th scope="col">精度</th><th scope="col">批量/负载</th><th scope="col">基线</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">前向吞吐（图 5）</th><td>H100 80GB SXM5、1830 MHz</td><td>FP16/BF16</td><td>seqlen 512-16k、总 token 16k、hdim 64/128/256、±causal</td><td>标准/FA2/Triton/cuDNN</td><td><span class="ev ev-p">P</span> 第 10 页</td></tr>
+      <tr><th scope="row">反向吞吐（图 6）</th><td>同上</td><td>FP16/BF16</td><td>同上（图示为无因果）</td><td>标准/FA2/cuDNN</td><td><span class="ev ev-p">P</span> 第 11 页</td></tr>
+      <tr><th scope="row">FP8 前向（图 7/9）</th><td>同上</td><td>FP8 (e4m3)</td><td>seqlen 512-16896、≥4k 对齐 132；仅前向</td><td>Triton/cuDNN</td><td><span class="ev ev-p">P</span> 第 11、22 页</td></tr>
+      <tr><th scope="row">消融（表 2）</th><td>同上</td><td>FP16 非因果</td><td>{4, 8448, 16, 128}</td><td>自身消融</td><td><span class="ev ev-p">P</span> 第 9、11 页</td></tr>
+      <tr><th scope="row">数值误差（表 3）</th><td>论文未明确披露（GPU 型号未注明）</td><td>FP16 与 FP8 (e4m3)</td><td>合成分布 N(0,1)+N(0,100)·Bernoulli(0.001)</td><td>FP64 参照；FP8 基线为 per-tensor</td><td><span class="ev ev-p">P</span> 第 10-12 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①全部性能数字是单卡 H100 80GB SXM5、attention kernel 级基准（固定 1830 MHz、100 次平均），不可外推为端到端训练/服务收益，<strong>不可与本站其他论文的数字直接比较</strong>；②基线为 2024 年 5 月库版本（cuDNN 9.1.1.17、FA 2.5.8、PyTorch 2.3.0 等），绝对数字不代表当前软件栈；③「领先/落后 cuDNN」随 hdim、因果掩码、序列长度、精度四个维度变化（脚注 2 + 图 5/7/9），不得摘取单点下总体结论；④图 5/6/7/9 无数据表，数值为柱顶印刷标注转录，三处图例遮挡点已注明；⑤正文 740（75%）与图 5(e) 756 的图文出入已并排保留，引用任一须注明出处口径。
+</div>
+
+<h3>10.5 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 取官方仓库 hopper/ 子目录（flash-attn-3 包；已核验归属/许可，pin commit）；基准脚本 benchmark_attn.py 与 benchmark_flash_attention_fp8.py 在仓库内<span class="ev ev-r">R</span>（2026-09-15 核验）。</li>
+  <li><span class="ev ev-i">I</span> 硬件与软件对齐：H100 80GB SXM5、CUDA ≥ 12.3（README 推荐 12.8 以获最佳性能<span class="ev ev-r">R</span>）；论文口径用固定 1830 MHz 时钟 + 100 次平均<span class="ev ev-p">P</span>（第 21 页）。</li>
+  <li><span class="ev ev-i">I</span> 复现表 2 消融：非因果 FP16、{batch, seqlen, nheads, hdim} = {4, 8448, 16, 128}，分别跑完整版/去流水/去 warp 专化三个配置<span class="ev ev-p">P</span>（第 9 页）。</li>
+  <li><span class="ev ev-i">I</span> 复现表 3 数值协议：FP64 参照 + N(0,1)+N(0,100)·Bernoulli(0.001) 合成输入，再换业务真实激活分布各测一遍（论文只验证合成分布）<span class="ev ev-p">P</span>（第 10-11 页）。</li>
+  <li><span class="ev ev-i">I</span> 目标业务实测：以真实 seqlen/hdim/因果组合测「FA2 vs FA3 vs 框架内置」kernel 时间与端到端步时，记录 attention 占比，再决定启用范围（FP16 全量、FP8 按 8.1/9 节条件灰度）。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2407.08608" rel="noopener noreferrer">https://arxiv.org/abs/2407.08608</a></td>
+        <td><span class="ev ev-p">P</span> 本地 PDF 为 <strong>arXiv v2</strong>（水印逐字核验「arXiv:2407.08608v2 [cs.LG] 12 Jul 2024」，22 页，文件创建时间 2024-07-16）。本地 PDF：<code>11_FlashAttention-3_2407.08608.pdf</code>。PDF 内未标注会议/期刊录用信息，不作归属推断。</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/Dao-AILab/flash-attention" rel="noopener noreferrer">https://github.com/Dao-AILab/flash-attention</a></td>
+        <td><span class="ev ev-r">R</span> 论文第 2 页脚注 3 印明「FlashAttention-3 is available at https://github.com/Dao-AILab/flash-attention」（逐字核验）。<strong>在线核验（只读）</strong>：2026-09-15 GitHub API——归属 Dao-AILab、description「Fast and memory-efficient exact attention」、BSD-3-Clause、main 分支、未归档、24916 stars、pushed_at 2026-09-15、HEAD 0dc2cb4（[CuTe, Fwd] Fix PackGQA predication for padded head dimensions #2775）。README 设「FlashAttention-3 beta release」章节（optimized for Hopper GPUs e.g. H100；当前发布 FP16/BF16 前向+反向、FP8 前向；需 H100/H800、CUDA ≥ 12.3），FA3 代码在 hopper/ 子目录（flash_api.cpp、flash_fwd_kernel_sm90.h、benchmark_attn.py、benchmark_flash_attention_fp8.py），以 flash-attn-3 包名安装。</td>
+      </tr>
+      <tr>
+        <th scope="row">基准所用 FA2 版本</th>
+        <td><a href="https://github.com/Dao-AILab/flash-attention/releases/tag/v2.5.8" rel="noopener noreferrer">https://github.com/Dao-AILab/flash-attention/releases/tag/v2.5.8</a></td>
+        <td><span class="ev ev-r">R</span> 论文附录 C.1 印明基准用 FlashAttention 2.5.8（第 21 页）；2026-09-15 GitHub API 确认 tag v2.5.8 存在，指向 commit 9a11f44。</td>
+      </tr>
+      <tr>
+        <th scope="row">实现依赖 CUTLASS</th>
+        <td><a href="https://github.com/NVIDIA/cutlass" rel="noopener noreferrer">https://github.com/NVIDIA/cutlass</a></td>
+        <td><span class="ev ev-p">P</span> §4 首句「We use the primitives from CUTLASS [57] such as WGMMA and TMA abstractions」；参考文献 [57] 印明该 URL（第 15 页）；致谢说明 pingpong 调度改编自 CUTLASS 的 warp-specialized pingpong GEMM 实现（第 12 页）。<span class="ev ev-r">R</span> 2026-09-15 GitHub API 只读核验：main 分支、未归档（许可为仓库自定义，以仓库 LICENSE 原文为准）。论文基准用 CUTLASS 3.5（第 21 页）。</td>
+      </tr>
+      <tr>
+        <th scope="row">论文引用的官方文档（照录）</th>
+        <td><a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html" rel="noopener noreferrer">CUDA Programming Guide</a>（[38]，第 14 页）；PTX ISA 8.4（[40]，第 14 页）——论文印明 URL 为 <code>https://docs.nvidia.com/cuda/pdf/ptx_isa_8.4.pdf</code>，2026-09-15 在线复核返回 HTTP 404（历史 PDF 已下线），故仅作文本照录、不再设可点击链接；现行官方在线文档 <span class="ev ev-e">E</span>（编辑补充，非论文印明 URL；2026-09-15 核验 HTTP 200，当期为 PTX ISA 9.4 版，内容随版本演进、不与论文所引 8.4 版逐字对应）：<a href="https://docs.nvidia.com/cuda/parallel-thread-execution/" rel="noopener noreferrer">https://docs.nvidia.com/cuda/parallel-thread-execution/</a>；<a href="https://arxiv.org/abs/2307.08691" rel="noopener noreferrer">FlashAttention-2 (arXiv:2307.08691)</a>（[15]，第 13 页）</td>
+        <td><span class="ev ev-p">P</span> 论文印明 URL 按参考文献照录（TMA 引 [38, §7.29]、WGMMA/setmaxnreg 引 [40, §9.7.14/§9.7.17.1]）；其中 [40] 印明的 8.4 版 PDF 现为 404 死链（见左格），文档内容未逐项审阅。<span class="ev ev-e">E</span> 现行官方 PTX ISA 文档链接为编辑补充（非论文印明），2026-09-15 仅核验可达性（HTTP 200）。</td>
+      </tr>
+      <tr>
+        <th scope="row">其他链接</th>
+        <td>不提供链接</td>
+        <td><span class="ev ev-p">P</span> 论文正文未给项目页/博客链接。<span class="ev ev-i">I</span> 第三方集成、包装库、发行版打包一律未经核验，按「不猜测 URL」策略不链接；官方仓库 README 提及的博客与 FA4 公告属仓库现状叙事，见 <a href="#evidence">#evidence</a> 的 EV-33 说明。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验项，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认瓶颈在 attention kernel：profile 显示 attention 耗时占比与 GPU 利用率，而非通信/数据加载瓶颈（I：收益 = kernel 加速 × attention 占比；P：论文只有 kernel 级口径，第 9 页）</label></li>
+      <li><label><input type="checkbox"> 确认目标序列长度 ≥1k（512 档收益小甚至负于 cuDNN）（P：图 5c/6a/7b 的短序列柱值，第 10-11 页）</label></li>
+      <li><label><input type="checkbox"> 确认 head dimension 与精度组合落在优势区：FP16 全形状、FP8 限 hdim 64 或无因果大序列（P：脚注 2 + 图 7/9，第 2、11、22 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认 GPU 为 Hopper（H100/H800 类）且 CUDA ≥ 12.3（P：§2.2 硬件前提，第 3-4 页；R：README 要求，2026-09-15 核验）</label></li>
+      <li><label><input type="checkbox"> 确认训练/推理框架的接入方式与内置实现现状：优先评估框架内等效 kernel，再决定自装 flash-attn-3（P：论文仅「计划集成 PyTorch/HF」，第 2 页；E：框架文档）</label></li>
+      <li><label><input type="checkbox"> 确认模型用 MQA/GQA 时的支持方式（P：沿用 FA2 索引调整、K/V 不复制，第 6 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 用仓库基准脚本在目标形状复测：FA2 2.5.8 与 FA3 双基线、固定时钟、100 次平均（P：第 21 页口径；R：hopper/ 内含 benchmark_attn.py 等）</label></li>
+      <li><label><input type="checkbox"> 数值回归：先按表 3 合成分布对齐 RMSE，再换业务激活抽样；FP8 路径必做（P：第 10-12 页；I：业务分布论文未验证）</label></li>
+      <li><label><input type="checkbox"> 端到端步时对比（含 attention 占比测量），验证 kernel 倍数的真实兑换率（I：端到端数据论文未披露）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.3 公式折算单步 attention 时间与作业 GPU 时变化（P：FLOPs 口径，第 9 页；I：公式）</label></li>
+      <li><label><input type="checkbox"> 评估 FP8 对激活/优化器显存的额外影响是否在论文范围外（P：论文未报显存峰值；I：需自测）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> 固化「FA2 vs FA3」双基线读数（kernel 时间 + 数值抽样）作为验收与回归基准（I）</label></li>
+      <li><label><input type="checkbox"> 定义数值 SLO：RMSE/下游指标阈值，跌破即回退 FP16 或 FA2（P：FP8 误差高于 FP16 一个量级以上，表 3；I：阈值自定）</label></li>
+      <li><label><input type="checkbox"> 故障演练：作业重启重载与版本回退各一次（I：kernel 层无持久状态）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 用 attention 占比 × kernel 加速折算 GPU 时节省，对比升级/切换的工程成本（I：论文无成本数据，不写死价格）</label></li>
+      <li><label><input type="checkbox"> 若云上已有等效加速（框架内置/镜像预装），以增量收益而非论文倍数立项（E：平台文档；I：判断）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> 供应链 pin：官方仓库 commit/tag + CUTLASS/CUDA 版本配对锁定 + 镜像扫描（R：BSD-3-Clause 已核验；P：CUTLASS 依赖，第 9、15、21 页；I：流程）</label></li>
+      <li><label><input type="checkbox"> 数值输出审查以「目标精度路径的实际输出」为对象，FP8 另加离群统计监控（P：表 3 口径；I：审查设计）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 回退开关：可一键切回 FA2/框架内置路径（接口差异需适配层）（R：FA2 v2.5.8 存在；I：适配成本）</label></li>
+      <li><label><input type="checkbox"> 工具链变更（CUDA/NVCC/FA3 版本）触发双基线回归——kernel 性能依赖编译器调度（P：附录 B SASS 分析方法，第 19-21 页；I：治理）</label></li>
+      <li><label><input type="checkbox"> 监控：kernel 时间漂移、数值抽样、训练 loss/下游指标哨兵（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 退出成本评估：attention kernel 为可替换组件，回退 FA2 即恢复基线，无数据格式迁移（P：FA2 为论文基线，第 9 页；I：判断）</label></li>
+      <li><label><input type="checkbox"> 关注仓库演进（README 已公告 FA4，面向 Hopper/Blackwell）——下一代 kernel 迁移时把 FA3 的消融结论作为对比基线（R：2026-09-15 README；P：论文本身不含 FA4 任何内容，不把 FA4 能力记到论文头上）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与核验记录见构建文件 <code>sources/flashattention-3.evidence.json</code>（35 条，EV-01~EV-35）。核验日期为 <time datetime="2026-09-15">2026-09-15</time>。</p>
+
+<div class="callout">
+  <strong>核验范围声明：</strong>三轮核验。第一轮：pdftotext -layout 全文提取（22 页）作检索索引。第二轮：渲染第 1-12、17-22 页共 18 页逐页目检，关键数字页以 300-500dpi 局部放大逐柱核对。第三轮（同日，页面交付前）：22 页逐页重新提取并逐条核对本台账全部定位与引文；对图 5(c)/5(e)/6(a)/6(b)/7(a)/7(b)/9(a)/9(b) 以 400dpi 逐柱复核柱顶标注，修正了第一轮的四处读图错误（图 6a FA3 476→474、cuDNN 474→433；图 6b cuDNN 510→516；图 9a/9b cuDNN 458→438/483）与一处漏读（图 5e 1k 的 FA3 627，标注印在图例后），并修正两处页码定位（EV-23、EV-31）；表 2/表 3 与全部正文/算法/脚注引文经第三轮逐字复核无误。第 13-16 页为参考文献（不承载关键数字），经文本交叉核对。官方仓库与 v2.5.8 tag、CUTLASS 仓库于 2026-09-15 经 GitHub API 只读复核。
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位（PDF 页码）</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名/作者（共同一作 Shah 与 Bikshandi）/机构/落款 July 16 2024/arXiv v2 水印/22 页；PDF 内无会议归属信息</td><td><span class="ev ev-p">P</span></td><td>第 1 页题名块、作者行、脚注、水印；pdfinfo</td><td>已核验（原页目检，三轮一致）</td></tr>
+      <tr><td>摘要级结论：FA2 仅 35% 利用率；三项技术；1.5-2.0×、FP16 最高 740 TFLOPs/s（75%）、FP8 接近 1.2 PFLOPs/s、FP8 误差低 2.6×</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要</td><td>已核验；740 与图 5(e) 756 的图文出入已并排保留</td></tr>
+      <tr><td>问题背景：35% vs 80-90%；实现层（Ampere→Hopper 指令）与算法层（同步模型）归因；ThunderKittens/cuDNN 9 先例；低精度路线（FP8/FP4）</td><td><span class="ev ev-p">P</span></td><td>第 1-2 页引言</td><td>已核验（原页目检）</td></tr>
+      <tr><td>三项贡献：warp 专化异步；softmax 藏进异步块级 GEMM（重构算法打断依赖）；FP8 张量核适配＋块量化/非相干处理</td><td><span class="ev ev-p">P</span></td><td>第 2 页贡献列表</td><td>已核验</td></tr>
+      <tr><td>验证口径与脚注：前向 1.5-2.0×/反向 1.5-1.75×；脚注 2（FP8 对 cuDNN 按 hdim/因果分情况）；脚注 3（仓库 URL）；脚注 1（Hopper 语境）</td><td><span class="ev ev-p">P</span></td><td>第 2 页末两段与脚注 1/2/3</td><td>已核验（脚注逐字）</td></tr>
+      <tr><td>计算定义与反向链（S=αQK⊤ 等）；H100 内存层级表 1（GMEM/L2/SMEM/RMEM 四级，含脚注 4 推算）；线程层级；TMA/WGMMA/setmaxnreg；FP8 只支持 k-major</td><td><span class="ev ev-p">P</span></td><td>第 2-4 页 §2</td><td>已核验（表 1 逐格、公式逐项）</td></tr>
+      <tr><td>算法 1：生产者 TMA 装载＋s-stage 环形 SMEM；消费者 SS-GEMM→在线 softmax→RS-GEMM；O/L 写回；MQA/GQA 不复制 K/V</td><td><span class="ev ev-p">P</span></td><td>第 4-6 页 §3.1、算法 1</td><td>已核验（算法逐行）</td></tr>
+      <tr><td>pingpong：989 vs 3.9 TFLOPS（脚注 5）；512×/256×/50%；bar.sync 角色互换；570→620-640（hdim128/8192）</td><td><span class="ev ev-p">P</span></td><td>第 5-6 页、图 1、脚注 5</td><td>已核验</td></tr>
+      <tr><td>2-stage 流水（算法 2 行 11/13 重叠）；S_next 寄存器代价；SASS 四条观察；3-stage 负收益（编译器不配合＋寄存器更多）</td><td><span class="ev ev-p">P</span></td><td>第 6-7、19-21 页 §3.2、附录 B.2/B.3</td><td>已核验（四条观察逐字）</td></tr>
+      <tr><td>FP8 布局改造：k-major 约束与三选项；LDSM/STSM in-kernel 转置；byte permute {d0 d1 d4 d5 d2 d3 d6 d7}≡P 列置换；脚注 8/9</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页、图 3/4、脚注 7/8/9</td><td>已核验（序列与选项逐字）</td></tr>
+      <tr><td>块量化（Br×d/Bc×d 分块缩放、可融合 RoPE、零计算成本）与非相干处理（正交矩阵不变输出；±1 对角×Hadamard，O(d log d)）</td><td><span class="ev ev-p">P</span></td><td>第 8-9 页 §3.3</td><td>已核验</td></tr>
+      <tr><td>§4 开头：CUTLASS 实现；四方基线；对 FA2 最高 2.0×、对 FA2-Triton 1.5×；740 TFLOPs/s=75%</td><td><span class="ev ev-p">P</span></td><td>第 9 页 §4</td><td>已核验</td></tr>
+      <tr><td>基准设置：H100 SXM5、1830 MHz 固定时钟、100 次平均；seqlen/batch/hdim 口径；FLOPs 公式（前向 4·s²·d·h、causal÷2、反向×2.5）；FP8 序列与 132 对齐</td><td><span class="ev ev-p">P</span></td><td>第 9 页 §4.1、第 21 页 C.1/C.2</td><td>已核验（逐项）</td></tr>
+      <tr><td>表 2 消融全量（661/582/570 TFLOPs；3.538/4.021/4.105 ms）</td><td><span class="ev ev-p">P</span></td><td>第 9 页 §4.2；第 11 页表 2</td><td>已核验（逐格）</td></tr>
+      <tr><td>表 3 数值误差全量（FP16 3.2e-4/1.9e-4/1.9e-4；FP8 2.4e-2/9.1e-3/9.3e-3/2.4e-2）；合成分布 N(0,1)+N(0,100)·Bernoulli(0.001)；1.7×/2.6× 结论</td><td><span class="ev ev-p">P</span></td><td>第 10-11 页 §4.3；第 12 页表 3</td><td>已核验（逐格；页码定位第三轮修正）</td></tr>
+      <tr><td>图 5(c)/5(e) 前向全系列（含三处图例遮挡读数 565/574/627）；图 6(a)/6(b) 反向全系列（16k：474/433/291 与 561/516/322）；图 7(a)/(b) 与图 9(a)/(b) FP8 全系列（16k：1171/1139/903、1024/1099/663、613/438/511、572/483/481）</td><td><span class="ev ev-p">P</span>（图面柱顶标注）</td><td>第 10、11、22 页图 5/6/7/9</td><td>已核验（400dpi 逐柱；第一轮读图错误已在第三轮修正并记录）</td></tr>
+      <tr><td>§5 局限与未来工作：LLM 推理优化、FP8 persistent kernel、大规模训练低精度影响；脚注 10（FP8 短序列+因果弱势归因）</td><td><span class="ev ev-p">P</span></td><td>第 12 页 §5 与脚注 10</td><td>已核验</td></tr>
+      <tr><td>附录 A：MQA/GQA/MLA 不改核心计算、受益于 attention 改进；Ring attention 至 100 万上下文以 FA 为 primitive；SSM/RNN 仍保留 attention；推理 KV 可压至 4/3/2-bit、训练期量化仍难</td><td><span class="ev ev-p">P</span></td><td>第 17 页附录 A</td><td>已核验</td></tr>
+      <tr><td>附录 B.1 反向算法 3：dQ-writer warp＋信号量原子累加；前处理 D=rowsum(dO∘O)</td><td><span class="ev ev-p">P</span></td><td>第 18 页</td><td>已核验</td></tr>
+      <tr><td>参考文献印明 URL：[15] FA2 arXiv、[38] CUDA Guide、[40] PTX ISA、[57] CUTLASS</td><td><span class="ev ev-p">P</span></td><td>第 13-15 页</td><td>已核验（URL 照录；页码定位第三轮修正）</td></tr>
+      <tr><td>官方仓库在线现状：Dao-AILab/flash-attention、BSD-3-Clause、main@0dc2cb4、FA3 beta 于 hopper/ 子目录、发布范围 FP16/BF16 前向+反向与 FP8 前向、需 H100/H800 与 CUDA ≥ 12.3；tag v2.5.8 存在；README 已公告 FA4（论文时点之后，不归于论文）</td><td><span class="ev ev-r">R</span></td><td>论文出处第 2 页脚注 3、第 21 页 C.1；在线核验 2026-09-15（只读）</td><td>已核验（可达性、归属、许可、分支、HEAD、目录、tag）</td></tr>
+      <tr><td>云实例/容器/监控映射示例（Hopper 代际实例、容器镜像、版本矩阵、kernel 级监控）</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开实例目录与容器/监控产品文档</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>一句话判断/速读归纳、控制面-数据面划分、数据路径图编号与面板编排、FP8 利用率约 59% 推算、图文出入对照说明、基线陈旧性评估、容量/成本公式、复现步骤</td><td><span class="ev ev-i">I</span></td><td>本报告 §1-§12 与 sources/flashattention-3.evidence.json</td><td>编辑标注完成；不含伪精确数字，读图推算单独标注</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="10-qserve.html" rel="prev">上一篇：10 QServe</a>
+  <a href="12-liger-kernel.html" rel="next">下一篇：12 Liger Kernel</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页论文事实基于本地 <code>11_FlashAttention-3_2407.08608.pdf</code>（arXiv:2407.08608v2，2024-07-12 水印、2024-07-16 落款，22 页；页面采用 v2 版本），经文本提取检索并回 PDF 原页三轮核验（页码见各处标注与 <a href="#evidence">#evidence</a>）；图 5/6/7/9 为柱状图且论文无数据表，数值为柱顶印刷标注转录、三处图例遮挡点已注明。官方仓库经只读在线核验（2026-09-15）。云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有（arXiv:2407.08608v2；PDF 内未标注会议/期刊版权行，页面不作归属推断）；官方仓库代码许可 BSD-3-Clause（2026-09-15 在线核验一致），CUTLASS 为仓库自定义许可（以仓库 LICENSE 原文为准）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-15；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

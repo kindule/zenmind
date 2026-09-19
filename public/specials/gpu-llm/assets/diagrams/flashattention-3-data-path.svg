@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 980" role="img" aria-labelledby="fa3-svg-title fa3-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="fa3-svg-title">FlashAttention-3 数据路径图：Hopper 上经 TMA 装载、warp 专化生产者—消费者流水与 WGMMA/softmax 重叠计算 attention，并以 FP8 路径改造支撑低精度</title>
+  <desc id="fa3-svg-desc">流程自上而下共五步。第一步 HBM 驻留数据：查询块 Q_i、键值序列 K、V 与输出 O、统计量 L 都在显存，前向按 batch、头、query 序列长度并行，算法取 CTA 视角处理一个 Br 乘 d 的 Q 块。第二步生产者 warpgroup：用 setmaxnreg 释放寄存器，经 TMA 异步把 Q_i 与各 K_j、V_j 块从 HBM 装入 s-stage 环形共享内存缓冲并 commit 通知；TMA 发射不阻塞其他装载，主循环前 s 次迭代无需等待。第三步消费者 warpgroup 主循环：用 setmaxnreg 重新分配寄存器，片上初始化 O 为零、l 为零、m 为负无穷；每次迭代先做 SS-GEMM 即 S 等于 Q_i 乘 K_j 转置（WGMMA 直接从共享内存取操作数），再做行最大值与在线 softmax（指数在 multi-function unit 上执行），等待 V_j 后做 RS-GEMM 更新 O 并释放缓冲 stage。第四步软件流水与调度：2-stage GEMM-softmax 流水把迭代 j 的第二个 WGMMA 与迭代 j 加一的 softmax 重叠，代价是每线程块额外约 Br 乘 Bc 乘 4 字节的 S_next 寄存器，与加大 tile 相互制约；pingpong 调度让两个消费者 warpgroup 用 bar.sync 交替执行 GEMM 与 softmax，把指数运算藏进对方 GEMM（矩阵乘 989 对特殊函数 3.9 TFLOPS），hdim 128、seqlen 8192 的 FP16 前向从 570 提升到 620-640 TFLOPS；SASS 分析确认 2-stage 按设计重叠，3-stage 为负收益。第五步尾注与写回：O 除以 l、L 等于 m 加 log l 后写回 HBM；反向传播增加 dQ-writer warp 用信号量原子累加 dQ，前处理 kernel 先算 D 等于 rowsum(dO 圈乘 O)。右侧 FP8 面板：FP8 WGMMA 只接受 k-major 操作数，第二 GEMM 需要 V 瓦片按序列长度维连续而 TMA 不能转置维度，故用 LDSM/STSM 在 kernel 内做瓦片转置并把下一瓦片的转置藏进前两个 WGMMA 的阴影；FP32 累加器与 FP8 操作数寄存器布局不同，用 byte permute 把累加器重排为 d0 d1 d4 d5 d2 d3 d6 d7（每 8 字节重复），逻辑上等价于 P 瓦片列置换并让转置写出匹配的 V 行排列；块量化对 Q、K、V 按 Br 乘 d 或 Bc 乘 d 分块各自缩放，可融合进 rotary embedding 且 S 按块缩放零计算成本；非相干处理给 Q、K 各乘随机正交矩阵 M（取正负 1 对角阵乘 Hadamard，O(d log d)），因 MM 转置 M 等于单位阵而不改变输出并摊平离群。中右风险面板：寄存器压力与 tile 大小相互制约；FP8 kernel 无 persistent kernel 与负载均衡，短序列加因果掩码下落后 cuDNN；FP8 仅有前向基准。右下条件面板：全部数字的完整条件为 H100 80GB SXM5、时钟固定 1830 兆赫、100 次平均、seqlen 512 到 16k 且总 token 16k、hidden 2048、hdim 64 或 128 或 256、基线为 2024 年 5 月时点的 FlashAttention 2.5.8、cuDNN 9.1.1.17、Triton nightly 与 PyTorch 2.3.0，口径为 attention kernel 级 TFLOPs/s 而非端到端。依据论文 arXiv:2407.08608v2 算法 1、算法 2、图 1 至图 4 与第 3、4 节绘制。</desc>
+  <defs>
+    <marker id="fa3-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="fa3-arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="980" fill="#ffffff"/>
+  <text x="30" y="34" font-size="19" font-weight="700" fill="#14385c">FlashAttention-3：TMA 装载 → warp 专化流水 → WGMMA/softmax 重叠 → O 写回的数据路径</text>
+  <text x="30" y="56" font-size="12" fill="#4b5563">方向：HBM(Q,K,V) → 生产者/消费者 warp 分工 → 片上循环 → 写回 HBM　｜　依据：arXiv:2407.08608v2 算法 1/2、图 1-4、§3-§4</text>
+
+  <!-- 图例 -->
+  <g font-size="11.5" fill="#374151">
+    <rect x="30" y="70" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="49" y="81">HBM/显存（紫）</text>
+    <rect x="160" y="70" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="179" y="81">GPU 计算（青）</text>
+    <rect x="290" y="70" width="14" height="14" fill="#f8fafc" stroke="#334155" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="309" y="81">流水/同步控制（虚线）</text>
+    <rect x="458" y="70" width="14" height="14" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+    <text x="477" y="81">风险点（琥珀）</text>
+    <rect x="592" y="70" width="14" height="14" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6"/>
+    <text x="611" y="81">条件/事实面板（深蓝）</text>
+  </g>
+
+  <!-- ① HBM 驻留数据 -->
+  <rect x="40" y="104" width="600" height="86" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="52" y="126" font-size="12.5" font-weight="700" fill="#5b21b6">① HBM（GMEM）：Q、K、V 驻留，输出写回（算法 1，第 4-5 页）</text>
+  <text x="52" y="146" font-size="10.5" fill="#374151">输入：查询块 Q_i（Br×d）、键/值序列 K、V（N×d，按 Bc 分块为 K_j、V_j）；比例 α=1/√d</text>
+  <text x="52" y="163" font-size="10.5" fill="#374151">并行：前向按 batch、头、query 序列长度并行；CTA 视角处理一个 Q 块并产出对应 O 块</text>
+  <text x="52" y="180" font-size="10.5" fill="#374151">MQA/GQA：沿用 FA2 的张量索引调整，K、V 不在 HBM 中复制（§3.1，第 6 页）</text>
+
+  <line x1="340" y1="190" x2="340" y2="210" stroke="#334155" stroke-width="2.5" marker-end="url(#fa3-arr)"/>
+
+  <!-- ② 生产者 warpgroup -->
+  <rect x="40" y="214" width="600" height="104" rx="6" fill="#e6f7fb" stroke="#0e7490" stroke-width="2"/>
+  <text x="52" y="236" font-size="12.5" font-weight="700" fill="#155e75">② 生产者 warpgroup：TMA 异步装载 → s-stage 环形 SMEM 缓冲（§2.2、§3.1）</text>
+  <text x="52" y="256" font-size="10.5" fill="#374151">setmaxnreg 释放寄存器（发 TMA 只需单线程）→ 经 TMA 把 Q_i 与各 K_j、V_j 装入 SMEM</text>
+  <text x="52" y="273" font-size="10.5" fill="#374151">每次装载完成即 commit 通知消费者；GMEM↔SMEM 拷贝由专用硬件单元 TMA 承担</text>
+  <text x="52" y="290" font-size="10.5" fill="#374151">TMA 发射不阻塞其他装载（异步）；producer 主循环前 s 次迭代无需等待（缓冲在填充）</text>
+  <text x="52" y="307" font-size="10.5" fill="#374151">SMEM：每 SM 228 KiB、全 GPU 约 31 TB/s（表 1）；L2 50 MiB；HBM 80 GiB @ 3.35 TB/s</text>
+
+  <line x1="340" y1="318" x2="340" y2="338" stroke="#334155" stroke-width="2.5" marker-end="url(#fa3-arr)"/>
+
+  <!-- ③ 消费者 warpgroup 主循环 -->
+  <rect x="40" y="342" width="600" height="150" rx="6" fill="#e6f7fb" stroke="#0e7490" stroke-width="2"/>
+  <text x="52" y="364" font-size="12.5" font-weight="700" fill="#155e75">③ 消费者 warpgroup 主循环（每迭代 j，算法 1 行 15-23）</text>
+  <text x="56" y="385" font-size="10.8" fill="#374151">❶ setmaxnreg 重分配寄存器（做 MMA 的 warp 拿更多 RMEM）；初始化 O_i=0、ℓ_i=0、m_i=-∞</text>
+  <text x="56" y="404" font-size="10.8" fill="#374151">❷ SS-GEMM：S_i = Q_i·K_j⊤（WGMMA 异步执行、操作数直读 SMEM；SS=首操作数来自 SMEM）</text>
+  <text x="56" y="423" font-size="10.8" fill="#374151">❸ 在线 softmax：m_i←max(m_old,rowmax(S))，P̃=exp(S-m_i)，ℓ_i←exp(m_old-m_i)ℓ_i+rowsum(P̃)</text>
+  <text x="76" y="440" font-size="10.8" fill="#374151">（指数类特殊函数跑 multi-function unit；softmax 中间量保 FP32，瓶颈说明见 ④）</text>
+  <text x="56" y="459" font-size="10.8" fill="#374151">❹ 等 V_j → RS-GEMM：O_i←diag(exp(m_old-m_i))⁻¹O_i + P̃·V_j（RS=首操作数来自寄存器）</text>
+  <text x="56" y="478" font-size="10.8" fill="#374151">❺ 释放缓冲 (j%s) stage 给生产者；WGMMA 与流水的同步经 commit-wait 与 pipeline 对象管理</text>
+
+  <line x1="340" y1="492" x2="340" y2="512" stroke="#6d28d9" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#fa3-arr-purple)"/>
+
+  <!-- ④ 软件流水与调度 -->
+  <rect x="40" y="516" width="600" height="150" rx="6" fill="#f8fafc" stroke="#334155" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="52" y="538" font-size="12.5" font-weight="700" fill="#1f3a5f">④ 软件流水与调度（§3.1-§3.2，算法 2、图 1-2）：把 softmax 藏进 GEMM</text>
+  <text x="56" y="559" font-size="10.8" fill="#374151">动机：FP16 matmul 989 TFLOPS vs 指数类特殊函数仅 3.9 TFLOPS（16 op/SM/时钟×132SM×1830MHz）；</text>
+  <text x="76" y="576" font-size="10.8" fill="#374151">hdim 128 前向 matmul FLOPS 是指数的 512×、吞吐差 256× → 指数可占相对 matmul 50% 的周期</text>
+  <text x="56" y="595" font-size="10.8" fill="#374151">2-stage 流水：迭代 j 的第二个 WGMMA（O+=P̃V）与迭代 j+1 的 softmax 重叠（算法 2 行 11/13）；</text>
+  <text x="76" y="612" font-size="10.8" fill="#374151">代价＝额外寄存器 S_next≈Br×Bc×sizeof(float)/线程块，与「加大 tile」相互制约，按 profiling 权衡</text>
+  <text x="56" y="631" font-size="10.8" fill="#374151">pingpong：两个消费者 warpgroup 经 bar.sync 交替「GEMM-softmax」，一方 softmax 落在另一方 GEMM 期间；</text>
+  <text x="76" y="648" font-size="10.8" fill="#374151">FP16 前向 hdim 128、seqlen 8192 从 570 提到 620-640 TFLOPS；SASS 证实 2-stage 按设计重叠、3-stage 更差</text>
+
+  <line x1="340" y1="666" x2="340" y2="686" stroke="#334155" stroke-width="2.5" marker-end="url(#fa3-arr)"/>
+
+  <!-- ⑤ 尾注与写回 -->
+  <rect x="40" y="690" width="600" height="96" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="52" y="712" font-size="12.5" font-weight="700" fill="#5b21b6">⑤ 尾注与写回（算法 1 行 24-25；反向见附录 B.1 算法 3）</text>
+  <text x="52" y="732" font-size="10.5" fill="#374151">前向尾注：O_i←diag(ℓ_i)⁻¹O_i，L_i=m_i+log(ℓ_i)（logsumexp），O_i 与 L_i 写回 HBM</text>
+  <text x="52" y="749" font-size="10.5" fill="#374151">反向：前处理 kernel 先算 D=rowsum(dO∘O) 写 HBM；新增第三个角色 dQ-writer warp，</text>
+  <text x="52" y="766" font-size="10.5" fill="#374151">用信号量把各线程块的 dQ 局部块原子累加进全局 dQ，避免阻塞其余 warp 的下一个 matmul</text>
+
+  <!-- 右侧面板：FP8 路径改造 -->
+  <rect x="660" y="104" width="290" height="382" rx="6" fill="#f8fafc" stroke="#334155" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="672" y="126" font-size="12.5" font-weight="700" fill="#1f3a5f">FP8 路径改造（§3.3，第 7-9 页）</text>
+  <text x="672" y="146" font-size="10.5" font-weight="700" fill="#1f3a5f">布局变换（效率）</text>
+  <text x="672" y="164" font-size="10.5" fill="#374151">FP8 WGMMA 只支持 k-major；</text>
+  <text x="692" y="181" font-size="10.5" fill="#374151">第二 GEMM 需 V 瓦片按 seq-len 维</text>
+  <text x="692" y="198" font-size="10.5" fill="#374151">连续，而 TMA 不能改连续维</text>
+  <text x="672" y="215" font-size="10.5" fill="#374151">→ in-kernel 转置：LDSM/STSM</text>
+  <text x="692" y="232" font-size="10.5" fill="#374151">（warp 级 128B 粒度）在生产者</text>
+  <text x="692" y="249" font-size="10.5" fill="#374151">warpgroup 内做；下一 V 瓦片的</text>
+  <text x="692" y="266" font-size="10.5" fill="#374151">转置藏进前两个 WGMMA 的阴影</text>
+  <text x="672" y="283" font-size="10.5" fill="#374151">→ FP32 累加器与 FP8 操作数布局</text>
+  <text x="692" y="300" font-size="10.5" fill="#374151">不同：byte permute 重排为</text>
+  <text x="692" y="317" font-size="10.5" fill="#374151">{d0 d1 d4 d5 d2 d3 d6 d7}</text>
+  <text x="692" y="334" font-size="10.5" fill="#374151">（每 8 字节重复）≡ P 列置换，</text>
+  <text x="692" y="351" font-size="10.5" fill="#374151">转置写出匹配的 V 行排列</text>
+  <text x="672" y="371" font-size="10.5" font-weight="700" fill="#1f3a5f">精度：块量化＋非相干处理</text>
+  <text x="672" y="389" font-size="10.5" fill="#374151">· Q/K/V 按 Br×d 或 Bc×d 分块</text>
+  <text x="692" y="406" font-size="10.5" fill="#374151">各自缩放；可融合进 rotary</text>
+  <text x="692" y="423" font-size="10.5" fill="#374151">embedding；S 按块缩放零成本</text>
+  <text x="672" y="440" font-size="10.5" fill="#374151">· M=±1 对角阵×Hadamard，QM(KM)⊤</text>
+  <text x="692" y="457" font-size="10.5" fill="#374151">=QK⊤ 不变输出；O(d log d)、</text>
+  <text x="692" y="474" font-size="10.5" fill="#374151">可融合 RoPE；误差至多降 2.6×</text>
+
+  <!-- 右侧面板：风险点 -->
+  <rect x="660" y="488" width="290" height="172" rx="6" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+  <text x="672" y="510" font-size="12.5" font-weight="700" fill="#92400e">风险点（论文指出）</text>
+  <text x="672" y="532" font-size="10.5" fill="#92400e">· 寄存器压力 vs tile 大小：2-stage</text>
+  <text x="692" y="549" font-size="10.5" fill="#92400e">需 S_next；3-stage 需更多且编译器</text>
+  <text x="692" y="566" font-size="10.5" fill="#92400e">未按预期重叠，实测更差（附录 B.3）</text>
+  <text x="672" y="583" font-size="10.5" fill="#92400e">· FP8 kernel 无 persistent kernel 与</text>
+  <text x="692" y="600" font-size="10.5" fill="#92400e">负载均衡，短序列＋因果掩码下</text>
+  <text x="692" y="617" font-size="10.5" fill="#92400e">落后 FP8 cuDNN（脚注 10）</text>
+  <text x="672" y="634" font-size="10.5" fill="#92400e">· FP8 仅有前向基准；结论限于</text>
+  <text x="692" y="651" font-size="10.5" fill="#92400e">Hopper 语境（脚注 1）</text>
+
+  <!-- 右侧面板：引用数字必读 -->
+  <rect x="660" y="676" width="290" height="212" rx="6" fill="#eef3fa" stroke="#1f3a5f" stroke-width="2"/>
+  <text x="672" y="698" font-size="12.5" font-weight="700" fill="#1f3a5f">引用数字必读（完整条件）</text>
+  <text x="672" y="720" font-size="10.5" fill="#374151">硬件：H100 80GB SXM5（700W），</text>
+  <text x="692" y="737" font-size="10.5" fill="#374151">时钟固定 1830 MHz、100 次平均</text>
+  <text x="672" y="754" font-size="10.5" fill="#374151">负载：seqlen 512→16k（总 token 16k）；</text>
+  <text x="692" y="771" font-size="10.5" fill="#374151">hidden 2048；hdim 64/128/256</text>
+  <text x="672" y="788" font-size="10.5" fill="#374151">精度：FP16/BF16 前向＋反向；FP8 仅前向</text>
+  <text x="672" y="805" font-size="10.5" fill="#374151">基线（2024-05 时点）：FA 2.5.8、</text>
+  <text x="692" y="822" font-size="10.5" fill="#374151">FA2-Triton nightly、cuDNN 9.1.1.17、</text>
+  <text x="692" y="839" font-size="10.5" fill="#374151">PyTorch 2.3.0、CUTLASS 3.5、CUDA 12.3</text>
+  <text x="672" y="856" font-size="10.5" fill="#374151">口径：attention kernel 级 TFLOPs/s，</text>
+  <text x="692" y="873" font-size="10.5" fill="#374151">非端到端；与他文数字不可直接比较</text>
+
+  <!-- 底注 -->
+  <text x="30" y="912" font-size="10.5" fill="#4b5563">编号 ①-⑤ 与正文「端到端文字序列」一致；实线＝运行时数据流，虚线＝软件流水/控制；琥珀＝论文指出的风险点。</text>
+  <text x="30" y="932" font-size="10.5" fill="#4b5563">生产者/消费者拆分与 pingpong 调度为运行时机制（P）；FP8 改造分「kernel 内运行时」与「可融合进 RoPE 的前置量化」两类（§3.3）。</text>
+  <text x="30" y="952" font-size="10.5" fill="#4b5563">依据：FlashAttention-3 论文（arXiv:2407.08608v2）算法 1、算法 2、图 1-4 与 §2-§4 绘制；数字条件见 <tspan fill="#0e7490">sources/flashattention-3.evidence.json</tspan>。</text>
+  <text x="30" y="970" font-size="10.5" fill="#4b5563">色编码：紫＝HBM/显存，青＝GPU 计算，灰虚线＝流水/同步，琥珀＝风险；不只依赖颜色，每框均有文字说明。</text>
+</svg>

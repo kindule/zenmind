@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 960" role="img" aria-labelledby="quarot-svg-title quarot-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="quarot-svg-title">QuaRot 数据路径图：随机 Hadamard 旋转消除离群后的单 Transformer 层 4bit 量化推理路径与精度标注</title>
+  <desc id="quarot-svg-desc">流程自上而下描述 QuaRot 改造后的单个 Transformer 层：残差流 X 乘以随机 Hadamard 矩阵 Q（FP16，离线融合、全精度下输出不变）进入本层；RMSNorm 以 FP32 计算（缩放参数已吸收进权重），其输出经对称 per-token 在线量化（恒定裁剪比 0.9、行缩放为行最大绝对值除以 7）变为 INT4 后进入各线性层；注意力分支中，query、key、value 三个投影的权重都是融合旋转后的 INT4（Q 的逆乘 diag(α) 再乘 W），投影输出为 FP16——query 经 RoPE 后做在线 head-wise Hadamard 并保持 FP16 不量化，key 经 RoPE 后做同样的在线旋转再量化为 INT4 写入 KV 缓存（非对称分组、组 128、裁剪比 0.95），value 在投影时已融合 head-wise Hadamard、量化为 INT4 写入 KV 缓存；注意力计算保持 FP16——在线 softmax，逐段载入 INT4 缓存、反量化后以 FP16 做点积；注意力输出经 Hadamard heads 跨头旋转、量化为 INT4 后通过融合了跨头 Hadamard 与全局 Q 的 H·W_out·Q（INT4 权重）得到 FP16 输出 Y_Q；FFN 分支中 gate 与 up 投影为 INT4 权重、门控相乘输出 FP16，随后做一次 FP32 在线 Hadamard、量化为 INT4，再通过 H·W_down·Q（INT4）得到 FP16 输出 Y_Q 并汇回残差流进入下一层；所有 INT4 矩阵乘在 TensorCore 上以 INT32 累加、随即 cast 并乘行缩放（激活）与列缩放（权重）回到 FP16——因此并非整条前向都是纯 INT4。右侧面板：上为两阶段划分（Stage 1 离线、全精度、数学上不改变输出：1a 融合 RMSNorm 缩放与全局旋转进权重、1b FFN 在线 Hadamard 加 H 融合进 down-proj、1c value 投影融合 head-wise Hadamard 并插入 Hadamard heads、1d query/key 在 RoPE 后在线旋转并选 Post-RoPE 缓存；Stage 2 在线量化、唯一精度损失来源：2a 默认 GPTQ 权重、2b 对称 per-token 激活量化、2c 非对称分组 KV 量化）；中为精度清单（INT4：全部线性层权重、线性层输入激活、KV 缓存；FP16：查询、注意力点积与在线 softmax、块输出与残差流；FP32：RMSNorm 与在线 Hadamard；INT32：矩阵乘累加器）；下为实验参数（GPTQ 校准 128 条 WikiText-2 样本、序列 2048；输入裁剪比 0.9、KV 0.95；KV 组 128 等于头维；每层在线约 1.5 次 Hadamard；A100 上修改 70B 需 5 分钟、GPTQ 再需 2 小时）与收益风险（3.33 倍 prefill 加速为 70B、batch 64、序列 2048 的单 Transformer 块 RTX 3090 实测；3.89 倍显存节省为解码 50 token、batch 16 的单块实测；batch 不大于 8 时 INT4 KV 解码反而慢于 FP16；LLAMA-3 掉点明显更大；论文结论章的 3.39 倍为原文笔误、应为 3.89 倍；整模型端到端吞吐未测）。依据论文 arXiv:2404.00456v2 图 3、图 6、第 4、7、8、13、18、20、21 页绘制。</desc>
+  <defs>
+    <marker id="qr-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="qr-arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/>
+    </marker>
+    <marker id="qr-arr-dark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f3a5f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="960" fill="#ffffff"/>
+  <text x="30" y="34" font-size="19" font-weight="700" fill="#14385c">QuaRot：旋转消除离群后，单 Transformer 层的 4bit 权重 / 激活 / KV 缓存数据路径</text>
+  <text x="30" y="56" font-size="12" fill="#4b5563">方向：残差流 → RMSNorm/量化门 → 注意力（Q/K/V + INT4 KV 缓存）与 FFN → Y_Q 回残差　｜　依据：arXiv:2404.00456v2 图 3、图 6、§4、§5（NeurIPS 2024）</text>
+
+  <!-- 图例 -->
+  <g font-size="11.5" fill="#374151">
+    <rect x="30" y="68" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="49" y="79">GPU 计算路径</text>
+    <rect x="148" y="68" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="167" y="79">KV 缓存读/写（紫）</text>
+    <rect x="296" y="68" width="14" height="14" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="315" y="79">Stage 1 离线变换（不产生量化误差）</text>
+    <rect x="516" y="68" width="14" height="14" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+    <text x="535" y="79">风险 / 口径注意（琥珀）</text>
+    <rect x="30" y="88" width="34" height="15" rx="3" fill="#0e7490"/>
+    <text x="47" y="99.5" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">INT4</text>
+    <text x="70" y="99.5" font-size="10.5">＝4bit 整数（有量化误差）</text>
+    <rect x="236" y="88" width="38" height="15" rx="3" fill="#b91c1c"/>
+    <text x="255" y="99.5" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">FP16</text>
+    <text x="280" y="99.5" font-size="10.5">＝半精度（无量化误差）</text>
+    <rect x="436" y="88" width="38" height="15" rx="3" fill="#6d28d9"/>
+    <text x="455" y="99.5" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">FP32</text>
+    <text x="480" y="99.5" font-size="10.5">＝单精度</text>
+    <rect x="572" y="88" width="44" height="15" rx="3" fill="#92400e"/>
+    <text x="594" y="99.5" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">INT32</text>
+    <text x="622" y="99.5" font-size="10.5">＝GEMM 整型累加器</text>
+  </g>
+
+  <!-- ① 残差流输入 -->
+  <rect x="40" y="116" width="600" height="58" rx="6" fill="#eef3fa" stroke="#1f3a5f" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="52" y="137" font-size="12.5" font-weight="700" fill="#1f3a5f">① 残差流输入（块间激活已被旋转）</text>
+  <text x="52" y="155" font-size="10.5" fill="#374151">X ← X·Q：随机 Hadamard Q 已离线融合进上一层输出权重，块间信号恒为「旋转系」</text>
+  <text x="52" y="169" font-size="10.5" fill="#374151">全精度下数学上不改变模型输出（computational invariance）；图 1：旋转后 FFN 输入激活无离群</text>
+
+  <line x1="340" y1="174" x2="340" y2="196" stroke="#334155" stroke-width="2.5" marker-end="url(#qr-arr)"/>
+
+  <!-- ② RMSNorm + 量化门 -->
+  <rect x="40" y="200" width="600" height="92" rx="6" fill="#e6f7fb" stroke="#0e7490" stroke-width="2"/>
+  <text x="52" y="221" font-size="12.5" font-weight="700" fill="#155e75">② RMSNorm（FP32）→ 在线激活量化门（每个线性层前重复）</text>
+  <rect x="56" y="232" width="272" height="42" rx="5" fill="#ffffff" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="192" y="250" font-size="11" font-weight="700" text-anchor="middle" fill="#155e75">RMSNorm：FP32 计算（去缩放）</text>
+  <text x="192" y="266" font-size="10.5" text-anchor="middle" fill="#374151">缩放参数 diag(α) 已吸收进相邻权重</text>
+  <line x1="336" y1="253" x2="356" y2="253" stroke="#334155" stroke-width="2" marker-end="url(#qr-arr)"/>
+  <rect x="360" y="232" width="264" height="42" rx="5" fill="#ffffff" stroke="#92400e" stroke-width="1.4"/>
+  <text x="492" y="250" font-size="11" font-weight="700" text-anchor="middle" fill="#92400e">量化：对称 per-token → INT4</text>
+  <text x="492" y="266" font-size="10.5" text-anchor="middle" fill="#374151">行缩放 = max|行| ÷ 7，裁剪比恒为 0.9（RTN）</text>
+  <text x="52" y="288" font-size="10.5" fill="#374151">线性层输入激活一律 INT4；缩放因子来自激活（行）与权重（列），反量化时相乘</text>
+
+  <line x1="340" y1="292" x2="340" y2="313" stroke="#334155" stroke-width="2.5" marker-end="url(#qr-arr)"/>
+
+  <!-- ③ 注意力分支 -->
+  <rect x="40" y="316" width="600" height="290" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="52" y="337" font-size="12.5" font-weight="700" fill="#155e75">③ 多头注意力：权重 INT4、查询 FP16、KV 缓存 INT4（Post-RoPE）</text>
+
+  <!-- Q 行 -->
+  <rect x="56" y="348" width="568" height="56" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.4"/>
+  <rect x="66" y="360" width="42" height="15" rx="3" fill="#0e7490"/>
+  <text x="87" y="371.5" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">INT4</text>
+  <text x="116" y="372" font-size="10.5" fill="#374151">权重 Q⊤(α)W_q（旋转离线融合）→ 输出 FP16</text>
+  <text x="66" y="394" font-size="10.5" fill="#374151">Query 路径：RoPE → 在线 head-wise Hadamard (I⊗H_dh)（Post-RoPE）→ 查询保持 FP16、不量化（Stage 2c）</text>
+
+  <!-- K 行 -->
+  <rect x="56" y="412" width="568" height="56" rx="5" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.4"/>
+  <rect x="66" y="424" width="42" height="15" rx="3" fill="#0e7490"/>
+  <text x="87" y="435.5" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">INT4</text>
+  <text x="116" y="436" font-size="10.5" fill="#374151">权重 Q⊤(α)W_k → 输出 FP16 → RoPE → 在线 (I⊗H_dh) 旋转</text>
+  <text x="66" y="458" font-size="10.5" fill="#374151">Key 路径：旋转后量化（非对称、组 128、裁剪比 0.95）→ INT4 写入 KV 缓存；Q/K 同旋、注意力分数不变</text>
+
+  <!-- V 行 -->
+  <rect x="56" y="476" width="568" height="56" rx="5" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.4"/>
+  <rect x="66" y="488" width="42" height="15" rx="3" fill="#0e7490"/>
+  <text x="87" y="499.5" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">INT4</text>
+  <text x="116" y="500" font-size="10.5" fill="#374151">权重 Q⊤(α)W_v(I⊗H_dh)：head-wise Hadamard 已融合（输出端 value 已旋转）</text>
+  <text x="66" y="522" font-size="10.5" fill="#374151">Value 路径：量化（非对称、组 128）→ INT4 写入 KV 缓存</text>
+
+  <!-- 注意力计算行 -->
+  <rect x="56" y="540" width="568" height="54" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="66" y="559" font-size="11" font-weight="700" fill="#155e75">注意力计算保持 FP16：在线 softmax（类 FlashAttention）；KV 逐段载入 → 反量化 → FP16 点积</text>
+  <text x="66" y="580" font-size="10.5" fill="#374151">输出 → Hadamard heads Z←Z(H_nh⊗I)（跨头旋转）→ 量化 INT4 → 权重 H·W_out·Q（INT4）→ 输出 Y_Q（FP16）</text>
+
+  <line x1="340" y1="606" x2="340" y2="628" stroke="#334155" stroke-width="2.5" marker-end="url(#qr-arr)"/>
+
+  <!-- ④ FFN 分支 -->
+  <rect x="40" y="632" width="600" height="96" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="52" y="653" font-size="12.5" font-weight="700" fill="#155e75">④ 门控 FFN：权重 INT4 + 一次全精度在线 Hadamard</text>
+  <rect x="56" y="664" width="272" height="52" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="192" y="683" font-size="11" font-weight="700" text-anchor="middle" fill="#155e75">W_gate / W_up（INT4，融合 Q⊤(α)）</text>
+  <text x="192" y="701" font-size="10.5" text-anchor="middle" fill="#374151">σ(gate) ⊙ up → 输出 FP16（W_up/gate 不需 Hadamard）</text>
+  <line x1="336" y1="690" x2="356" y2="690" stroke="#334155" stroke-width="2" marker-end="url(#qr-arr)"/>
+  <rect x="360" y="664" width="264" height="52" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="492" y="683" font-size="11" font-weight="700" text-anchor="middle" fill="#155e75">在线 Hadamard（FP32 快速核）→ 量化 INT4</text>
+  <text x="492" y="701" font-size="10.5" text-anchor="middle" fill="#374151">→ 权重 H·W_down·Q（INT4）→ 输出 Y_Q（FP16）</text>
+  <text x="52" y="746" font-size="10.5" fill="#374151">Y_Q 汇回残差流（FP16），进入下一层</text>
+
+  <line x1="340" y1="728" x2="340" y2="750" stroke="#334155" stroke-width="2.5" marker-end="url(#qr-arr)"/>
+
+  <!-- ⑤ TensorCore 精度链 -->
+  <rect x="40" y="754" width="600" height="88" rx="6" fill="#ffffff" stroke="#92400e" stroke-width="2"/>
+  <text x="52" y="775" font-size="12.5" font-weight="700" fill="#92400e">⑤ 每个线性层的精度链（TensorCore）——不是整条前向都跑纯 INT4</text>
+  <rect x="56" y="788" width="118" height="22" rx="4" fill="#0e7490"/>
+  <text x="115" y="803" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">INT4 权重×激活</text>
+  <line x1="176" y1="799" x2="196" y2="799" stroke="#334155" stroke-width="2" marker-end="url(#qr-arr)"/>
+  <rect x="200" y="788" width="118" height="22" rx="4" fill="#92400e"/>
+  <text x="259" y="803" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">INT32 累加器</text>
+  <line x1="320" y1="799" x2="340" y2="799" stroke="#334155" stroke-width="2" marker-end="url(#qr-arr)"/>
+  <rect x="344" y="788" width="128" height="22" rx="4" fill="#b91c1c"/>
+  <text x="408" y="803" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">cast→FP16 ×行/列缩放</text>
+  <line x1="474" y1="799" x2="494" y2="799" stroke="#334155" stroke-width="2" marker-end="url(#qr-arr)"/>
+  <rect x="498" y="788" width="126" height="22" rx="4" fill="#b91c1c"/>
+  <text x="561" y="803" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">FP16 层输出</text>
+  <text x="56" y="830" font-size="10.5" fill="#374151">量化误差只来自 Stage 2 的取整/裁剪；旋转与融合（Stage 1）在全精度下可精确抵消（式 3、4、7-9）</text>
+
+  <!-- 循环箭头 -->
+  <path d="M40 800 C 14 800, 14 145, 36 145" fill="none" stroke="#1f3a5f" stroke-width="2.2" stroke-dasharray="6 4" marker-end="url(#qr-arr-dark)"/>
+  <text x="6" y="480" font-size="10.5" fill="#1f3a5f" transform="rotate(-90 18 480)">Y_Q → 下一层（循环）</text>
+
+  <!-- 右侧面板 1：两阶段 -->
+  <rect x="652" y="116" width="298" height="206" rx="8" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="666" y="138" font-size="13" font-weight="700" fill="#1f3a5f">两阶段：离线旋转 ≠ 在线量化</text>
+  <text x="666" y="158" font-size="11" font-weight="700" fill="#1f3a5f">Stage 1（离线、全精度、输出不变）</text>
+  <text x="666" y="176" font-size="10.5" fill="#374151">1a 融合 RMSNorm 缩放 α 与全局 Q 进权重</text>
+  <text x="666" y="192" font-size="10.5" fill="#374151">1b FFN：在线 Hadamard + H 融合进 W_down</text>
+  <text x="666" y="208" font-size="10.5" fill="#374151">1c W_v/W_out 融合 head-wise Hadamard</text>
+  <text x="666" y="224" font-size="10.5" fill="#374151">　 +插入 Hadamard heads（H_nh⊗I）</text>
+  <text x="666" y="240" font-size="10.5" fill="#374151">1d Q/K 在 RoPE 后在线旋转（Post-RoPE 缓存）</text>
+  <text x="666" y="262" font-size="11" font-weight="700" fill="#155e75">Stage 2（在线量化＝唯一误差来源）</text>
+  <text x="666" y="280" font-size="10.5" fill="#374151">2a 权重默认 GPTQ（也可 RTN，损些精度）</text>
+  <text x="666" y="296" font-size="10.5" fill="#374151">2b 激活对称 per-token RTN（clip 0.9）</text>
+  <text x="666" y="312" font-size="10.5" fill="#374151">2c KV 非对称分组（组 128，clip 0.95）</text>
+
+  <!-- 右侧面板 2：精度清单 -->
+  <rect x="652" y="338" width="298" height="196" rx="8" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+  <text x="666" y="360" font-size="13" font-weight="700" fill="#155e75">什么在 INT4，什么不在（§4 Stage 2）</text>
+  <rect x="664" y="372" width="274" height="66" rx="5" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.2"/>
+  <text x="674" y="390" font-size="10.5" font-weight="700" fill="#155e75">INT4：全部线性层权重（融合后）</text>
+  <text x="674" y="406" font-size="10.5" fill="#374151">· 线性层输入激活（对称 per-token 量化）</text>
+  <text x="674" y="422" font-size="10.5" fill="#374151">· KV 缓存（keys+values，非对称组 128）</text>
+  <rect x="664" y="446" width="274" height="82" rx="5" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.2"/>
+  <text x="674" y="464" font-size="10.5" font-weight="700" fill="#5b21b6">FP16 / FP32 / INT32：</text>
+  <text x="674" y="482" font-size="10.5" fill="#374151">· 查询保持 FP16；注意力点积/在线 softmax 也在 FP16</text>
+  <text x="674" y="500" font-size="10.5" fill="#374151">· RMSNorm 与在线 Hadamard 用 FP32</text>
+  <text x="674" y="518" font-size="10.5" fill="#374151">· GEMM 用 INT32 累加后 cast 回 FP16</text>
+
+  <!-- 右侧面板 3：参数 -->
+  <rect x="652" y="550" width="298" height="158" rx="8" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6"/>
+  <text x="666" y="572" font-size="13" font-weight="700" fill="#1f3a5f">实验参数（论文口径）</text>
+  <text x="666" y="592" font-size="10.5" fill="#374151">GPTQ 校准：WikiText-2 训练集 128 样本、序列 2048</text>
+  <text x="666" y="608" font-size="10.5" fill="#374151">裁剪比：输入 0.9（对称）｜KV 0.95（非对称）</text>
+  <text x="666" y="624" font-size="10.5" fill="#374151">KV 组 128＝注意力头维；权重组 256/128/64 可选</text>
+  <text x="666" y="640" font-size="10.5" fill="#374151">在线 Hadamard：每层合计约 1½ 次（§2、A.5）</text>
+  <text x="666" y="656" font-size="10.5" fill="#374151">内核：CUTLASS INT4 GEMM ＋ FlashInfer KV 量化</text>
+  <text x="666" y="672" font-size="10.5" fill="#374151">A100 单卡：修改 70B 约 5 分钟、GPTQ 再约 2 小时</text>
+  <text x="666" y="688" font-size="10.5" fill="#374151">硬件口径：性能实验全部在 RTX 3090（消费级定位）</text>
+
+  <!-- 右侧面板 4：收益与风险 -->
+  <rect x="652" y="724" width="298" height="200" rx="8" fill="#ffffff" stroke="#92400e" stroke-width="1.6"/>
+  <text x="666" y="746" font-size="13" font-weight="700" fill="#92400e">收益（P）与风险口径（琥珀）</text>
+  <text x="666" y="766" font-size="10.5" fill="#374151">✓ prefill 至多 3.33×：70B、batch 64、序列 2048、</text>
+  <text x="666" y="782" font-size="10.5" fill="#374151">　 单块、RTX 3090（图 4 左；表 16 列至 batch 32）</text>
+  <text x="666" y="798" font-size="10.5" fill="#374151">✓ 解码峰值显存至多 3.89×：单块、batch 16（图 4 右）</text>
+  <text x="666" y="814" font-size="10.5" fill="#374151">✓ 70B 4bit：PPL 3.79（-0.47）、零样本 -1.09%（表 1/2）</text>
+  <rect x="664" y="824" width="274" height="92" rx="5" fill="#fef3c7" stroke="#92400e" stroke-width="1.2"/>
+  <text x="674" y="842" font-size="10.5" fill="#92400e">⚠ 单块 ≠ 整模型：整模型大 batch 放不进其集群，</text>
+  <text x="674" y="858" font-size="10.5" fill="#92400e">　 端到端吞吐/TTFT 绝对值论文未披露</text>
+  <text x="674" y="874" font-size="10.5" fill="#92400e">⚠ batch≤8 时 INT4 KV 解码比 FP16 慢（表 15）</text>
+  <text x="674" y="890" font-size="10.5" fill="#92400e">⚠ LLAMA-3 更敏感：8B PPL 6.14→8.16（表 11）</text>
+  <text x="674" y="906" font-size="10.5" fill="#92400e">⚠ 结论章 3.39× 为原文笔误（引言/§5.2 为 3.89×）</text>
+
+  <text x="30" y="948" font-size="10.5" fill="#6b7280">来源：QuaRot（arXiv:2404.00456v2，NeurIPS 2024）图 1/3/6、式 (1)-(14)、表 1-4/6/11/14-17、§4-§5、A.1-A.10；编号 ①-⑤ 对应页面文字序列；P＝论文，I＝编辑整理。</text>
+</svg>

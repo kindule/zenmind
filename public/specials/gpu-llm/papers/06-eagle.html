@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>EAGLE：投机采样需要重新思考特征不确定性（ICML 2024） · GPU 大模型系统论文解读</title>
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <!-- 说明：本页已引用共享骨架 ../assets/css/site.css 与 ../assets/js/site.js；
+       下方内联样式保留为回退（共享文件缺失或离线 file:// 打开时页面仍完整可读）。
+       主题策略：跟随系统明暗（prefers-color-scheme），站点级主题切换/目录高亮由共享 site.js 增强，禁用 JS 时本页仍完整可读。 -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --surface: #ffffff;
+      --surface-2: #f5f5f5;
+      --border: #f0f0f0;
+      --text: rgba(0, 0, 0, .88);
+      --text-muted: rgba(0, 0, 0, .65);
+      --heading: #1677ff;
+      --accent: #1677ff;
+      --accent-2: #237804;
+      --accent-soft: #f6ffed;
+      --mem: #722ed1;
+      --mem-soft: #f9f0ff;
+      --net: #d4380d;
+      --net-soft: #fff2e8;
+      --warn-bg: #fffbe6;
+      --warn-border: #874d00;
+      --warn-text: #874d00;
+      --p-bg: #e6f4ff; --p-fg: #1677ff; --p-border: #1677ff;
+      --r-bg: #f9f0ff; --r-fg: #722ed1; --r-border: #722ed1;
+      --e-bg: #fff2e8; --e-fg: #d4380d; --e-border: #d4380d;
+      --i-bg: #fffbe6; --i-fg: #874d00; --i-border: #874d00;
+      --focus: #d4380d;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #141414;
+        --surface: #141414;
+        --surface-2: #1f1f1f;
+        --border: #262626;
+        --text: rgba(255, 255, 255, .85);
+        --text-muted: rgba(255, 255, 255, .65);
+        --heading: #69b1ff;
+        --accent: #69b1ff;
+        --accent-2: #73d13d;
+        --accent-soft: #162312;
+        --mem: #b37feb;
+        --mem-soft: #241a3d;
+        --net: #ff9c6e;
+        --net-soft: #3a2113;
+        --warn-bg: #2b2111;
+        --warn-border: #ffc53d;
+        --warn-text: #ffc53d;
+        --p-bg: #111a2c; --p-fg: #69b1ff; --p-border: #69b1ff;
+        --r-bg: #241a3d; --r-fg: #b37feb; --r-border: #b37feb;
+        --e-bg: #3a2113; --e-fg: #ff9c6e; --e-border: #ff9c6e;
+        --i-bg: #2b2111; --i-fg: #ffc53d; --i-border: #ffc53d;
+        --focus: #ff9c6e;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5715 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    }
+    a { color: var(--accent-2); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+    .skip-link {
+      position: absolute; left: 8px; top: -48px; z-index: 10;
+      background: var(--surface); color: var(--text);
+      border: 2px solid var(--focus); border-radius: 4px;
+      padding: 12px 16px; font-weight: 700; transition: top .15s ease;
+    }
+    .skip-link:focus { top: 8px; }
+    code, .num, .mono { font-family: var(--mono); }
+    code { font-size: 12px; }
+    .mono { font-size: 12px; }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center;
+    }
+    .topbar .site { font-weight: 800; color: var(--heading); text-decoration: none; margin-right: auto; }
+    .topbar a { color: var(--text); text-decoration: none; padding: 12px 4px; display: inline-block; }
+    .topbar a:hover { color: var(--accent-2); text-decoration: underline; }
+
+    .breadcrumb {
+      padding: 12px 20px 0; font-size: 12px; color: var(--text-muted);
+      max-width: 1240px; margin: 0 auto;
+    }
+    .breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+    .breadcrumb li + li::before { content: "→"; margin-right: 8px; color: var(--text-muted); }
+
+    .layout {
+      max-width: 1240px; margin: 0 auto; padding: 8px 20px 40px;
+      display: grid; grid-template-columns: 1fr; gap: 24px;
+    }
+    @media (min-width: 768px) { .layout { grid-template-columns: 200px 1fr; } }
+    @media (min-width: 1200px) { .layout { grid-template-columns: 240px 1fr; } }
+
+    .toc-aside { display: none; }
+    @media (min-width: 768px) {
+      .toc-aside { display: block; }
+      .toc-mobile-slot { display: none; }
+    }
+    aside nav, .toc-mobile-slot details {
+      position: sticky; top: 16px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 12px 16px; font-size: 14px;
+    }
+    .toc-mobile-slot details { position: static; }
+    aside nav strong, .toc-mobile-slot summary {
+      color: var(--heading); display: block; margin-bottom: 8px; font-size: 14px;
+    }
+    .toc-mobile-slot summary { cursor: pointer; padding: 12px 0; font-weight: 700; }
+    aside nav ol, .toc-mobile-slot ol {
+      list-style: none; margin: 0; padding: 0; counter-reset: toc;
+    }
+    aside nav li, .toc-mobile-slot li { margin: 4px 0; }
+    aside nav a, .toc-mobile-slot a {
+      display: block; padding: 8px 8px; text-decoration: none; color: var(--text);
+      border-radius: 4px; line-height: 1.4; border-left: 3px solid transparent;
+    }
+    aside nav a:hover, .toc-mobile-slot a:hover,
+    aside nav a:focus-visible, .toc-mobile-slot a:focus-visible {
+      color: var(--heading); border-left-color: var(--heading);
+    }
+
+    main { min-width: 0; }
+    section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 20px 24px; margin: 0 0 24px;
+      break-inside: avoid-page;
+    }
+    h1 { font-size: 30px; line-height: 1.35; color: var(--heading); margin: 8px 0 4px; }
+    h2 { font-size: 20px; color: var(--heading); margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 16px; color: var(--heading); margin: 20px 0 8px; }
+    p { max-width: 76ch; }
+
+    .meta-note {
+      background: var(--surface-2); border: 1px dashed var(--border); border-radius: 6px;
+      padding: 12px 16px; font-size: 14px; color: var(--text-muted); margin: 12px 0 16px;
+    }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+    .tags li {
+      border: 1px solid var(--accent-2); border-radius: 999px;
+      padding: 0 12px; font-size: 12px; background: var(--accent-soft); color: var(--accent-2);
+    }
+
+    .badge {
+      display: inline-block; font-size: 12px; font-weight: 700; line-height: 1;
+      padding: 4px 8px; border-radius: 4px; border: 1px solid; vertical-align: 1px; white-space: nowrap;
+    }
+    .b-p { background: var(--p-bg); color: var(--p-fg); border-color: var(--p-border); }
+    .b-r { background: var(--r-bg); color: var(--r-fg); border-color: var(--r-border); }
+    .b-e { background: var(--e-bg); color: var(--e-fg); border-color: var(--e-border); }
+    .b-i { background: var(--i-bg); color: var(--i-fg); border-color: var(--i-border); }
+
+    .fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 16px 0; }
+    .fact-card {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 16px; font-size: 14px;
+    }
+    .fact-card dt { font-weight: 700; color: var(--heading); margin-bottom: 4px; }
+    .fact-card dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+
+    .callout-warning {
+      background: var(--warn-bg); border: 1px solid var(--warn-border); border-left-width: 4px;
+      border-radius: 6px; padding: 12px 16px; margin: 16px 0;
+    }
+    .callout-warning strong:first-child { color: var(--warn-text); }
+
+    .table-scroll {
+      overflow-x: auto; margin: 16px 0;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+    }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
+    caption { text-align: left; font-weight: 700; color: var(--heading); padding: 12px 12px 4px; font-size: 14px; }
+    th, td { border-top: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+    thead th { background: var(--surface-2); color: var(--text); border-top: none; white-space: nowrap; }
+    tbody tr:hover td { background: var(--surface-2); }
+    td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+
+    .tradeoff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 16px 0; }
+    .tradeoff-card { border: 1px solid var(--border); border-radius: 6px; padding: 16px; background: var(--surface-2); font-size: 14px; }
+    .tradeoff-card h3 { margin: 0 0 8px; font-size: 14px; }
+
+    figure.architecture-diagram { margin: 16px 0; border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--surface); }
+    figure.architecture-diagram img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+    figure.architecture-diagram figcaption { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+    .diagram-scroll { overflow-x: auto; }
+
+    ul, ol { padding-left: 24px; }
+    li { margin: 4px 0; }
+
+    .decision-checklist fieldset {
+      border: 1px solid var(--border); border-radius: 6px; margin: 12px 0; padding: 12px 16px;
+    }
+    .decision-checklist legend { font-weight: 700; color: var(--heading); padding: 0 8px; }
+    .decision-checklist label {
+      display: flex; gap: 12px; align-items: flex-start; padding: 8px 4px; min-height: 44px; cursor: pointer;
+    }
+    .decision-checklist input[type="checkbox"] { width: 20px; height: 20px; margin-top: 4px; flex: none; }
+
+    .pager { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 8px 0 0; }
+    .pager a {
+      display: inline-block; min-height: 44px; padding: 12px 16px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+      color: var(--text); text-decoration: none; font-weight: 600;
+    }
+    .pager a:hover { border-color: var(--heading); color: var(--heading); background: var(--surface); }
+    .pager .spacer { flex: 1; }
+
+    footer.site-footer {
+      max-width: 1240px; margin: 0 auto; padding: 16px 20px 40px;
+      font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border);
+    }
+    @media (max-width: 419px) {
+      .pager a { width: 100%; text-align: center; }
+      .fact-grid { grid-template-columns: 1fr; }
+      section { padding: 16px; }
+    }
+    @media print {
+      .topbar, .breadcrumb, aside nav, .toc-mobile-slot, .pager { display: none !important; }
+      body { background: #fff; color: #000; }
+      section { border: none; padding: 0 0 12px; break-inside: avoid-page; }
+      .table-scroll { overflow: visible; }
+      a { color: #000; text-decoration: none; }
+      a[href^="http"]::after { content: "（" attr(href) "）"; font-size: 11px; }
+      thead { display: table-header-group; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至正文</a>
+
+  <header class="topbar">
+    <a class="site" href="../index.html">GPU 大模型系统论文解读</a>
+    <nav aria-label="站点导航">
+      <a href="../index.html">首页</a>
+      <a href="../index.html">推理服务与资源调度</a>
+      <a href="../index.html">解码加速与量化</a>
+      <a href="../index.html">训练、并行与 GPU Kernel</a>
+      <a href="../index.html#metrics">指标术语</a>
+      <a href="../index.html#methodology">阅读说明</a>
+    </nav>
+  </header>
+
+  <nav class="breadcrumb" aria-label="面包屑">
+    <ol>
+      <li><a href="../index.html">首页</a></li>
+      <li><a href="../index.html">解码加速与量化</a></li>
+      <li aria-current="page">EAGLE</li>
+    </ol>
+  </nav>
+
+  <div class="layout">
+    <aside class="toc-aside">
+      <nav aria-label="页内目录">
+        <strong>页内目录</strong>
+        <ol>
+          <li><a href="#overview">摘要与一句话判断</a></li>
+          <li><a href="#background">问题背景</a></li>
+          <li><a href="#mechanism">核心机制</a></li>
+          <li><a href="#data-path">GPU/系统数据路径</a></li>
+          <li><a href="#tradeoffs">架构权衡</a></li>
+          <li><a href="#cloud-mapping">云上部署映射</a></li>
+          <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+          <li><a href="#security-ops">安全与可运维性</a></li>
+          <li><a href="#fit">适用 / 不适用场景</a></li>
+          <li><a href="#experiments">实验与指标</a></li>
+          <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+          <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+          <li><a href="#evidence">证据台账</a></li>
+        </ol>
+      </nav>
+    </aside>
+
+    <main id="main">
+      <div class="toc-mobile-slot">
+        <details class="toc-mobile" open>
+          <summary>页内目录（点击展开/折叠）</summary>
+          <nav aria-label="页内目录（移动端）">
+            <ol>
+              <li><a href="#overview">摘要与一句话判断</a></li>
+              <li><a href="#background">问题背景</a></li>
+              <li><a href="#mechanism">核心机制</a></li>
+              <li><a href="#data-path">GPU/系统数据路径</a></li>
+              <li><a href="#tradeoffs">架构权衡</a></li>
+              <li><a href="#cloud-mapping">云上部署映射</a></li>
+              <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+              <li><a href="#security-ops">安全与可运维性</a></li>
+              <li><a href="#fit">适用 / 不适用场景</a></li>
+              <li><a href="#experiments">实验与指标</a></li>
+              <li><a href="#links">论文 / 链接 / 延伸阅读</a></li>
+              <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+              <li><a href="#evidence">证据台账</a></li>
+            </ol>
+          </nav>
+        </details>
+      </div>
+
+      <section id="overview" aria-labelledby="overview-h">
+        <h1 id="overview-h">EAGLE：投机采样需要重新思考特征不确定性</h1>
+        <div class="meta-note">
+          <p style="margin:0 0 4px"><strong>最后核验日期：</strong>2026-09-15　<strong>证据完整度：</strong>台账 40 条 = P 33 · R 1 · E 2 · I 4，全部带 PDF 页码/章节定位（详见 <a href="#evidence">证据台账</a>）。分级口径（本论文台账 schema，<span class="mono">sources/eagle.evidence.json</span>）：P = 论文正文/附录/图表（含论文报告的实验结果）；R = 论文明确给出的官方仓库；E = 论文引用的外部资源（对照方法的仓库/数据集，仅作背景，不作 EAGLE 结论）；I = 编辑推断。<strong>页码口径：</strong>PDF 印刷页脚编号 1–13 与 PDF 页序逐页一致（本次核对），无推导误差；图 1/图 2 的柱-模型配对经渲染页目视核验并以表 7 双点锚定（方法见台账 C40）。全页外链仅 arXiv 摘要页与论文首页给出的官方仓库两处。</p>
+          <p style="margin:0"><strong>输入 PDF：</strong><span class="mono">06_EAGLE_2401.15077.pdf</span>（《EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty》，arXiv:2401.15077v3 [cs.LG] 2025-03-04 戳记，ICML 2024 会议版，共 13 页）。</p>
+        </div>
+        <ul class="tags" aria-label="快速标签">
+          <li>生命周期：推理解码加速（投机采样框架，无损）</li>
+          <li>部署形态：解码循环内轻量插件（自回归头 = FC + 1 层 decoder；目标模型冻结）</li>
+          <li>目标硬件：NVIDIA GPU，论文口径 FP16——Vicuna 7B 单卡 RTX 3090（24G）、LLaMA2-Chat 70B 用 4×A100 40G（第 6、8 页）</li>
+          <li>核心资源：解码延迟 · 草稿头训练（1–2 天/模型） · 显存余量（最大 batch −1）</li>
+          <li>证据状态：P 主导 + 官方仓库（R）+ 2 条论文引用外部资源（E）+ 4 条编辑推断（I）</li>
+        </ul>
+
+        <h2>一句话判断</h2>
+        <p>对「单流/低并发、延迟敏感、能接受为每个目标模型一次性训练一个 0.24B–0.99B 草稿头」的自回归 LLM 服务，EAGLE 给出一条<strong>无损</strong>的加速路径：草稿不在 token 空间做，而是在目标 LLM 的<strong>第二层顶层特征</strong>（倒数第二层、LM Head 之前的隐藏态）上自回归，并把<strong>提前一个时间步的 token</strong> 喂进草稿模型以吸收采样随机性，再用树注意力草稿 + 目标模型一次前向验证。论文口径：MT-bench 贪心解码较逐 token 自回归加速 <strong>2.78x–3.07x</strong>（六个稠密模型，第 1 页图 1）、HumanEval 最高 <strong>3.76x</strong>（第 6 页表 1）、LLaMA2-Chat 70B 头条区间 <strong>2.7x–3.5x</strong> 且吞吐翻倍（第 1 页摘要）；与 Lookahead/Medusa 相比快 <strong>1.70x–2.08x / 1.47x–1.60x</strong>（第 5 页 §4.1）。边界同样清楚：batch 增大收益衰减（bs=4 时 LC70B 降至 2.40x、吞吐口径约 2x，第 8 页表 7）、显存略增（最大 batch 减一）、MoE 仅 1.50x（第 6 页表 3）、每个目标模型需单独训练草稿头。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（适用判断为编辑观点）</span></p>
+
+        <h2>3 分钟速读</h2>
+        <ol>
+          <li><strong>问题：</strong>逐 token 自回归慢；投机采样虽无损，但草稿模型难选——7B 目标没有合适草稿，7B 草稿反把 13B 拖慢（图 1 标 N/A）；TinyLLaMA 类小模型与 instruct 模板不一致且训练耗 3,000B token（EAGLE 只用 2–4B）；Lookahead/Medusa 草稿更省但准确率低（约 0.6 以下 vs EAGLE 约 0.8）（第 1–2 页 §1、图 1 注）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>观察一：</strong>特征级自回归比 token 级更规整——在第二层顶层特征上自回归、再用目标 LM Head 映射回 token，胜过直接预测 token：加速 1.9x vs 1.5x（Vicuna 7B、MT-bench、T=0，第 2–3 页图 4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>观察二：</strong>下一个特征取决于采样结果而非仅由历史特征决定（图 3：f_I 之后 p(am)=0.6、p(always)=0.4）——EAGLE 把 token 序列<strong>提前一步</strong>输入草稿模型，每个分支携带自己的采样结果，歧义消除后加速从 1.9x 升到 2.8x（第 2 页 §1 + 图 3/图 4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>机制：</strong>草稿模型 = 目标 Embedding（冻结）+ LM Head（冻结）+ 可训练自回归头（FC + 一层 decoder）；树注意力 5 次前向长一棵草稿树（根节点 k=4）；目标模型树注意力<strong>一次前向</strong>算全树概率，逐节点多轮投机采样决定接受/拒绝；输出分布与目标模型严格一致，贪心与非贪心都有理论保证（第 4–5 页 §3、第 12–13 页附录 A/算法 1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>结果与边界：</strong>目标模型每次前向平均产出 3.2–4.5 个 token（表 1–2 的 τ）；MT-bench 贪心 2.78x–3.07x、代码任务最高 3.76x、Mixtral 8x7B 仅 1.50x；batch=4 时收益收窄至 2.40x–2.76x、吞吐口径约 2x；草稿头训练 1–2 天（70B 用 4×A100 40G），与 gpt-fast 组合达 160.4 tokens/s（RTX 3090、int4）（第 5–8 页 §4 + 表 1–7）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（综合）</span></li>
+        </ol>
+
+        <h2>论文声称的主要结果</h2>
+        <div class="table-scroll" role="region" aria-label="主要结果表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 A · 论文声称的主要结果（均为条件性数字，禁止脱离条件摘取；完整条件含硬件/模型/精度/负载/基线）</caption>
+            <thead>
+              <tr><th scope="col">指标（口径）</th><th scope="col" class="num">数字</th><th scope="col">基线</th><th scope="col">完整条件（硬件 / 模型 / 精度 / 负载）</th><th scope="col">来源页码</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>MT-bench 延迟加速比（贪心 T=0，逐模型）</td><td class="num">V7B 2.90x；V13B 3.07x；V33B 2.95x；LC7B 2.78x；LC13B 3.03x；LC70B 3.01x</td>
+                <td>逐 token 自回归解码（1.00x）</td>
+                <td>MT-bench 多轮对话、贪心、batch 1（§4 默认）；FP16 在图 1 处未复述（§4.4 明示其评测为 FP16）；推理硬件仅 V7B（RTX 3090 24G）与 LC70B（4×A100 40G）显式披露；柱-模型配对经渲染页目视核验 + 表 7 bs=1 双点（2.90x/3.01x）锚定</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页图 1 + 第 8 页表 7</td>
+              </tr>
+              <tr>
+                <td>MT-bench 延迟加速比（非贪心 T=1）</td><td class="num">V7B 2.13x；V13B 2.32x；V33B 2.40x；LC7B 2.22x；LC13B 2.68x；LC70B 2.67x</td>
+                <td>逐 token 自回归解码</td>
+                <td>MT-bench、温度 1 采样、batch 1；Lookahead（仅贪心）与 Medusa（非贪心不保证无损）不在此对比；硬件/精度论文未披露</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 2 页图 2</td>
+              </tr>
+              <tr>
+                <td>代码/数学/指令任务加速比与平均接受长度 τ</td><td class="num">T=0：2.78x–3.76x（τ 3.61–4.52）；T=1：2.21x–2.92x（τ 3.29–3.79）</td>
+                <td>逐 token 自回归解码</td>
+                <td>HumanEval / GSM8K / Alpaca × Vicuna 7B/13B/33B、LLaMA2-Chat 7B/13B/70B；batch 1；硬件与精度论文未在表 1 处复述；代码任务最佳（固定模板易起草，§4.1）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 6 页表 1 + 第 5 页 §4.1</td>
+              </tr>
+              <tr>
+                <td>LLaMA2-Chat 70B 头条区间（摘要口径）</td><td class="num">2.7x–3.5x；吞吐翻倍</td>
+                <td>逐 token 自回归解码</td>
+                <td>四个任务与两档温度的区间聚合（逐任务值 2.65x–3.52x，与区间一致）；保持生成文本分布不变</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1 页摘要 + 第 3 页 §1</td>
+              </tr>
+              <tr>
+                <td>MoE 模型加速比</td><td class="num">1.50x（τ 3.25）</td>
+                <td>逐 token 自回归解码</td>
+                <td>Mixtral 8x7B Instruct-v0.1、MT-bench、T=0；论文归因：逐 token 解码每 token 通常只读 2 个专家权重，验证多个草稿 token 可能要读更多专家</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 6 页表 3 + §4.1</td>
+              </tr>
+              <tr>
+                <td>吞吐口径（batch&gt;1 最优）</td><td class="num">1.97x（V7B）/ 1.99x（LC70B）；论文称约 2x</td>
+                <td>各系统在自身最大 batch 下的逐 token 解码</td>
+                <td>MT-bench、T=0、FP16；V7B 单卡 RTX 3090 24G、LC70B 4×A100 40G（160G）；bs 1–4 加速比 2.90x→2.76x / 3.01x→2.40x</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 8 页 §4.4 + 表 7</td>
+              </tr>
+              <tr>
+                <td>与量化/编译组合的生成速度</td><td class="num">FP16 100.2；int4 160.4 tokens/s</td>
+                <td>Vanilla Huggingface FP16 24.5；gpt-fast（无 EAGLE）FP16 55.1 / int4 106.9</td>
+                <td>LLaMA2-Chat 7B、单卡 RTX 3090、MT-bench、T=0（表 4）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 3 页 §1 + 第 6 页 §4.2 + 表 4</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>不可直接比较：</strong>上表全部数字来自 EAGLE 论文自身的口径——batch=1 的单流解码延迟、2024 年时点的 Vicuna/LLaMA2-Chat/Mixtral 权重、FP16 主口径、MT-bench/HumanEval/GSM8K/Alpaca 负载。与本站其他论文（FlashInfer 的在线服务 ITL、Medusa 的多解码头、KIVI 的量化吞吐等）的硬件、负载与指标口径均不一致，<strong>不允许跨论文横向排名</strong>。另按原文照录两处内部不一致、不做调和：结论节的「MT-bench 2.1x–3.8x」上界 3.8x 在 MT-bench 各图/表中不可复得（3.76x 出现在表 1 的 HumanEval），以及 vs Lookahead/Medusa 区间在 §1/§6（1.7x–2.1x、1.5x–1.6x）与 §4.1（1.70x–2.08x、1.47x–1.60x）之间有细微出入（详见<a href="#evidence">台账 C37</a>）。<span class="badge evidence-badge b-i">I（口径声明）</span>
+        </div>
+
+        <h3>术语与记号</h3>
+        <dl class="fact-grid">
+          <div class="fact-card"><dt>特征（feature）</dt><dd>目标 LLM 倒数第二层（第二层顶层）在 LM Head 之前的隐藏态 f；EAGLE 的自回归对象（第 3 页 §2）。</dd></div>
+          <div class="fact-card"><dt>提前一步的 token（token 序列 shift）</dt><dd>草稿模型预测 f̂ⱼ₊₁ 时，token 输入取到 tⱼ₊₁（刚采样出的那个），即 Draft_Model(T₂:ᵢ₊₁, F₁:ᵢ)；让每个分支显式吸收自己的采样结果（第 4 页 §3.1/§3.2）。</dd></div>
+          <div class="fact-card"><dt>自回归头（Autoregression Head）</dt><dd>唯一可训练模块：FC 层（2×hidden→hidden）+ 一层 decoder；整个插件即「单个 transformer decoder 层」量级（第 3–4 页 §1/§3.1）。</dd></div>
+          <div class="fact-card"><dt>树注意力（tree attention）</dt><dd>草稿树内每个候选只关注自己的祖先；目标模型借此一次前向得到全树概率（第 4–5 页 §3.1/§3.3）。</dd></div>
+          <div class="fact-card"><dt>多轮投机采样</dt><dd>树草稿版接受算法：逐候选 r&lt;p/p̂ 则接受，否则 p←norm(max(0,p−p̂)) 换下一候选，全拒绝才从调整后分布采样；与 SpecInfer 一致（第 12–13 页附录 A.2/算法 1）。</dd></div>
+          <div class="fact-card"><dt>τ 与 n-α</dt><dd>τ = 目标模型每次前向被接受的 token 数；α 用链式草稿（无树）测量，n-α = 前 n 个特征预测有误时的接受率（第 5 页 §4 Metrics）。</dd></div>
+          <div class="fact-card"><dt>无损（lossless）</dt><dd>输出分布与目标模型一致——贪心与非贪心均有理论保证；论文因此不重复评测生成质量（第 5 页 §3.3/§4）。</dd></div>
+          <div class="fact-card"><dt>论文出处</dt><dd>《EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty》，ICML 2024（PDF 元数据）；作者 Yuhui Li、Fangyun Wei、Chao Zhang、Hongyang Zhang；本地文件 <span class="mono">06_EAGLE_2401.15077.pdf</span>。</dd></div>
+        </dl>
+      </section>
+
+      <section id="background" aria-labelledby="background-h">
+        <h2 id="background-h">问题背景</h2>
+        <h3>逐 token 解码是延迟瓶颈，投机采样是无损解法但有前提</h3>
+        <p>自回归解码逐 token 生成，是 LLM 推理慢且贵的主流路径；投机采样把流程拆成「低开销草稿 + 对整段草稿的一次并行验证」，验证保证文本分布与原模型解码<strong>严格一致</strong>（接受概率 min(1, p/q)，拒绝后从 norm(max(0, p−q)) 重采样；第 2–3 页 §1–§2）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>前提一：得先有一个「像原模型又足够小」的草稿模型——这经常不成立</h3>
+        <ul>
+          <li>同系列小模型只在尾部存在：LLaMA2 系列可以用 7B 草 70B，但<strong>给 7B 找草稿无解</strong>；拿 7B 草 13B 会因草稿开销过大反而慢于逐 token 解码（图 1 标 N/A）。<span class="badge evidence-badge b-p">P</span>（第 1–2 页）</li>
+          <li>TinyLLaMA 类独立小模型因 instruct 模板不一致而不适用于 chat 模型；且其训练耗 3,000B token，EAGLE 的训练只要 2–4B token。<span class="badge evidence-badge b-p">P</span>（第 2 页 §1）</li>
+        </ul>
+        <h3>前提二：低开销草稿器准确率不足</h3>
+        <p>Lookahead 用 n-gram + Jacobi 迭代，Medusa 用一组 MLP 从第二层顶层特征直接预测多个未来 token——草稿变便宜了，但准确率受限：Medusa 约 0.6、Lookahead 更低，EAGLE 约 0.8（第 2 页 §1）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>论文的两个关键观察（本页机制的出发点）</h3>
+        <ol>
+          <li><strong>特征级自回归更「直」：</strong>token 序列只是自然语言的离散变换，特征序列（第二层顶层）更有规律；先在特征上自回归、再用目标 LM Head 映射回 token，优于直接预测 token——加速 1.9x vs 1.5x（Vicuna 7B、MT-bench、T=0）。<span class="badge evidence-badge b-p">P</span>（第 2 页 §1 + 第 3 页图 4）</li>
+          <li><strong>采样随机性污染特征预测：</strong>f_I 之后下一特征取决于采样出「am」（p=0.6）还是「always」（p=0.4），仅凭 f_I 无法确定——Medusa 预测带空格 token 时也面临同类歧义。EAGLE 把 token 序列提前一步输入草稿模型：预测 f_always 用 (f_I, t_always)，预测 f_am 用 (f_I, t_am)——加速进一步升到 2.8x。<span class="badge evidence-badge b-p">P</span>（第 2 页图 3 + §1）</li>
+        </ol>
+        <h3>基线格局</h3>
+        <p>逐 token 自回归（vanilla）；同系列小模型投机采样（草稿长度 2–10 扫描取最优）；DistillSpec（与 EAGLE 同数据蒸馏 + FKL 散度）；Lookahead 与 Medusa（加速比取自其原技术报告，论文未复跑）；以及各类带 relaxations 的有损/阈值方法（DistillSpec lenience、BiLD 距离阈值、Medusa 截断阈值）——EAGLE 不做任何松弛（第 1、5、8–9 页）。<span class="badge evidence-badge b-p">P</span></p>
+        <h3>本页使用的加速口径</h3>
+        <p>与全站一致：本文是<strong>batch=1 的单流解码延迟</strong>口径（墙钟加速比、τ、n-α），吞吐只在 §4.4 单独测；两套口径不可混用，跨论文横比被禁止。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（口径整理）</span></p>
+      </section>
+
+      <section id="mechanism" aria-labelledby="mechanism-h">
+        <h2 id="mechanism-h">核心机制</h2>
+        <p>EAGLE 与其他投机采样方法共享「草稿 + 验证」骨架，差异集中在草稿阶段：对齐方式（特征 + 提前一步 token）、树状草稿、以及与之配套的多轮接受算法。以下小节除标注外均为论文事实。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>1 · 输入对齐：第二层顶层特征 + 提前一步的 token（第 4 页 §3.1 + 图 5）</h3>
+        <p>预测 f₃ 用特征序列 (f₁, f₂) 与<strong>提前一个时间步</strong>的 token 序列 (t₂, t₃)：p₄ = LM Head(f₃) 采样出 t₄ 后，(f₂, f₃) 与 (t₃, t₄) 拼接继续预测 f₄……训练目标写成一般式即 L_reg = SmoothL1(fᵢ₊₁, Draft_Model(T₂:ᵢ₊₁, F₁:ᵢ))。对照：Medusa 用目标模型的单个特征 f₂ 独立预测 t₄、t₅，分支间无采样信息。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>2 · 草稿模型三模块：两冻一训（第 4 页 §3.1 + 图 6）</h3>
+        <ul>
+          <li><strong>Embedding 层与 LM Head：</strong>直接用目标 LLM 参数，不训练（图 6 雪花标记）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>自回归头（可训练）：</strong>FC 层把拼接后的 2×hidden 降回 hidden，再接<strong>一层 decoder</strong> 预测下一特征；预测特征与采样 token 重新拼接作为下一步输入。输入形状：特征 (bs, seq, hidden) + token (bs, seq)。<span class="badge evidence-badge b-p">P</span></li>
+          <li>整个插件即论文所称「单个 transformer decoder 层」量级，目标模型零改动。<span class="badge evidence-badge b-p">P</span>（第 3 页 §1）</li>
+        </ul>
+
+        <h3>3 · 树状草稿：5 次前向长一棵树（第 4 页 §3.1 + 第 12 页附录 A.1）</h3>
+        <p>用树注意力把逐层扩展组织成树：深度 m 的树经 m 次前向产生多于 m 个候选（图 6 示例：3 次前向得 10-token 树）。实际结构（附录 A.1）：贪心时每节点取概率 top-k 子节点、非贪心时采样 k 个；根节点 k=4；草稿固定 <strong>5 次前向</strong>（树/链相同）；树形凭直觉设计——「高概率分支更深更宽」，未做精调，全部模型与实验共用同一棵；论文同时指出最优树可能随场景变化（batch 变大时更小的树可能更好）。<span class="badge evidence-badge b-p">P</span> 图 9 各层节点数（4/8/8/3/2）为编辑对渲染页的目测计数，论文文字只给出 k=4 与 5 次前向。<span class="badge evidence-badge b-i">I</span></p>
+
+        <h3>4 · 训练目标与数据（第 4–5 页 §3.2–§3.3）</h3>
+        <ul>
+          <li><strong>损失：</strong>L = L_reg + w_cls·L_cls，w_cls = 0.1（分类项数值约大一个量级）；L_cls 为「真特征过 LM Head 的分布 pᵢ₊₂」与「预测特征过 LM Head 的分布 p̂ᵢ₊₂」的交叉熵——特征回归是中间目标，分类直接对齐最终 token 目标。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>抗误差累积：</strong>训练时对目标特征加 U(−0.1, 0.1) 均匀噪声（NEFTune 式增广，引 Jain et al. 2023）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>数据与超参：</strong>固定 ShareGPT 数据集 68,000 对话；lr 3e-5；AdamW β=(0.9, 0.95)；梯度裁剪 0.5；目标模型全程冻结。可训练参数：0.24B（7B）/ 0.37B（13B）/ 0.56B（33B）/ 0.99B（70B）/ 0.28B（Mixtral 8x7B）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>数据不敏感：</strong>改用目标模型自生成的答案训练仅 2.88x vs 固定集 2.78x（LC7B、MT-bench、T=0，表 6）——用固定数据集压成本成立。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+
+        <h3>5 · 验证：目标模型一次前向 + 多轮投机采样（第 5 页 §3.3 + 第 12–13 页附录 A.2/算法 1）</h3>
+        <p>树注意力下，目标 LLM <strong>一次前向</strong>得到草稿树中每个 token 的概率；随后在每个节点递归执行多轮投机采样：r &lt; p(t)/p̂(t) 则接受该 token；否则 p ← norm(max(0, p(t) − p̂(t))) 换下一候选；全部候选被拒绝才从调整后分布直接采样。该流程与 SpecInfer 一致；被接受 token<strong>连同其目标特征</strong>被记录，作为下一轮草稿的输入——因此验证不产生额外前向开销。输出分布与目标 LLM 对齐。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>6 · 无损性与对照方法的分界（第 3、5、8–9 页）</h3>
+        <p>无损性对贪心与非贪心都有理论保证；论文据此明确「评测生成质量既无必要也无意义」（第 5 页 §4）。对照：Lookahead 只覆盖贪心；Medusa 非贪心不保证分布一致；DistillSpec/BiLD/Medusa 都在接受判据上做松弛（lenience/距离阈值/截断阈值），EAGLE 不做任何松弛（第 8–9 页 §5）。<span class="badge evidence-badge b-p">P</span></p>
+
+        <h3>7 · 三组消融支撑设计选择（第 5–8 页 §4.1/§4.3）</h3>
+        <ul>
+          <li><strong>树注意力：</strong>τ 提高 0.62–0.75（表 5），加速比 +0.3–0.5、不增前向次数但增每前向 token 数；不用树的链式口径仍有约 2.3x–2.7x。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>输入类型（Vicuna 7B、图 8）：</strong>参数受限时特征略胜 token；特征+token 合并因离散无错 token 缓解特征误差累积而再有提升；「提前一步」贡献最大且不增加复杂度。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>训练数据（表 6）：</strong>目标模型自生成数据仅边际更优（2.88x vs 2.78x）——低数据敏感度支撑固定数据集方案。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+        <div class="callout-warning" role="note">
+          <strong>事实与解释的边界：</strong>以上均为论文陈述。本页对机制叙述的分组顺序（对齐→模块→树→训练→验证→无损→消融）是编辑为可读性所作的归纳（标 I），论文原文以 §3.1–§3.3 与附录 A 的展开为准；数据路径图（见下节）为本站据论文图 3/5/6/9 与 §3–§4 重新绘制，非论文原图。<span class="badge evidence-badge b-i">I</span>
+        </div>
+      </section>
+
+      <section id="data-path" aria-labelledby="data-path-h">
+        <h2 id="data-path-h">GPU / 系统数据路径</h2>
+        <figure class="architecture-diagram">
+          <div class="diagram-scroll">
+            <img src="../assets/diagrams/eagle-data-path.svg"
+                 alt="EAGLE 数据路径图，自上而下七个阶段：1 输入与已确认上下文——查询加已确认 token 序列及其 KV 缓存，上一轮验证顺带产出的第二层顶层特征随序列保留；2 对照路径——通用投机采样由同系列更小模型起草 token 链再由目标模型一次前向验证，但 7B 目标没有合适草稿模型、7B 草稿反使 13B 慢于逐 token 解码，这是 EAGLE 的动机；3 目标 LLM 一次前向——Embedding 与 Transformer 各层产出第二层顶层特征（倒数第二层、LM Head 之前），LM Head 同时采样下一个 token，与逐 token 解码完全一致；4 EAGLE 草稿模型——把第二层顶层特征与提前一个时间步的 token embedding 拼接成两倍隐藏维，经 FC 降维后进入一层可训练 decoder（自回归头）预测下一特征，再经冻结的 LM Head 得到分布，每个节点扩展 k 个子节点（根 k=4，贪心取 top-k 或非贪心采样 k），每个分支把自己的采样结果直接作为输入，消除采样不确定性；5 树注意力草稿树——5 次前向长成一棵树，高概率分支更深更宽，图 6 示例 3 次前向得 10 token，不用树时退化为链式仍有约 2.3 至 2.7 倍加速；6 目标模型验证——树注意力掩码下一次前向得到整棵树每个 token 的目标概率，逐节点多轮投机采样：随机数小于 p 除以 p-hat 则接受，否则按 p 等于 norm(max(0,p 减 p-hat)) 调整分布换下一候选，全部拒绝才从调整后分布采样，输出分布与目标模型严格一致；7 接受的 token 连同其目标特征并回上下文，进入下一轮循环。右侧四个面板：训练形态（SmoothL1 回归加 0.1 倍交叉熵分类、对目标特征加 U(-0.1,0.1) 噪声、ShareGPT 68000 对话、可训练参数 0.24B 至 0.99B、1 至 2 天）、评测硬件口径（batch=1 延迟为主、FP16、RTX 3090 与 4 倍 A100 40G、EAGLE+gpt-fast 160.4 tokens/s）、边界风险（batch 增大加速比衰减、显存略增使最大 batch 减一、MoE 仅 1.50x、树增益不等效转化为加速比）、指标口径（墙钟加速比、τ、n-α、无损定义）。实线为数据流，虚线为控制流与训练配置；紫色为特征与上下文存储，绿色为可训练模块，雪花标记冻结的目标模型参数，琥珀色为风险与边界。"
+                 width="980" height="1010" loading="lazy">
+          </div>
+          <figcaption>图 1 · EAGLE 端到端草稿-验证数据路径（本站据论文第 2–5 页图 3/5/6、第 4 页 §3.1–§3.2、第 5 页 §3.3、第 12–13 页附录 A/算法 1、第 6–8 页表 4–7 绘制；编号 ①–⑦ 对应下方文字序列；对照路径与训练/风险面板依据见 <a href="#experiments">实验与指标</a> 与 <a href="#evidence">证据台账</a>）。SVG 文件：<span class="mono">assets/diagrams/eagle-data-path.svg</span>（含 title/desc 无障碍描述；树拓扑为编辑示意，论文文字口径为根节点 k=4 与 5 次草稿前向）。</figcaption>
+        </figure>
+
+        <h3>端到端文字序列</h3>
+        <ol>
+          <li><strong>① 上下文：</strong>查询与已确认 token 序列 T₁..ⱼ 及其 KV 缓存就绪；序列各位置的第二层顶层特征 F₁..ⱼ 随验证前向保留（第 5 页 §3.3「记录被接受 token 及其特征」）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>② 对照路径（理解用）：</strong>通用投机采样由同系列小模型起草 token 链；7B 目标无草稿可用、7B 草稿拖慢 13B——EAGLE 针对的正是这一前提缺口（第 1–2 页 §1 + 图 1 注）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>③ 目标前向（本轮锚点）：</strong>目标 LLM 一次前向产出第二层顶层特征 fⱼ 并经（冻结的）LM Head 采样 tⱼ₊₁——与逐 token 解码完全一致；下一轮起该前向由验证阶段兼任（第 3 页 §2、第 5 页 §3.3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>④ 草稿一层：</strong>自回归头取 (fⱼ, tⱼ₊₁)：token 过（冻结的）Embedding 后与特征拼成 2×hidden，FC 降维 → 一层 decoder → f̂ⱼ₊₁ →（冻结的）LM Head → 分布，扩展 k 个子节点（根 k=4）；每分支携带自己的采样 token，歧义消除（第 4 页 §3.1、第 12 页附录 A.1、第 2 页图 3）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑤ 树生长：</strong>共 5 次草稿前向得到一棵树注意力草稿树；候选路径各自携带 token 序列；高概率分支更深更宽（第 4 页 §3.1 + 图 6、第 12 页附录 A.1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑥ 验证（无损）：</strong>目标模型树注意力一次前向得全树概率；逐节点多轮投机采样接受/调整-重采样；输出分布与目标模型一致（第 5 页 §3.3、第 12–13 页附录 A.2/算法 1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>⑦ 并回与循环：</strong>被接受 token 及其目标特征并回上下文（KV 与特征序列同步追加），进入下一轮草稿-验证；退出循环即输出最终文本（第 5 页 §3.3）。该端到端闭环为本页编辑装配（各环节均为论文事实）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（装配）</span></li>
+        </ol>
+
+        <div class="table-scroll" role="region" aria-label="组件职责表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 B1 · 数据路径组件与职责</caption>
+            <thead><tr><th scope="col">组件</th><th scope="col">面</th><th scope="col">职责</th><th scope="col">证据</th></tr></thead>
+            <tbody>
+              <tr><td>目标 LLM（Embedding + Transformer 各层 + LM Head）</td><td>计算面</td><td>产出第二层顶层特征与全树验证概率；参数全程冻结，LM Head/Embedding 被草稿模型复用</td><td><span class="badge evidence-badge b-p">P</span> 第 4 页 §3.1 + 图 6</td></tr>
+              <tr><td>自回归头（FC + 1 层 decoder）</td><td>计算面（唯一可训练）</td><td>特征+提前一步 token → 下一特征预测；0.24B–0.99B 参数/模型</td><td><span class="badge evidence-badge b-p">P</span> 第 3–5 页 §1/§3.1/§3.3</td></tr>
+              <tr><td>树草稿生成器（树注意力 + 5 次前向）</td><td>控制/计算交界</td><td>逐层扩展草稿树，根 k=4，贪心 top-k 或非贪心采样 k；结构全部实验固定</td><td><span class="badge evidence-badge b-p">P</span> 第 4 页 + 第 12 页附录 A.1</td></tr>
+              <tr><td>树注意力验证前向</td><td>计算面</td><td>目标模型一次前向产出整树概率；同时顺带产出被接受 token 的目标特征供下一轮</td><td><span class="badge evidence-badge b-p">P</span> 第 5 页 §3.3</td></tr>
+              <tr><td>多轮投机采样器</td><td>控制面</td><td>逐节点递归接受/调整分布/兜底采样；与 SpecInfer 一致；保证分布不变</td><td><span class="badge evidence-badge b-p">P</span> 第 12–13 页附录 A.2 + 算法 1</td></tr>
+              <tr><td>上下文/KV 与特征序列</td><td>存储面</td><td>已确认 token 的 KV 与第二层顶层特征同步追加；被接受内容回填供下一轮草稿</td><td><span class="badge evidence-badge b-p">P</span> 第 5 页 §3.3 <span class="badge evidence-badge b-i">I（存储组织细节为编辑推演）</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tradeoffs" aria-labelledby="tradeoffs-h">
+        <h2 id="tradeoffs-h">架构权衡</h2>
+        <div class="tradeoff-grid">
+          <div class="tradeoff-card">
+            <h3>无损保证 ↔ 草稿自由度</h3>
+            <p>EAGLE 不做任何接受松弛，换取输出分布与目标模型严格一致（贪心+非贪心）；代价是草稿必须走「可被目标分布校正」的路线，不能像 Medusa 典型接受那样用阈值换速度。对内容合规敏感的线上服务，无损是硬需求时的正确取舍（第 5、8–9 页 §3.3/§4/§5）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（取舍解读）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>单流延迟收益 ↔ batch 扩展</h3>
+            <p>batch=1 时 MT-bench 贪心 2.78x–3.07x；bs=4 时 LC70B 降至 2.40x、V7B 2.76x——GPU 算力余量随 batch 下降；吞吐口径收益约 2x（1.97x/1.99x）。验证一次前向要处理更多 token，在高并发场景吸引力显著下降（第 8 页 §4.4 + 表 7）。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>显存开销 ↔ 并发容量</h3>
+            <p>草稿树与自回归头需要「略多」显存：V7B 在 24G 内最大 batch 8→7，LC70B 在 160G 内 5→4（FP16）。对按并发容量计费的部署，这是直接的容量折损，容量规划必须计入（第 8 页 §4.4）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（容量含义）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>特征正则性 ↔ 误差累积</h3>
+            <p>特征级自回归更规整但误差会沿步累积——论文用三重手段对冲：训练时特征加 U(−0.1,0.1) 噪声、token 与特征合并输入（离散无错 token 缓解累积）、以及 τ 证据上 1-α 到 4-α 仅缓慢衰减显示的鲁棒性（第 5 页 §3.2、第 6 页 §4.1、第 7–8 页 §4.3.2）。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>树收益 ↔ 计算预算</h3>
+            <p>树注意力把 τ 提高 0.6–0.8，但每前向处理的 token 变多，加速比只 +0.3–0.5；batch 大、算力紧张时（如 bs=7）关树反而更有利。树是「用算力换接受长度」的旋钮，不是免费午餐（第 7–8 页 §4.3.1/§4.4 + 表 5）。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>每模型草稿头 ↔ 模型演进节奏</h3>
+            <p>草稿头按目标模型一对一训练（0.24B–0.99B、1–2 天、ShareGPT 68k 对话，一次训练按查询摊销）；但目标模型每次升级/换底座都要重训并重评测。模型频繁迭代的团队要把「草稿头再训练流水线」当作常设能力（第 3、5 页 §1/§3.3）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（运维含义）</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>稠密模型大胜 ↔ MoE 受限</h3>
+            <p>稠密 LLaMA/Vicuna 系全面 2.1x+，Mixtral 8x7B 仅 1.50x：逐 token 解码每 token 只读 2 个专家权重，而验证多个草稿 token 可能要读更多专家——MoE 服务的加速预期必须单列（第 6 页表 3 + §4.1）。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+          <div class="tradeoff-card">
+            <h3>温度敏感性 ↔ 负载类型</h3>
+            <p>T=0 快于 T=1（LC13B：3.01x–3.76x vs 2.66x–2.89x）；代码任务因固定模板最易起草、收益最高。对高温度采样为主的负载，收益预期要按 T=1 口径折减（第 5–6 页 §4.1 + 表 1）。<span class="badge evidence-badge b-p">P</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="cloud-mapping" aria-labelledby="cloud-mapping-h">
+        <h2 id="cloud-mapping-h">云上部署映射</h2>
+        <p class="meta-note" style="margin-top:0">本节为部署映射：<strong>论文硬件事实</strong>标 P，<strong>云产品对应</strong>标 E（厂商中立示例、非推荐，参数与价格以云厂商文档为准，本站未联网核验），<strong>运维建议/推断</strong>标 I。<strong>边界声明：</strong>EAGLE 论文只测 standalone 解码循环（batch=1 为主），未测任何服务框架集成（无 vLLM/SGLang/TGI 数据）——服务化集成的所有表述均为编辑推断。EAGLE 是解码算法层插件，论文不涉及跨节点网络与存储架构。</p>
+        <div class="table-scroll" role="region" aria-label="云上部署映射表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 C · 论文配置 → 云上对应（厂商中立示例，非推荐）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文配置（P）</th><th scope="col">云上映射（E/I，示例非推荐）</th><th scope="col">说明</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>GPU 实例与代际</td>
+                <td>显式口径：Vicuna 7B 单卡 RTX 3090（24G）、LC7B gpt-fast 用单卡 RTX 3090、LC70B 用 4×A100 40G；FP16（第 6、8 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>7B 级草稿头可随单卡消费级/入门实例；70B 目标需多卡实例族；实例选择以目标模型显存 + 草稿树余量为准 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文其余模型（V13B/V33B/LC13B）推理硬件未披露，不能按表 1 数字直接倒推实例规格 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>草稿头资产与版本</td>
+                <td>每个目标模型一个自回归头（0.24B–0.99B），ShareGPT 68k 对话、1–2 天训练（第 3、5 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>草稿头作为独立模型制品纳入模型仓库/镜像版本管理；与目标模型版本严格配对 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文未提供 commit/tag；官方仓库获制品后建议自行锁定版本（见 <a href="#links">论文/链接</a>）<span class="badge evidence-badge b-r">R</span> <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>解码循环集成</td>
+                <td>论文在 standalone 解码循环评测；自述「插件仅一个 transformer decoder 层，易于生产部署」（第 3 页 §1）<span class="badge evidence-badge b-p">P</span>（插件轻量）<span class="badge evidence-badge b-i">I（服务化集成未测）</span></td>
+                <td>宿主推理框架需支持投机采样接口（草稿/验证两阶段与树注意力掩码）；集成改造量在框架侧 <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文无任何 vLLM/SGLang/TGI 集成数据；服务化收益须以本节 batch/温度条件自行 PoC <span class="badge evidence-badge b-i">I</span>（缺口声明）</td>
+              </tr>
+              <tr>
+                <td>显存预算</td>
+                <td>最大 batch：V7B 24G 内 8→7、LC70B 160G 内 5→4（FP16）（第 8 页 §4.4）<span class="badge evidence-badge b-p">P</span></td>
+                <td>容量规划按「目标模型 + KV + 草稿树峰值」预留；以最大 batch 折损（约 −1）核算并发容量 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文未给显存分解式；「略多」的具体 MB 数未披露 <span class="badge evidence-badge b-i">I</span>（缺口）</td>
+              </tr>
+              <tr>
+                <td>训练任务编排</td>
+                <td>70B 头：4×A100 40G、1–2 天；≤33B 头：RTX 3090 节点、1–2 天；一次训练按查询摊销（第 3、5 页）<span class="badge evidence-badge b-p">P</span></td>
+                <td>作为可重跑的训练作业编排（固定 ShareGPT 数据集 + 超参），产出入模型仓库并触发评测门禁 <span class="badge evidence-badge b-e">E</span> <span class="badge evidence-badge b-i">I</span></td>
+                <td>数据消融显示对训练数据不敏感（2.88x vs 2.78x，表 6）——固定数据集即成本上限可控 <span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>可观测</td>
+                <td>论文度量：墙钟加速比、τ、n-α（第 5 页 §4）<span class="badge evidence-badge b-p">P</span>（口径）</td>
+                <td>云上指标面：接受长度 τ 的在线分布、加速比、草稿头版本、温度/任务分层的收益曲线 <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文未披露运维指标体系（缺口）；τ 骤降可作为分布漂移信号（编辑建议）<span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+              <tr>
+                <td>弹性与扩缩容</td>
+                <td>论文未涉及 <span class="badge evidence-badge b-i">I（缺口）</span></td>
+                <td>草稿头是无状态权重制品，实例扩缩容边界与宿主推理服务一致；无独立有状态组件 <span class="badge evidence-badge b-i">I</span></td>
+                <td>论文未涉及编排/弹性议题 <span class="badge evidence-badge b-i">I</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="cost-slo" aria-labelledby="cost-slo-h">
+        <h2 id="cost-slo-h">成本 / 性能 / SLO</h2>
+        <h3>论文的性能口径与结果条件</h3>
+        <div class="table-scroll" role="region" aria-label="性能口径表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 D · 论文各实验口径（batch=1 延迟为主口径，第 5 页 §4）</caption>
+            <thead><tr><th scope="col">实验</th><th scope="col">关键条件</th><th scope="col">系统配置</th><th scope="col" class="num">结果</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>主评测（§4.1 + 表 1–2）</td>
+                <td>batch 1；T=0 与 T=1 两档；MT-bench/HumanEval/GSM8K/Alpaca；六稠密模型 + Mixtral</td>
+                <td>EAGLE vs 逐 token 解码（vs Lookahead/Medusa 数字取自其报告）</td>
+                <td class="num">T=0：2.78x–3.76x；T=1：2.13x–2.92x；Mixtral 1.50x；τ 3.2–4.5</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 5–6 页</td>
+              </tr>
+              <tr>
+                <td>树消融（§4.3.1 + 表 5）</td>
+                <td>MT-bench、T=0；草稿固定 5 次前向（树/链同）</td>
+                <td>EAGLE 树 vs EAGLE 链式</td>
+                <td class="num">τ +0.62–0.75；加速 +0.3–0.5；链式仍有 ~2.3x–2.7x</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 7 页</td>
+              </tr>
+              <tr>
+                <td>batch/吞吐（§4.4 + 表 7）</td>
+                <td>MT-bench、T=0、FP16；V7B 单卡 3090（24G）、LC70B 4×A100 40G；bs 1–4</td>
+                <td>EAGLE vs 逐 token（各自最大 batch 取吞吐）</td>
+                <td class="num">加速 2.90x→2.76x / 3.01x→2.40x；吞吐 1.97x / 1.99x</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 8 页</td>
+              </tr>
+              <tr>
+                <td>组合加速（§4.2 + 表 4）</td>
+                <td>MT-bench、T=0、LC7B、单卡 RTX 3090</td>
+                <td>EAGLE+gpt-fast vs gpt-fast vs vanilla HF</td>
+                <td class="num">FP16 100.2 / int4 160.4 tokens/s</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 6 页</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>容量规划变量（SLO 达成率的自变量）</h3>
+        <ul>
+          <li><strong>batch/并发：</strong>加速比随 batch 单调走低（表 7）；SLO 承诺必须绑定 batch 口径。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>采样温度：</strong>T=1 收益系统性低于 T=0（LC13B 2.66x–2.89x vs 3.01x–3.76x）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>任务/负载类型：</strong>代码类（固定模板）最高 3.76x；对话类 MT-bench 2.78x–3.07x（T=0）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>树规模：</strong>全部实验用同一棵树（根 k=4、5 次前向）；论文明确未精调、大 batch 下应缩小——这是留给部署方的调优空间。<span class="badge evidence-badge b-p">P</span>（存在性与默认值） <span class="badge evidence-badge b-i">I（调优空间）</span></li>
+          <li><strong>显存余量：</strong>最大 batch 折损 8→7 / 5→4（FP16），决定并发容量上限。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>模型架构：</strong>MoE 目标按 1.5x 级别单列预期（表 3）。<span class="badge evidence-badge b-p">P</span></li>
+        </ul>
+
+        <h3>成本模型（参数化，非论文结论）</h3>
+        <p>论文不含成本数据（只有加速比/τ/α 与 tokens/s）。架构师可用下式估算（<span class="badge evidence-badge b-i">I</span>，价格项为参数）：</p>
+        <p class="mono" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:12px 16px;overflow-x:auto">一次性成本 ≈ p_gpu × N_GPU × T_train（1–2 天）…（公式 1）；摊销后单查询增量 ≈ 公式 1 ÷ Q lifetime；每百万 token 收益 ≈ (1 − 1/S) × 原 token 成本，S 为同条件实测加速比 …（公式 2）</p>
+        <ul>
+          <li><span class="mono">p_gpu × N_GPU</span>：训练实例时租价（A100 40G ×4 对应 70B 头；≤33B 头可用 RTX 3090 级节点，第 3 页，<span class="badge evidence-badge b-p">P</span> 条件、<span class="badge evidence-badge b-e">E</span> 价格）；</li>
+          <li><span class="mono">S</span>：必须用与线上一致的 batch/温度/任务实测，不得直接引用摘要区间（2.7x–3.5x 为 LC70B 跨任务聚合，第 1 页，<span class="badge evidence-badge b-p">P</span>）；</li>
+          <li><strong>敏感项：</strong>batch↑ → S↓（表 7）；温度↑ → S↓（表 1）；MoE → S≈1.5x（表 3）；组合量化/编译可再叠加（gpt-fast 160.4 tokens/s，表 4）；树开关影响 τ 与算力余量（§4.3.1/§4.4）。</li>
+        </ul>
+        <p><strong>SLO 提示：</strong>无损性意味着切换 EAGLE 不改变输出分布——延迟 SLO 可以独立于质量评测推进（论文原话：质量评测「既无必要也无意义」，第 5 页）；但加速比的 SLO 承诺必须按 batch×温度×任务三条件收敛后给出。<span class="badge evidence-badge b-p">P</span>（无损） <span class="badge evidence-badge b-i">I（SLO 方法）</span></p>
+      </section>
+
+      <section id="security-ops" aria-labelledby="security-ops-h">
+        <h2 id="security-ops-h">安全与可运维性</h2>
+        <h3>论文披露范围</h3>
+        <ul>
+          <li>论文<strong>未涉及多租户隔离、数据驻留、权限与故障恢复议题</strong>——以下部署要点除标注论文事实外均为编辑推断。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>官方仓库：</strong>论文首页印有 <span class="mono">github.com/SafeAILab/EAGLE</span>（<span class="badge evidence-badge b-r">R</span>；2026-09-15 核验可达 HTTP 200；论文未提供 commit/tag，使用时应自行锁定版本）。</li>
+          <li><strong>训练数据：</strong>固定 ShareGPT 数据集（68k 对话）——第三方对话数据的许可与合规由使用方自行核对，论文未讨论（<span class="badge evidence-badge b-p">P</span> 数据事实；<span class="badge evidence-badge b-i">I</span> 合规提醒）。</li>
+        </ul>
+        <h3>部署方必须自行覆盖的项</h3>
+        <div class="table-scroll" role="region" aria-label="安全运维清单表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 E · 安全/运维清单（论文事实 + 缺口 + 编辑建议）</caption>
+            <thead><tr><th scope="col">维度</th><th scope="col">论文状态</th><th scope="col">部署建议（I）</th></tr></thead>
+            <tbody>
+              <tr><td>租户隔离 / 缓存残留</td><td>EAGLE 不拥有 KV/上下文的归属语义；被接受 token 与特征回填宿主上下文（第 5 页 §3.3）<span class="badge evidence-badge b-p">P</span>（机制）</td><td>上下文与 KV 的清零/分域策略由宿主框架决定；草稿头为无状态权重，不引入额外租户状态；把「特征序列随上下文回填」纳入数据残留评审</td></tr>
+              <tr><td>输出合规（无损性）</td><td>输出分布与目标模型严格一致，贪心与非贪心均有理论保证；不做接受松弛（第 3、5、8–9 页）<span class="badge evidence-badge b-p">P</span></td><td>相对有损加速方法，合规面更小：加速层不改变内容分布；但草稿头的训练数据（ShareGPT）仍需常规合规审查</td></tr>
+              <tr><td>供应链</td><td>官方仓库由论文首页给出；论文未给 commit/tag<span class="badge evidence-badge b-r">R</span></td><td>仅从官方仓库构建并锁定 commit/digest；草稿头制品（权重+超参+数据版本）与目标模型版本配对入册；任何第三方「优化版 EAGLE」视为未核验供应链</td></tr>
+              <tr><td>RBAC / 权限</td><td>论文未涉及 <span class="badge evidence-badge b-i">I（缺口）</span></td><td>草稿头训练作业（写模型仓库）与推理服务（只读制品）分角色授权；训练数据集访问单独控权</td></tr>
+              <tr><td>监控告警</td><td>论文度量停留实验层（加速比/τ/n-α）（第 5 页 §4）<span class="badge evidence-badge b-p">P</span>（口径） <span class="badge evidence-badge b-i">I（缺口）</span></td><td>建议指标：在线 τ 分布、实测加速比、按温度/任务分层收益、草稿头版本配对一致性、显存水位（最大 batch 触顶）</td></tr>
+              <tr><td>故障恢复 / 回退</td><td>关闭 EAGLE 即回到逐 token 解码；因无损性，回退不改变输出分布（第 3、5 页）<span class="badge evidence-badge b-p">P</span>（无损）</td><td>回退路径天然安全（输出等价，仅变慢）；草稿头加载失败、树注意力实现异常均应自动降级为逐 token 解码并告警</td></tr>
+              <tr><td>升级 / 回滚</td><td>目标模型升级后草稿头需重训（每模型一头，第 3 页 §1）<span class="badge evidence-badge b-p">P</span>（机制） <span class="badge evidence-badge b-i">I（流程含义）</span></td><td>目标模型与草稿头版本配对发布、配对回滚；升级后先跑 τ/加速比回归基线再放量；树参数（k、深度）变更视为配置变更走评审</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout-warning" role="note">
+          <strong>运维契约提醒：</strong>EAGLE 的加速是「概率性收益、确定性正确」：加速比随 batch/温度/任务波动（表 1/7），而输出分布恒等（第 5 页 §3.3）。容量与 SLO 应按波动维度分别设防——延迟 SLO 绑定 batch/温度条件，正确性无需重复评测但需保留回归抽查以防实现偏差。<span class="badge evidence-badge b-p">P</span>（论文口径） <span class="badge evidence-badge b-i">I（运维含义）</span>
+        </div>
+      </section>
+
+      <section id="fit" aria-labelledby="fit-h">
+        <h2 id="fit-h">适用 / 不适用场景</h2>
+        <h3>适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>单流/低并发、延迟敏感的交互式服务</strong>：触发条件——chat/agent 类 bs≈1 场景，端到端延迟由解码主导。理由——MT-bench 贪心 2.78x–3.07x、非贪心 2.13x–2.68x（六模型，第 1–2 页图 1/图 2）；batch=1 正是论文主口径（第 5 页 §4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>代码生成/固定模板占比高的负载</strong>：触发条件——HumanEval 类任务或高模板密度输出。理由——HumanEval 全表最高 3.76x（LC13B，T=0，表 1），论文归因于固定模板易起草（第 5 页 §4.1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>不允许输出分布漂移的产品</strong>：触发条件——内容合规/回归测试要求与基模型逐位同分布。理由——无损性对贪心与非贪心均有理论保证，且不做接受松弛（第 3、5、8–9 页）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>想叠加量化/编译的推理栈</strong>：触发条件——已用或计划用 gpt-fast 类量化编译方案。理由——组合后 LC7B 在单卡 3090 达 160.4 tokens/s（int4，表 4），论文明确宣称可与其他加速正交组合（第 3 页 §1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>能承担一次性草稿头训练的团队</strong>：触发条件——目标模型相对固定、查询量足以摊销。理由——训练 1–2 天（70B：4×A100 40G；≤33B：RTX 3090 节点）、0.24B–0.99B 参数、固定 ShareGPT 数据即可（第 3、5 页；数据不敏感消融表 6）。<span class="badge evidence-badge b-p">P</span></li>
+        </ol>
+        <h3>不适用（触发条件 → 理由）</h3>
+        <ol>
+          <li><strong>高并发吞吐型服务</strong>：触发条件——大 batch 持续运行（bs≥4 且算力饱和）。理由——加速比随 batch 走低（LC70B bs=4 2.40x），吞吐口径仅约 2x，且最大 batch 减一（第 8 页 §4.4 + 表 7）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>MoE 目标模型为主的部署</strong>：触发条件——Mixtral 类稀疏激活模型。理由——1.50x（τ 3.25），论文归因于验证需读更多专家权重（第 6 页表 3 + §4.1）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>目标模型高频迭代且无训练流水线</strong>：触发条件——底座频繁升级/切换。理由——草稿头按目标模型一对一训练（1–2 天），模型换则头换（第 3 页 §1）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（运维判断）</span></li>
+          <li><strong>显存余量极端紧张的单卡场景</strong>：触发条件——24G 内已接近最大 batch 运行。理由——EAGLE 显存略增使最大 batch 8→7（V7B/24G 口径，第 8 页 §4.4）。<span class="badge evidence-badge b-p">P</span></li>
+          <li><strong>需要即刻获得收益、无法改动解码循环的服务</strong>：触发条件——宿主框架不支持投机采样接口或不允许改解码循环。理由——论文只验证 standalone 解码循环，服务框架集成未被评测；集成改造在框架侧（<span class="badge evidence-badge b-i">I</span>），无集成面时收益无从兑现（第 5 页 §4 口径 + 缺口声明）。<span class="badge evidence-badge b-p">P</span> <span class="badge evidence-badge b-i">I（适用判断）</span></li>
+        </ol>
+      </section>
+
+      <section id="experiments" aria-labelledby="experiments-h">
+        <h2 id="experiments-h">实验与指标</h2>
+        <h3>复现实验的完整条件（论文口径）</h3>
+        <div class="table-scroll" role="region" aria-label="实验配置表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 F · 实验条件口径（硬件 / 模型 / 精度 / 负载 / 基线）</caption>
+            <thead><tr><th scope="col">条件维度</th><th scope="col">论文口径</th><th scope="col">来源</th></tr></thead>
+            <tbody>
+              <tr><td>被测对象</td><td>EAGLE（草稿头按目标模型一对一训练）；目标模型全程冻结</td><td><span class="badge evidence-badge b-p">P</span> 第 5 页 §3.3</td></tr>
+              <tr><td>模型</td><td>Vicuna 7B/13B/33B；LLaMA2-Chat 7B/13B/70B；Mixtral 8x7B Instruct-v0.1</td><td><span class="badge evidence-badge b-p">P</span> 第 5 页 §4 + 第 6 页表 3</td></tr>
+              <tr><td>任务/数据集</td><td>MT-bench（多轮对话）、HumanEval（代码）、GSM8K（数学）、Alpaca（指令跟随）；zero-shot/few-shot 社区惯例；评测集零额外训练</td><td><span class="badge evidence-badge b-p">P</span> 第 3、5 页</td></tr>
+              <tr><td>硬件</td><td>显式披露：Vicuna 7B 单卡 RTX 3090（24G）、LC7B gpt-fast 单卡 RTX 3090、LC70B 4×A100 40G（160G）；其余型号与各表推理硬件论文未披露</td><td><span class="badge evidence-badge b-p">P</span> 第 6、8 页；<span class="badge evidence-badge b-i">I</span>（缺口标注）</td></tr>
+              <tr><td>精度</td><td>§4.4 明示其评测全部 FP16；表 4 另有 int4；其余各表未复述精度处记「论文未明确披露」</td><td><span class="badge evidence-badge b-p">P</span> 第 6、8 页；<span class="badge evidence-badge b-i">I</span>（披露缺口标注）</td></tr>
+              <tr><td>负载</td><td>batch 1 为主（与 Speculative sampling/DistillSpec/BiLD 一致）；batch&gt;1 仅 §4.4；T=0 与 T=1 两档</td><td><span class="badge evidence-badge b-p">P</span> 第 5、8 页</td></tr>
+              <tr><td>基线</td><td>逐 token 自回归；同系列小模型投机采样（草稿长 2–10 取最优；13B 无收益、33B 1.12x、70B 1.88x）；DistillSpec（同数据 + FKL）；Lookahead/Medusa 数字取自其原技术报告（未复跑）</td><td><span class="badge evidence-badge b-p">P</span> 第 1 页图 1 注 + 第 5 页 §4.1</td></tr>
+              <tr><td>草稿配置</td><td>树注意力草稿树：根 k=4、草稿 5 次前向；全部实验同一结构；τ/α 另按链式（无树）口径测量</td><td><span class="badge evidence-badge b-p">P</span> 第 5、12 页</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>关键结果（均带条件）</h3>
+        <div class="table-scroll" role="region" aria-label="关键结果表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 G · 评测关键数字 → 完整条件 → 定位（「论文未明确披露」为允许字段值，不留空）</caption>
+            <thead><tr><th scope="col">结论（指标）</th><th scope="col" class="num">数字</th><th scope="col">完整条件（硬件 / 模型 / 精度 / 负载 / 基线）</th><th scope="col">来源页码</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>MT-bench 逐模型加速（贪心 / 非贪心）</td><td class="num">T=0：2.78x–3.07x；T=1：2.13x–2.68x</td>
+                <td>六个稠密模型逐列见<a href="#overview">表 A</a>；MT-bench、batch 1；硬件仅 V7B/LC7B（RTX 3090）与 LC70B（4×A100 40G）显式，其余论文未披露；精度除 §4.4（FP16）外未复述；基线逐 token 解码。图 1/图 2 柱-模型配对经渲染页目视核验 + 表 7 双点锚定（台账 C30/C31/C40）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 1–2 页图 1/2 + 第 8 页表 7</td>
+              </tr>
+              <tr>
+                <td>三任务加速 + τ（表 1 全表）</td><td class="num">T=0：2.78x–3.76x（τ 3.61–4.52）；T=1：2.21x–2.92x（τ 3.29–3.79）</td>
+                <td>HumanEval/GSM8K/Alpaca × 六稠密模型；batch 1；硬件/精度论文未在表 1 复述；基线逐 token 解码；代码任务最佳（§4.1）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 6 页表 1 + 第 5 页 §4.1</td>
+              </tr>
+              <tr>
+                <td>MT-bench τ 与逐级接受率（表 2 全表）</td><td class="num">T=0 τ 3.62–3.98（0-α 0.74–0.79）；T=1 τ 3.17–3.46（0-α 0.71–0.73）</td>
+                <td>六稠密模型；τ 为目标前向平均接受 token 数；α 用链式草稿（无树）测量，n-α 为前 n 个特征有误时的接受率；1-α→4-α 缓慢衰减显示误差鲁棒性</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 6 页表 2 + §4.1</td>
+              </tr>
+              <tr>
+                <td>Mixtral 8x7B（MoE）</td><td class="num">1.50x；τ 3.25</td>
+                <td>Mixtral 8x7B Instruct-v0.1、MT-bench、T=0；硬件/精度论文未披露；归因：验证多 token 或需读 &gt;2 个专家权重</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 6 页表 3 + §4.1</td>
+              </tr>
+              <tr>
+                <td>树 vs 链（τ，表 5 全表）</td><td class="num">链 3.00–3.23 → 树 3.62–3.98（+0.62–0.75）；链式加速仍 ~2.3x–2.7x</td>
+                <td>MT-bench、T=0、六稠密模型；草稿均 5 次前向；硬件/精度论文未披露；树增益折算加速 +0.3–0.5（每前向 token 增多）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 7 页 §4.3.1 + 表 5</td>
+              </tr>
+              <tr>
+                <td>输入类型消融（图 8 + 图 4 锚点）</td><td class="num">token ~1.5x / feature ~1.9x / feature&amp;shifted-token ~2.8x</td>
+                <td>Vicuna 7B、MT-bench、T=0（图 4）与 T=0/T=1 曲线（图 8）；草稿结构除 FC 降维外完全一致；硬件/精度论文未披露</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 2–3 页 + 第 7–8 页</td>
+              </tr>
+              <tr>
+                <td>训练数据消融（表 6）</td><td class="num">固定集 2.78x/τ3.62 vs 目标生成 2.88x/τ3.75</td>
+                <td>LLaMA2-Chat 7B、MT-bench、T=0；两Recipe仅答案来源不同；硬件/精度论文未披露</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 7 页 §4.3.3 + 表 6</td>
+              </tr>
+              <tr>
+                <td>batch/吞吐（表 7 全表）</td><td class="num">V7B：2.90x/2.87x/2.65x/2.76x（吞吐 1.97x）；LC70B：3.01x/2.81x/2.50x/2.40x（吞吐 1.99x）</td>
+                <td>MT-bench、T=0、FP16；V7B 单卡 RTX 3090 24G（最大 bs 8→7）、LC70B 4×A100 40G/160G（最大 bs 5→4）；基线逐 token（各系统按自身最大 bs 取吞吐）</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 8 页 §4.4 + 表 7</td>
+              </tr>
+              <tr>
+                <td>EAGLE + gpt-fast（表 4）</td><td class="num">FP16 100.2；int4 160.4 tokens/s（vanilla HF 24.5；gpt-fast 55.1/106.9）</td>
+                <td>LLaMA2-Chat 7B、单卡 RTX 3090、MT-bench、T=0；精度 FP16 与 int4 明示</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 6 页 §4.2 + 表 4</td>
+              </tr>
+              <tr>
+                <td>附录表 8（α 细化，T=0）</td><td class="num">0-α 0.70–0.85；4-α 0.60–0.75（速度/τ 与表 1 一致）</td>
+                <td>三数据集 × 六稠密模型；Hardware/精度论文未披露；链式口径逐级 α</td>
+                <td><span class="badge evidence-badge b-p">P</span> 第 13 页表 8</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>公平性限制与已知差异</h3>
+        <ul>
+          <li><strong>对照数字来源不一：</strong>Lookahead/Medusa 的加速比取自其原技术报告而未复跑（图 1 注）；DistillSpec 经同数据+FKL 重训后仅边际提升——跨方法数字并非同一环境实测。<span class="badge evidence-badge b-p">P</span>（第 1、5 页） <span class="badge evidence-badge b-i">I（口径提示）</span></li>
+          <li><strong>结论区间与图表的出入（原文照录，不调和）：</strong>结论称「MT-bench 上 2.1x–3.8x」，但 MT-bench 可复得逐模型最大值为 3.07x（贪心）/2.68x（非贪心），3.76x 出现在表 1 HumanEval；vs Lookahead/Medusa 区间在 §1/§6 与 §4.1 间有细微出入。<span class="badge evidence-badge b-p">P</span>（引文） <span class="badge evidence-badge b-i">I（编辑标注）</span></li>
+          <li><strong>披露缺口：</strong>表 1/2/3/5/6/8 与图 4/8 未逐表复述硬件与精度（仅 §4.2/§4.4 明示）；本页一律记「论文未明确披露」，不臆测。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>服务化缺口：</strong>论文未测任何服务框架集成；跨论文（如与 FlashInfer/Medusa/KIVI 的服务化数字）比较被禁止。<span class="badge evidence-badge b-i">I</span></li>
+          <li><strong>图柱配对方法：</strong>图 1/图 2 的柱-模型配对依赖渲染页目视核验与表 7 双点锚定，纯文本提取不足为凭（台账 C40）。<span class="badge evidence-badge b-i">I</span></li>
+        </ul>
+
+        <h3>建议复现路径</h3>
+        <p>论文给出官方仓库与完整超参；以下步骤顺序为编辑建议（<span class="badge evidence-badge b-i">I</span>），配置项均出自论文（<span class="badge evidence-badge b-p">P</span>）：</p>
+        <ol>
+          <li>获取官方仓库 <span class="mono">github.com/SafeAILab/EAGLE</span>（论文首页给出；建议锁定明确 commit/tag 后再复现）；</li>
+          <li>对齐训练口径：目标模型冻结；ShareGPT 68,000 对话、lr 3e-5、AdamW(0.9, 0.95)、裁剪 0.5、特征噪声 U(−0.1, 0.1)、w_cls=0.1（第 4–5 页）；</li>
+          <li>构建草稿树：根 k=4、贪心 top-k（或非贪心采样 k）、草稿 5 次前向；全部对比保持同一结构（第 12 页附录 A.1）；</li>
+          <li>评测矩阵：六稠密模型（+Mixtral）× 四数据集 × T∈{0,1} × batch 1；记录墙钟加速比、τ、链式口径 n-α（第 5–6 页）；</li>
+          <li>扩展复刻：树/链消融（表 5）、输入类型消融（图 8）、训练数据消融（表 6）、batch/吞吐（表 7，FP16、指定显存约束）、gpt-fast 组合（表 4）；输出与论文数值的偏差先核草稿头训练随机性与树结构一致再论结论。</li>
+        </ol>
+      </section>
+
+      <section id="links" aria-labelledby="links-h">
+        <h2 id="links-h">论文 / 链接 / 延伸阅读</h2>
+        <div class="table-scroll" role="region" aria-label="链接表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 H · 来源与链接（外链仅 arXiv 与论文给出的官方仓库：HTTPS + rel="noopener noreferrer"）</caption>
+            <thead><tr><th scope="col">资源</th><th scope="col">级别</th><th scope="col">链接 / 文件</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>论文：《EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty》（ICML 2024，arXiv:2401.15077v3）</td>
+                <td><span class="badge evidence-badge b-p">P</span></td>
+                <td><a href="https://arxiv.org/abs/2401.15077" rel="noopener noreferrer">arxiv.org/abs/2401.15077</a>；本地 <span class="mono">06_EAGLE_2401.15077.pdf</span></td>
+              </tr>
+              <tr>
+                <td>官方仓库（论文首页印出；2026-09-15 核验可达；论文未提供 commit/tag）</td>
+                <td><span class="badge evidence-badge b-r">R</span></td>
+                <td><a href="https://github.com/SafeAILab/EAGLE" rel="noopener noreferrer">github.com/SafeAILab/EAGLE</a></td>
+              </tr>
+              <tr>
+                <td>论文引用的对照方法资源：Medusa 仓库 <span class="mono">github.com/FasterDecoding/Medusa</span>、gpt-fast 仓库 <span class="mono">github.com/pytorch-labs/gpt-fast/</span>、Lookahead 博客 <span class="mono">lmsys.org/blog/2023-11-21-lookahead-decoding</span>（见论文参考文献；本页仅文字引用、不作超链接）</td>
+                <td><span class="badge evidence-badge b-e">E</span></td>
+                <td><span class="mono">文字引用，见论文第 9 页参考文献</span></td>
+              </tr>
+              <tr>
+                <td>论文引用的数据集/基准与外部模型：MT-bench、HumanEval、GSM8K、Alpaca、ShareGPT、TinyLlama、LLaMA 2（本页仅文字引用、不作超链接）</td>
+                <td><span class="badge evidence-badge b-e">E</span></td>
+                <td><span class="mono">文字引用，见论文第 9–11 页参考文献</span></td>
+              </tr>
+              <tr>
+                <td>站内对照阅读</td>
+                <td>站内</td>
+                <td><a href="07-medusa.html">Medusa（07，无独立草稿模型的多解码头路线——EAGLE 的主要对照之一）</a> · <a href="05-flashinfer.html">FlashInfer（05，其注意力内核面向投机解码树掩码负载）</a> · <a href="08-kivi.html">KIVI（08，KV 量化——与解码加速正交、可组合）</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">论文引用的关联工作（SpecInfer、DistillSpec、BiLD、Lookahead、Medusa、Self-Speculative Decoding 等）仅按论文转述；除 arXiv 与官方仓库外本页不提供任何外部链接。上一篇：<a href="05-flashinfer.html">FlashInfer（05）</a>；下一篇：<a href="07-medusa.html">Medusa（07）</a>；或从<a href="../index.html">首页目录</a>进入。</p>
+      </section>
+
+      <section id="decision-checklist" aria-labelledby="decision-checklist-h">
+        <h2 id="decision-checklist-h">给架构师的决策清单</h2>
+        <form class="decision-checklist" aria-label="EAGLE 采用决策清单（静态勾选，不提交数据）">
+          <fieldset>
+            <legend>需求与兼容</legend>
+            <label><input type="checkbox" name="d1"> 收益场景匹配：单流/低并发、解码延迟主导、贪心或低温度为主（论文收益条件：MT-bench T=0 2.78x–3.07x；温度 1 收益折减，第 1–2、5–6 页）</label>
+            <label><input type="checkbox" name="d2"> 目标模型为稠密自回归 LLM；MoE 目标按 1.5x 级别单列预期（表 3，第 6 页）</label>
+            <label><input type="checkbox" name="d3"> 无损为硬需求（输出分布必须与目标模型一致）——满足；若可接受有损，再对比 Medusa 等方案（第 3、5 页；站内 07 页对照）</label>
+            <label><input type="checkbox" name="d4"> 宿主推理框架可支持投机采样解码循环（草稿/验证两阶段 + 树注意力掩码）——论文未测服务框架，集成方案需 PoC 验证（缺口声明，第 5 页口径）</label>
+          </fieldset>
+          <fieldset>
+            <legend>PoC 与容量</legend>
+            <label><input type="checkbox" name="d5"> 用真实流量分布复测加速比：绑定 batch × 温度 × 任务三条件，不引用摘要区间作承诺（第 1 页摘要 vs 表 1/7 条件差异）</label>
+            <label><input type="checkbox" name="d6"> 显存预算已计入草稿树与最大 batch 折损（24G 内 8→7、160G 内 5→4 口径，第 8 页 §4.4）</label>
+            <label><input type="checkbox" name="d7"> 草稿头训练流水线就绪：ShareGPT 68k、lr 3e-5、AdamW(0.9,0.95)、裁剪 0.5、噪声 U(−0.1,0.1)、w_cls=0.1（第 4–5 页）；70B 头需 4×A100 40G × 1–2 天</label>
+            <label><input type="checkbox" name="d8"> 树参数按场景调优（论文未精调、全部实验同一棵树；大 batch 下评估更小树与关树链式口径，第 7–8、12 页）</label>
+          </fieldset>
+          <fieldset>
+            <legend>SLO 与成本</legend>
+            <label><input type="checkbox" name="d9"> 延迟 SLO 与质量 SLO 解耦：无损性使质量评测可省（论文口径，第 5 页），但保留回归抽查防实现偏差</label>
+            <label><input type="checkbox" name="d10"> 按公式 1/2 核算一次性训练成本与摊销收益；价格参数取查询日云价（训练条件见第 3 页；价格为 E，非论文数据）</label>
+          </fieldset>
+          <fieldset>
+            <legend>安全与运维</legend>
+            <label><input type="checkbox" name="d11"> 供应链收敛：仅从官方仓库构建、锁定 commit/digest（论文未提供）；草稿头制品与目标模型版本配对入册</label>
+            <label><input type="checkbox" name="d12"> 训练数据（ShareGPT）许可与合规已过评审；草稿头制品纳入模型清单管理</label>
+            <label><input type="checkbox" name="d13"> 监控就位：在线 τ 分布、实测加速比（按温度/任务分层）、显存水位与最大 batch 触顶告警</label>
+          </fieldset>
+          <fieldset>
+            <legend>退出策略</legend>
+            <label><input type="checkbox" name="d14"> 回退路径明确：关闭 EAGLE 回到逐 token 解码；因无损性，回退不改变输出分布（仅变慢），可作自动降级</label>
+            <label><input type="checkbox" name="d15"> 目标模型升级流程含草稿头重训与 τ/加速比回归门禁；版本配对发布、配对回滚</label>
+          </fieldset>
+        </form>
+      </section>
+
+      <section id="evidence" aria-labelledby="evidence-h">
+        <h2 id="evidence-h">证据台账</h2>
+        <p class="meta-note">分级（本论文台账 schema：<span class="mono">sources/eagle.evidence.json</span>）：P = 论文正文/附录/图表（锚定 PDF 页码/章节）；R = 论文首页给出的官方仓库（可达性本次核验，commit/tag 论文未提供）；E = 论文引用的外部资源（对照方法仓库/数据集，仅作背景）；I = 编辑推断。<strong>页码口径：</strong>PDF 印刷页脚编号 1–13 与 PDF 页序逐页一致。图 1/图 2 柱-模型配对经渲染页目视核验并以表 7 双点锚定。最后核验日期：2026-09-15。</p>
+        <div class="table-scroll" role="region" aria-label="证据台账表，可横向滚动" tabindex="0">
+          <table class="metric-table">
+            <caption>表 I · 关键结论 → 级别 → 定位（PDF 页码 + 章节/图号）→ 核验状态（40 条 = P 33 · R 1 · E 2 · I 4）</caption>
+            <thead><tr><th scope="col">编号</th><th scope="col">关键结论（摘要）</th><th scope="col">级别</th><th scope="col">定位（PDF 页码/章节）</th><th scope="col">核验状态</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">C1</td><td>论文身份：题名/作者/机构/仓库 URL/arXiv v3 戳记/ICML 2024 元数据</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页 + PDF 元数据</td><td>已核验（提取 + 渲染页）</td></tr>
+              <tr><td class="mono">C2</td><td>摘要：两观察 + 提前一步 token + LC70B 2.7x–3.5x/吞吐翻倍 + 覆盖模型与任务</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页摘要 + 第 3 页 §1</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C3</td><td>特征级自回归更规整：1.9x vs 1.5x（V7B、MT-bench、T=0，图 4）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页 §1 + 第 3 页图 4</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C4</td><td>采样不确定性（图 3：p_am=0.6/p_always=0.4）与提前一步对策；1.9x→2.8x</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页图 3 + §1</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C5</td><td>草稿两难：7B 无草稿/7B 草 13B 更慢（N/A）；TinyLLaMA 3,000B vs EAGLE 2–4B token</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页 §1 + 第 1 页图 1 注</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C6</td><td>草稿准确率：Medusa ~0.6、Lookahead 更低、EAGLE ~0.8</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页 §1</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C7</td><td>优点：通用性/无损保证（贪心+非贪心）/单层插件易部署；权重仅训于 ShareGPT</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 3 页 §1</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C8</td><td>训练成本：70B 头 &lt;1B 参数、≤70k 对话、1–2 天 @4×A100 40G；≤33B 用 RTX 3090 节点</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 3 页 §1</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C9</td><td>gpt-fast 组合：LC7B 160.4 tokens/s @单卡 3090（表 4 细分）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 3 页 §1 + 第 6 页表 4</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C10</td><td>vs Lookahead/Medusa 区间：三处表述（1.7x–2.1x/1.5x–1.6x 与 1.70x–2.08x/1.47x–1.60x）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 3、5、9 页</td><td>已核验；差异照录不调和</td></tr>
+              <tr><td class="mono">C11</td><td>记号与投机采样机制（接受 min(1,p/q)、拒绝 norm(max(0,p−q))）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 3 页 §2</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C12</td><td>草稿：f3 ← (f1,f2)+(t2,t3) 提前一步；树深度 m、m 次前向；图 6 例 10 token/3 前向</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 4 页 §3.1 + 图 5/图 6</td><td>已核验（提取 + 渲染页）</td></tr>
+              <tr><td class="mono">C13</td><td>草稿模型三模块：Embedding/LM Head 冻结 + 自回归头（FC + 1 层 decoder）；形状与拼接</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 4 页 §3.1 + 图 6</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C14</td><td>树结构：根 k=4、贪心 top-k/非贪心采样 k、5 次前向；直觉设计、全部实验同一棵</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 12 页附录 A.1 + 图 9</td><td>已核验（渲染页目视）</td></tr>
+              <tr><td class="mono">C15</td><td>损失：SmoothL1 + w_cls·CE，w_cls=0.1（分类项约大一个量级）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 4–5 页 §3.2</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C16</td><td>特征噪声增广 U(−0.1, 0.1)（引 NEFTune/Jain et al. 2023）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §3.2</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C17</td><td>训练配置：ShareGPT 68k 对话、lr 3e-5、AdamW(0.9,0.95)、裁剪 0.5；可训参数 0.24/0.37/0.56/0.99B、Mixtral 0.28B</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §3.3</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C18</td><td>验证：树注意力一次前向 + 多轮投机采样（算法 1）+ 记录接受 token/特征；质量评测「既无必要也无意义」</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §3.3/§4 + 第 12–13 页</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C19</td><td>指标定义：墙钟加速比 / τ / 链式口径 α 与 n-α</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §4</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C20</td><td>评测设置：模型×任务清单、batch 1 为主、zero/few-shot、评测集零训练</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §4 + 第 3 页</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C21</td><td>基线配置：草稿长 2–10 扫描；13B 无收益/33B 1.12x/70B 1.88x；DistillSpec 同数据 FKL；Lookahead/Medusa 数字取自其报告</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5 页 §4.1 + 第 1 页图 1 注</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C22</td><td>表 1 全表：三任务 × 六模型 × 两温度 加速比 + τ；LC13B 区间 3.01x–3.76x / 2.66x–2.89x；代码最佳</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页表 1 + 第 5 页 §4.1</td><td>已核验（逐格核对）</td></tr>
+              <tr><td class="mono">C23</td><td>表 2 全表：MT-bench τ 与 0-α..4-α；τ 合计 3.2–4.5；0-α≫1-α、1-α..4-α 缓变</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页表 2 + §4.1</td><td>已核验（逐格核对）</td></tr>
+              <tr><td class="mono">C24</td><td>Mixtral 1.50x/τ3.25 + MoE 专家读取归因</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页表 3 + §4.1</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C25</td><td>表 4：EAGLE+gpt-fast FP16 100.2 / int4 160.4 tokens/s（LC7B、3090、T=0）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 6 页 §4.2 + 表 4</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C26</td><td>树消融：τ +0.62–0.75（表 5 全表）；聚合 +0.6–0.8 τ / +0.3–0.5 加速；链式仍 2.3x–2.7x</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7 页 §4.3.1 + 表 5</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C27</td><td>输入消融三观察（图 8）：特征&gt;token、合并抗误差、提前一步贡献最大</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7 页 §4.3.2 + 第 8 页图 8</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C28</td><td>数据消融（表 6）：固定集 2.78x/3.62 vs 目标生成 2.88x/3.75</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 7 页 §4.3.3 + 表 6</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C29</td><td>batch/吞吐（表 7）+ 最大 bs 8→7、5→4 + FP16 + bs=7 关树更优 + 2x 吞吐</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8 页 §4.4 + 表 7</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C30</td><td>图 1 贪心逐模型柱值（2.90x/3.07x/2.95x/2.78x/3.03x/3.01x）+ 其余方法柱值</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 1 页图 1 + 第 8 页表 7 锚定</td><td>已核验（渲染页目视 + 双点锚定）</td></tr>
+              <tr><td class="mono">C31</td><td>图 2 非贪心逐模型柱值（2.13x/2.32x/2.40x/2.22x/2.68x/2.67x）；Lookahead/Medusa 不参比</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 2 页图 2</td><td>已核验（渲染页目视）</td></tr>
+              <tr><td class="mono">C32</td><td>定位：不做接受松弛（对照 DistillSpec/BiLD/Medusa）；草稿阶段分类学；可与其他加速正交组合</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 8–9 页 §5 + 第 3 页 §1</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C33</td><td>口径：以延迟为主、吞吐为辅；显式硬件仅 V7B/LC7B（3090）与 LC70B（4×A100 40G）</td><td><span class="badge evidence-badge b-p">P</span></td><td>第 5、6、8 页</td><td>已核验（页码一致）</td></tr>
+              <tr><td class="mono">C34</td><td>官方仓库 github.com/SafeAILab/EAGLE（首页印出；可达；无 commit/tag）</td><td><span class="badge evidence-badge b-r">R</span></td><td>第 1 页</td><td>已核验（网络 HTTP 200，2026-09-15）</td></tr>
+              <tr><td class="mono">C35</td><td>对照方法外部资源（Medusa/gpt-fast 仓库、Lookahead 博客）：仅文字引用不链接</td><td><span class="badge evidence-badge b-e">E</span></td><td>第 9 页参考文献 + 第 1 页图 1 注</td><td>已核验（页码一致）；不作超链接</td></tr>
+              <tr><td class="mono">C36</td><td>数据集/基准与外部模型（MT-bench/HumanEval/GSM8K/Alpaca/ShareGPT/TinyLlama/LLaMA 2）：仅文字引用</td><td><span class="badge evidence-badge b-e">E</span></td><td>第 3、5 页 + 第 9–11 页参考文献</td><td>已核验（页码一致）；不作超链接</td></tr>
+              <tr><td class="mono">C37</td><td>编辑标注：结论「MT-bench 2.1x–3.8x」上界与图表不可复得（3.76x 在 HumanEval）；vs 基线区间三处细微出入</td><td><span class="badge evidence-badge b-i">I</span></td><td>第 1–2、6、9 页（编辑分析）</td><td>编辑标注完成；照录不调和</td></tr>
+              <tr><td class="mono">C38</td><td>编辑标注：各表硬件/精度未复述处一律记「论文未明确披露」；V13B/V33B/LC13B 推理硬件未披露</td><td><span class="badge evidence-badge b-i">I</span></td><td>第 6–8、13 页（编辑分析）</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">C39</td><td>编辑标注：图 9 各层节点数（4/8/8/3/2）为目测计数、不作论文事实；论文未测服务框架集成</td><td><span class="badge evidence-badge b-i">I</span></td><td>第 12 页图 9 + 第 5 页 §4（编辑分析）</td><td>编辑标注完成</td></tr>
+              <tr><td class="mono">C40</td><td>编辑标注：图 1/图 2 柱-模型配对方法 = 渲染页目视 + 表 7 双点锚定；纯文本提取不足为凭</td><td><span class="badge evidence-badge b-i">I</span></td><td>第 1–2 页 + 第 8 页（编辑方法注）</td><td>编辑标注完成</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="meta-note">数据与文件说明：本页全部性能数字与机制描述均取自论文《EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty》（arXiv:2401.15077v3，ICML 2024）的提取文本与渲染页核验，并通过 <span class="mono">sources/eagle.summary.json</span> 与 <span class="mono">sources/eagle.evidence.json</span> 逐条对应（claims 40 条、performance_rows 18 行，行行带硬件/模型/精度/负载/基线/定位字段，缺失字段记「论文未明确披露」）。编辑推断与部署建议已用 I 标注；本页外链仅 arXiv 与官方仓库两处（HTTPS + rel="noopener noreferrer"）。数据路径图 <span class="mono">assets/diagrams/eagle-data-path.svg</span>（含 title/desc 无障碍描述；树拓扑为编辑示意）。台账外不捏造任何数字、出处或日期。</p>
+      </section>
+
+      <nav class="pager" aria-label="上一篇下一篇">
+        <a href="05-flashinfer.html" rel="prev">← 上一篇：FlashInfer</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="../index.html">返回分类：解码加速与量化</a>
+        <span class="spacer" aria-hidden="true"></span>
+        <a href="07-medusa.html" rel="next">下一篇：Medusa →</a>
+      </nav>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <p>来源声明：本页全部性能数字与机制描述均取自论文《EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty》（arXiv:2401.15077v3 [cs.LG]，ICML 2024 会议版）提取文本的已核验条目（摘要/§1 第 1–3 页；预备 §2 第 3 页；方法 §3 第 3–5 页；实验 §4 第 5–8 页；相关工作/结论 §5–§6 第 8–9 页；参考文献第 9–12 页；附录 A/B 与表 8 第 12–13 页），并通过 <span class="mono">sources/eagle.summary.json</span> 与 <span class="mono">sources/eagle.evidence.json</span> 逐条对应；PDF 印刷页脚编号与页序逐页一致；图 1/图 2 柱-模型配对经渲染页目视核验并以表 7 双点锚定，结论节「2.1x–3.8x」等原文内部不一致处照录不调和；编辑推断与部署建议已用 I 标注，本页外链仅 arXiv 与论文首页给出的官方仓库 SafeAILab/EAGLE 两处（HTTPS + rel="noopener noreferrer"）。许可提醒：论文内容版权归原作者与出版方所有，引用以论文原文为准。本地生成：2026-09-15 · 输入 PDF <span class="mono">06_EAGLE_2401.15077.pdf</span> · 数据路径图 <span class="mono">assets/diagrams/eagle-data-path.svg</span>。</p>
+  </footer>
+  <script src="../assets/js/site.js" defer></script>
+</body>
+</html>

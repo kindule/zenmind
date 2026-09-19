@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QServe：W4A8KV4 量化与系统协同设计（论文 10 解读）</title>
+<meta name="description" content="基于本地论文 PDF（10_QServe_2405.04532.pdf，arXiv:2405.04532v3，MLSys 2025）的中文架构解读：QoQ 算法以渐进分组量化（保护区间 [-119,119]）与 SmoothAttention 支撑 W4A8KV4 精度，QServe 系统以计算感知权重重排、寄存器级并行与 KV4 注意力把去量化开销压到 INT8 张量核路径；同显存预算内最大可达吞吐对 TensorRT-LLM v0.9.0 在 A100 提升 1.20×~2.38×、L40S 提升 1.39×~3.47×。含数据路径图、云上部署映射、成本/SLO、安全运维回滚与决策清单，全部数字带 PDF 页码与实验条件。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="prev" href="09-quarot.html">
+<link rel="next" href="11-flashattention-3.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+p.num{text-align:left; white-space:normal}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">解码加速与量化</a></li>
+    <li aria-current="page">QServe</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>QServe：把 W4A8KV4 的理论收益做成实测吞吐的量化—系统协同设计</h1>
+<p class="lede">本页为第 10 篇（解码加速与量化类）。定量内容取自本地论文 PDF <code>10_QServe_2405.04532.pdf</code>（arXiv:2405.04532<strong>v3</strong>，MLSys 2025，共 19 页；本页采用该 v3 版本，PDF 页面水印逐字核验「arXiv:2405.04532v3 [cs.CL] 1 May 2025」）并逐条标注 PDF 页码；关键数字已两轮核验（第 1-14、18 页曾渲染原页逐项目检，2026-09-15 又以版面保留的文本提取逐表逐格复核，见 <a href="#evidence">#evidence</a> 与 <code>sources/qserve.evidence.json</code>）。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：推理服务（量化算法 + GPU kernel + 服务系统协同设计）</li>
+    <li>形态：QoQ 量化算法 + QServe 推理库（CUDA/PTX kernel + PyTorch 前端）</li>
+    <li>目标硬件：NVIDIA A100-80G-SXM4 / L40S-48G（数据中心 GPU，大批量云端服务）</li>
+    <li>核心资源：GPU 算力层次（CUDA 核 vs 张量核）· 显存容量 · KV 缓存带宽</li>
+    <li>证据状态：P（论文，页码级核验）+ R（摘要印明仓库，已在线核验）+ E/I</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-15">2026-09-15</time>。<strong>证据完整度：</strong>论文核心数字（摘要、表 1-6、图 2/15/16/17/18 的图注与正文结论、§3-§6 公式与机制）已回 PDF 原页逐项核验并标注页码与实验条件；两处已知口径差异（摘要舍入倍数 vs 表 4 精确值；§6.3「七个模型」区间 vs 表 4 八列）逐一对照原页后在页面并排保留；图 16 显存面板与图 18 柱状图无数值标注，仅取文字结论，读图近似单独标 <span class="ev ev-i">I</span>；TTFT/TPOT/单请求延迟、能耗论文未报告，页面写「论文未明确披露」。本页采用 PDF <strong>v3</strong>（2025-05-01 水印）；该 PDF 嵌入元数据 Subject 字段写作「mlsys 2024」，与页面印刷的版权行「Proceedings of the 8th MLSys Conference, Santa Clara, CA, USA, 2025」不一致，页面以<strong>印刷文本</strong>为准（MLSys 2025）。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文印明并经在线核验的官方仓库/项目页">R＝仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/读图近似，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="09-quarot.html" rel="prev">上一篇：09 QuaRot（文件可能尚未发布）</a>
+  <a href="11-flashattention-3.html" rel="next">下一篇：11 FlashAttention-3（文件可能尚未发布）</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（逐字核验自 PDF 第 1、18 页；仓库另经在线核验 <span class="ev ev-r">R</span>）</caption>
+    <tbody>
+      <tr><th scope="row">题名</th><td>QServe: W4A8KV4 Quantization and System Co-design for Efficient LLM Serving（编辑译名：QServe——面向高效 LLM 服务的 W4A8KV4 量化与系统协同设计）</td></tr>
+      <tr><th scope="row">作者 / 机构</th><td>Yujun Lin*、Haotian Tang*、Shang Yang*、Zhekai Zhang、Guangxuan Xiao（MIT）；Chuang Gan（UMass Amherst / MIT-IBM Watson AI Lab）；Song Han（MIT / NVIDIA）。*共同一作，脚注注明前三位作者按字母序署名同等贡献：Yujun Lin 主导向量化算法（quantization algorithm），Haotian Tang 与 Shang Yang 主导 GPU kernel 与服务系统（第 1 页）</td></tr>
+      <tr><th scope="row">发表</th><td>Proceedings of the 8th MLSys Conference, Santa Clara, CA, USA, 2025（第 1 页版权行）；arXiv:2405.04532v3，2025-05-01（PDF 水印逐字核验）；本地 PDF <code>10_QServe_2405.04532.pdf</code>（19 页）<span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">代码</th><td>摘要末句印明 <code>github.com/mit-han-lab/omniserve</code>（第 1 页）<span class="ev ev-r">R</span>；已在线核验（2026-09-15：HTTP 200、Apache-2.0、main 分支、未归档，详见 <a href="#links">#links</a>）</td></tr>
+      <tr><th scope="row">评估范围</th><td>精度：Llama-1（7B/13B/30B）、Llama-2（7B/13B/70B）、Llama-3-8B、Mistral-7B、Mixtral-8x7B、Yi-34B；效率：Llama-3-8B、Llama-2-7B/13B/70B、LLaMA-1-30B、Mistral-7B、Yi-34B、Qwen1.5-72B 共 8 个模型在 A100 与 L40S 上对比 TensorRT-LLM / Atom / QuaRot（第 10-11、13 页；Qwen1.5-72B 仅出现在效率评测）<span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">实验硬件</th><td>效率实验：A100-80G-SXM4 与 L40S-48G，同显存预算（80GB/48GB）内最大可达吞吐，输入 1024 / 输出 512 token（第 12 页 §6.3、第 11 页图 15 图注）<span class="ev ev-p">P</span>；软件 PyTorch 2.2.0 + CUDA 12.2（第 11 页）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> QServe 论文回答了一个反直觉问题——<strong>把位宽从 8bit 降到 4bit 为什么反而可能变慢</strong>：因为去量化发生在吞吐只有张量核约 2% 的 CUDA 核上（一次 CUDA 核运算≈50 次 INT4 张量核 MAC，第 1、4 页）。解法是算法与系统一起设计：QoQ 算法给出「W4 权重 + A8 激活 + KV4 缓存」这一在 roofline 上两头占优的精度组合，并用保护区间、SmoothAttention 保住精度；QServe 系统再把去量化塞进寄存器级并行，让主循环里只剩 INT8 张量核。收益兑现在<strong>同显存预算内最大可达吞吐</strong>（对 TensorRT-LLM v0.9.0：A100 1.20×~2.38×、L40S 1.39×~3.47×，表 4），并让 48GB 的 L40S 扛起与 80GB A100 相同的 batch——论文据此宣称「有效把 LLM 服务美元成本降 3×」（表 4 表注，口径见 <a href="#cost-slo">#cost-slo</a>）。基线是 2023 年的 TRT-LLM v0.9.0，引用绝对数字时必须带上这一点。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>现有 INT4 方案只加速低批量边缘推理，在大批量云端服务上失效——最先进的 W4A4 系统 Atom 在 A100 上跑 Llama-2-7B 比 TensorRT-LLM 的 W4A16/W8A8 慢 20-25%；已有 INT4 方法在 GPU 上去量化权重或部分和时承受 20-90% 运行时开销；A100 上一次 CUDA 核运算的代价相当于 50 次 INT4 张量核运算（第 1-2 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>为什么是 W4A8KV4：</strong>roofline 分析（A100 峰值 FP16/INT8/INT4 张量核 312/624/1248 TOPS、显存带宽 2TB/s）显示 GEMM 计算强度≈批量 m：m&lt;78 时 W4A16（省带宽）更优、m&gt;78 时 W8A8（算力高）更优，而 W4A8 只要全部计算落在 INT8 张量核上就两头通吃（第 3-4 页）<span class="ev ev-p">P</span>；解码注意力是计算强度 1 的 GEMV，KV4 等效加倍带宽（第 4 页）<span class="ev ev-p">P</span>。而 W4A4 的理论增益在 Ampere/Hopper 上兑现不了（第 4 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>算法（QoQ）：</strong>渐进分组量化——先 per-channel 对称 INT8（保护区间 [-119,119]，保证两级缩放反量化不溢出 INT8），再 per-group 非对称 INT4（组 128）；SmoothAttention 用 λ=max(|K|)^0.5 平滑 Key 缓存离群（约为其他激活的 ~10×），并按 RoPE 配对约束 λ_i=λ_{i+D/2} 融合进 W_Q/W_K（第 5-6 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>系统（QServe）：</strong>运行时精度映射为「所有 GEMM＝W4A8 输入、INT8 张量核计算、FP16 输出；所有注意力＝FP16 CUDA 核」（第 7-8 页图 11）<span class="ev ev-p">P</span>；计算感知权重重排按 32×32 tile 的「计算顺序」落盘、32 通道拼成单个 128bit 字，消除指针算术（第 8-9 页）<span class="ev ev-p">P</span>；解包 32 个 INT4 仅 3 次逻辑运算 + vadd4 单指令 4 路 INT8 加法实现寄存器级并行（第 9-10 页）<span class="ev ev-p">P</span>；KV4 注意力靠位技巧等四项优化避开 CUDA 核 roofline（第 10 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>结果与边界：</strong>同显存预算内最大可达吞吐（输入 1024/输出 512）对 TRT-LLM v0.9.0 最优精度配置：A100 8 模型 1.20×~2.38×、L40S 8 模型 1.39×~3.47×，几何平均 L40S 2.36×、A100 1.68×（第 13 页表 4、第 11 页图 15）<span class="ev ev-p">P</span>；34B 以下 7 模型中的 5 个在 L40S 上用 QServe 跑赢 A100 上的 TRT-LLM（第 13 页 §6.3）<span class="ev ev-p">P</span>；精度方面 WikiText2 困惑度 Llama-2-7B QoQ g128 5.67 vs FP16 5.47，五项常识任务平均对 FP16 仅损失 1.03%/0.89%/0.40%（7B/13B/70B，第 11-12 页）<span class="ev ev-p">P</span>；TTFT/TPOT、单请求延迟论文未报告<span class="ev ev-i">I</span>（口径核对）。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>量化位宽与 GPU 硬件层次错配：</strong><span class="ev ev-p">P</span>（第 1 页引言）现有整数量化分三类：W8A8、W4A16（前两类近似无损）、W4A4（精度受损）。INT4 理论上省显存、张量核峰值翻倍，但「降低位宽不一定加速推理」——关键在去量化落在低吞吐 CUDA 核上：A100 上一次 CUDA 核运算≈50 次 INT4 张量核运算（第 1-2、4 页）；现有 INT4 方法去量化权重或部分和的开销达运行时的 20-90%（第 1 页摘要）。</p>
+
+<p><strong>W4A4 系统的反例：</strong><span class="ev ev-p">P</span>（第 1-2 页）在 A100 上服务 Llama-2-7B 时，Atom 比 TensorRT-LLM 的 W4A16/W8A8 慢 20-25%；图 2b（Llama-2-7B、A100、batch 64）印刷柱值：TRT-LLM-W8A8 2,104 tokens/s，而 Atom 986、QuaRot 817——尽管 INT4 张量核理论峰值是 INT8 的 2×（第 3 页图 2b 图注）。</p>
+
+<p><strong>roofline 解释（为什么 W4A8KV4 两头占优）：</strong><span class="ev ev-p">P</span>（第 3 页图 3 与脚注、第 4 页 §3.1）A100 峰值 FP16/INT8/INT4 张量核 312/624/1248 TOPS、DRAM 带宽 2TB/s。GEMM 计算强度（MACs/element）≈m（序列数）：m&lt;78 时 W4A16 理论吞吐更高（省权重带宽），m&gt;78 时 W8A8 更优（INT8 算力）；W4A8 只要全部计算在 INT8 张量核上即可跨 batch 兼得。解码注意力是计算强度 1 MAC/元素的批量 GEMV，访存由 KV 缓存主导，KV4 等效加倍带宽、对 KV8 有 2× 理论峰值；batch=64 时注意力占总运行时 50% 以上（第 3-4 页）。</p>
+
+<p><strong>为什么不是 W4A4KV4：</strong><span class="ev ev-p">P</span>（第 4 页 §3.2）张量核 GEMM 采用输出固定（output stationary）数据流，m×n×k 问题的主循环沿归约维 k 顺序迭代、超过 100 次迭代并主导运行时；W4A16 需在主循环内做 INT4→FP16 权重转换、Atom-W4A4 需 INT32→FP32 部分和转换；A100/H100 上 FP32 CUDA 核峰值仅为 INT4 张量核的 2%，Atom 去量化单个部分和≈50 次张量核 MAC，且为部分和维护 FP32+INT32 双份寄存器、限制可驻留 warp 数、削弱延迟隐藏。</p>
+
+<p><strong>目标工作负载与约束：</strong><span class="ev ev-p">P</span>（第 3 页 §3.1）以真实对话负载为口径（输入 1024 token、输出 512 token），解码阶段运行时约为 prefill 的 6×，因此聚焦解码期 attention 与 GEMM；目标场景是<strong>大批量、云上 LLM 服务</strong>（第 1 页摘要：现有 INT4 只加速低批量边缘推理）。</p>
+
+<p><strong>基线口径：</strong><span class="ev ev-p">P</span>（第 11-12 页 §6.1/§6.3）效率基线为 TensorRT-LLM v0.9.0（FP16 / W8A8 / W4A16 三种精度取最优）以及 Atom（W4A4）、QuaRot（W4A4，main 分支截至 2024-04-18）；精度基线为 FP16 及 W8A8/W4A16 量化方法（SmoothQuant、GPTQ-R、AWQ）。<span class="ev ev-i">I</span> 因此论文数字回答的是「QServe 比 2023-2024 年初的这些基线强多少」，不回答「与 2026 年的最新服务栈比谁优」。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 QoQ 算法：为「去量化免费」而设计的量化格式</h3>
+
+<h4>渐进分组量化与保护区间（§4.1）</h4>
+<p><span class="ev ev-p">P</span>（第 5 页式 4/5、图 6）两级量化：先对权重做 per-channel <strong>对称 INT8</strong> 量化（FP16 通道缩放），再对中间 8bit 张量做 per-group <strong>非对称 INT4</strong> 量化（无符号 4bit 零点 + 无符号 8bit 组缩放，组大小 g=128 时记作 W4A8KV4g128）：</p>
+<div class="formula">
+Ŵ = Q_Ws8^(0) · s_fp16^(0)　（第 1 级：per-channel 对称 INT8）<br>
+Q_Ws8^(0) = (Q_Wu4^(1) − z_u4^(1)) · s_u8^(1)　（第 2 级：per-group 非对称 INT4）
+</div>
+<p><span class="ev ev-p">P</span>（第 5 页「Protective Quantization Range」小节）直接级联会溢出：若某组 8bit 权重落在 [-113, 120]，INT4 非对称量化产生缩放 16、零点 7，值 120 反量化为 (15−7)×16=128，超出 INT8 上限 127；硬件饱和指令会拖慢至多 67%。推导：s_u8 ≤ (127−(−128))/(15−0)=17，要求 q̂_s8 ≤ 127 ⇒ q_s8 ≤ 119.5，故把第 1 级对称量化区间从 [-127,127] 收缩到<strong>保护区间 [-119, 119]</strong>，使反量化中间值严格落在 INT8 表示范围内（第 5-6 页）。</p>
+<p><span class="ev ev-p">P</span>（第 6 页「Compared to previous two-level quantization」）与 VSQuant、QLoRA 的 DoubleQuant、DGQ 的区别：它们先用目标位宽组量化、再对 FP16 组缩放做 per-channel 量化，GPU 上须先把缩放、再把权重反量化为浮点值，限制峰值吞吐；DGQ 服务系统把去量化 kernel 与 GEMM 分开，其 W4A8 GEMM 端到端延迟甚至慢于 cuBLAS 的 W8A8 GEMM。QoQ 的保护区间允许把去量化融合进 W4A8 GEMM kernel 并全程寄存器级并行——QServe 的 W4A8 per-group GEMM 对 W8A8 cuBLAS GEMM 达 <strong>1.5× 加速（GEMM kernel 级结论，非端到端吞吐）</strong>（第 6 页）<span class="ev ev-p">P</span>。</p>
+
+<h4>SmoothAttention（§4.2）</h4>
+<p><span class="ev ev-p">P</span>（第 6 页图 7、式 7-9）经验观察：Value 缓存无明显离群，Key 缓存每头存在固定离群通道（幅值约为多数激活值的 ~10×），KV8 尚可容忍、KV4 量化级数不够。按通道因子 λ 平滑：Z=(QΛ)(KΛ⁻¹)ᵀ，λ_i=max(|K_i|)^α，实践 α=0.5 即可；因 Query 不量化只需处理 Key。为与 RoPE 交换律兼容（RoPE 把通道 i 与 i+D/2 配对），加硬约束 λ_i=λ_{i+D/2}（式 9）；平滑因子 Λ 融合进前层权重（W_Q=ΛW_Q、W_K=Λ⁻¹W_K），运行时零额外 kernel 调用（第 6 页；「无系统开销」结论见第 13-14 页图 16）<span class="ev ev-p">P</span>。</p>
+
+<h4>通用量化优化（§4.3）</h4>
+<ul>
+  <li><strong>块输入模块旋转（§4.3.1）：</strong><span class="ev ev-p">P</span> QKV 投影与 FFN 第 1 层等「输入模块」前施加 scaled Hadamard 旋转；旋转是酉变换，可被前一块输出模块权重吸收（第 7 页）。</li>
+  <li><strong>块输出模块平滑（§4.3.2）：</strong><span class="ev ev-p">P</span> out_proj 与 FFN 第 2 层等「输出模块」用对角 Λ 平滑中间激活并吸收进前层权重；若照搬输入模块的迁移强度，Llama-2-7B 的 WikiText-2 困惑度会至多恶化 0.05，故迁移强度 α 取近 0、λ 基本由权重决定（第 7 页）。</li>
+  <li><strong>激活感知通道重排（§4.3.3）：</strong><span class="ev ev-p">P</span> 用 max(|X|) 定通道显著性，ArgSort 使相近显著度通道落入同组，替代 Atom 的混合精度方案（第 7 页图 10）。</li>
+  <li><strong>权重裁剪（§4.3.4）：</strong><span class="ev ev-p">P</span> 多数线性层最小化层输出误差，q_proj/k_proj 例外、最小化块输出 MSE（第 7 页式 10）。</li>
+</ul>
+
+<h3>3.2 QServe 服务系统</h3>
+
+<h4>运行时精度映射（§5.1，图 11）</h4>
+<p><span class="ev ev-p">P</span>（第 7-8 页）<strong>所有 GEMM 层</strong>以 W4A8 为输入、在 INT8 张量核上计算、输出 FP16；<strong>所有注意力层</strong>在 CUDA 核上以 FP16 计算；每个 LLM 块 FP16 进、FP16 出。激活量化融合进前趋 LayerNorm（QKV 投影、FFN 第 1 层）或前趋激活 kernel（FFN 第 2 层）；注意力 out_proj 前插入独立量化节点。</p>
+
+<h4>KV 缓存管理（§5.1）</h4>
+<p><span class="ev ev-p">P</span>（第 8 页）沿用 vLLM / TensorRT-LLM 的分页 KV 缓存防碎片，并支持同类 in-flight batching；但两框架是 per-tensor 静态（离线算好缩放）的 KV8 量化，QServe 因 4bit 精度需要 <strong>per-head 动态 KV 量化</strong>——FP16 缩放与零点按头紧跟量化 KV 特征存于每个缓存页内、可在线更新。</p>
+
+<h4>计算感知权重重排（§5.2.1，图 12）</h4>
+<p><span class="ev ev-p">P</span>（第 8-9 页）朴素 INT4 寻址每 4 通道要一次地址计算，而 CUDA 核吞吐仅为 A100 INT8 张量核的 32×，指针算术不可忽略；跨步访问还无法打包 128bit 读。ldmatrix 指令只在存储/计算位宽一致（W8A8）时可用，W4A8 按「字节一致、元素不一致」分配而失效。解法：按 32×32 tile 把<strong>计算所需顺序</strong>落盘（线程 0 用输入通道 0-3 与 16-19 对应的权重，32 通道拼成单个 128bit 字），权重静态、零运行时开销，同时消除指针算术并保证 128bit/thread 访存；零点与缩放同样重排。</p>
+
+<h4>快速去量化（§5.2.2-5.2.3，图 13-14）</h4>
+<p><span class="ev ev-p">P</span>（第 9-10 页）把 ZINT4→SINT8 转换分解为 UINT4→UINT8 解包与 UINT8→SINT8 零点减两步：</p>
+<ul>
+  <li><strong>解包：</strong><span class="ev ev-p">P</span> 32 个 UINT4 权重重排为 w0,w16,w1,w17,…，用寄存器级并行仅 3 次逻辑运算解包为 UINT8（第 9 页图 13）。</li>
+  <li><strong>per-channel 场景：</strong><span class="ev ev-p">P</span> 零点减法移出主循环并入 GEMM 尾注——X(Z_S_W)=t_X×(z_W⊙s_W)，其中 t_X=X·1_k 预计算；每个 W4A8 kernel 前必是访存受限 kernel，预计算可融合进去、时延开销可忽略（第 9 页式 13）。</li>
+  <li><strong>per-group 场景：</strong><span class="ev ev-p">P</span> 零点按组、无法并入尾注，且二级缩放引入逐权重 INT8 乘法；采用「先乘后减」次序配合 <strong>vadd4</strong>（一条 INT32 ALU 完成 4 路 INT8 加法）实现 4 路寄存器级并行——GPU 没有 4 路 INT8 乘法指令，靠 8bit 缩放高位补 24 个零模拟，仅当乘积不溢出 INT8 时成立，渐进量化的保护区间正保证这一点（第 9-10 页、第 10 页开头）。</li>
+</ul>
+
+<h4>通用 GEMM 优化（§5.2.4）与 KV4 注意力（§5.3）</h4>
+<p><span class="ev ev-p">P</span>（第 10 页）访存侧：多级软件流水 + 异步内存拷贝、L1 共享内存 swizzle 消除 bank 冲突、跨线程块置换计算分区提升 L2 复用（相邻块复用同一权重）；计算侧：m 较小时把归约维 k 切片、在 L1 内跨 warp 归约部分和。KV4 注意力部分与实验数字见 <a href="#experiments">#experiments</a>（表 1）。</p>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝离线量化流水线（校准→旋转→平滑→重排→裁剪→两级量化→权重重排落盘）、精度映射策略（哪些层 W4A8、哪些层 FP16）、KV 页内缩放/零点的在线更新、in-flight batching 调度；<strong>数据面</strong>＝INT8 张量核 GEMM 主循环、寄存器级去量化、FP16 注意力、KV4 量化/反量化读写。该划分只影响叙述，不改变论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/qserve-data-path.svg"
+       alt="QServe 数据路径图：请求进入服务层做 in-flight batching 连续批处理，分页 KV 管理器按页分配显存、每页内联存放该头 FP16 缩放与零点；Transformer 块内精度映射为块级 FP16 进出，LayerNorm 或激活 kernel 融合激活量化输出 INT8，QKV 投影、FFN 两层均为 W4A8 GEMM（INT8 张量核计算、FP16 输出），注意力在 CUDA 核上以 FP16 计算并读取 KV4 缓存，输出投影前插入独立量化节点；W4A8 GEMM 主循环五步——加载按 32×32 瓦片计算顺序离线重排的 INT4 权重并 128 位连续读、3 次逻辑运算解包为 UINT8、vadd4 单指令 4 路 INT8 加法、INT8 乘 INT8 张量核矩阵乘、per-channel 零点并入尾注或 per-group 二级缩放寄存器级相乘；解码注意力分页读 INT4 K/V，位技巧每元素 2 次运算反量化，QK 与 SV 用 FP16，kernel 起始预取缩放零点，风险点为朴素 KV4 每元素 5 次 ALU 使 A100 上的融合核变成计算受限、QServe 优化后达 1.5 倍；KV 写路径把新 token 的 K/V 逐头非对称量化为 INT4 并与缩放零点内联写入缓存页，每步解码循环。右侧面板为离线准备（旋转、平滑、通道重排、权重裁剪、渐进分组量化保护区间负 119 到 119、SmoothAttention 融合、计算感知重排落盘）与引用数字必读的完整实验条件。" width="980" height="920">
+  <figcaption>图 1：QServe 从请求到 INT8 张量核与 KV4 分页缓存的端到端数据路径。实线＝运行时数据流，虚线＝离线准备；深蓝＝服务/调度，青＝GPU 计算，紫＝KV 缓存/显存，琥珀＝论文指出的风险点；编号 ①-⑤ 对应下方文字序列。依据论文图 5、6、7、11、12、13、14、§4-§5（arXiv:2405.04532v3）绘制 <span class="ev ev-p">P</span>；编号与面板编排为本页编辑标注 <span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 服务层：</strong>请求进入引擎调度器做 in-flight batching（与 vLLM / TensorRT-LLM 同类）；分页 KV 管理器按页分配显存防碎片，每页内联存放该头 FP16 缩放/零点（KV4 专用、在线更新）<span class="ev ev-p">P</span>（第 8 页 §5.1）。</li>
+  <li><strong>② 块内精度映射：</strong>块级 FP16 进、FP16 出；LayerNorm（QKV 投影、FFN 第 1 层前）或激活 kernel（FFN 第 2 层前）融合激活量化输出 INT8；QKV 投影、FFN 两层均为 W4A8 GEMM（INT8 张量核、FP16 输出）；注意力在 CUDA 核上 FP16 计算并读 KV4；out_proj 前插入独立量化节点<span class="ev ev-p">P</span>（第 7-8 页图 11）。</li>
+  <li><strong>③ W4A8 GEMM 主循环：</strong>加载按 32×32 tile「计算顺序」离线重排的 INT4 权重、128bit 连续读 → 3 次逻辑运算解包为 UINT8 → 乘后减次序 + vadd4（一条 INT32 ALU＝4 路 INT8 加法；保护区间 [-119,119] 保证乘积不溢出）→ INT8×INT8 张量核矩阵乘 → 尾注处理（per-channel 零点并入尾注、t_X 预计算融合进前趋访存受限 kernel；per-group 二级缩放在主循环内寄存器级相乘）→ 输出 FP16<span class="ev ev-p">P</span>（第 5、8-10 页图 5d、12-14）。</li>
+  <li><strong>④ 解码注意力：</strong>分页读 INT4 K/V，位技巧把反量化算术强度降到每元素 2 次运算，QKᵀ 与 SV 积用 FP16，kernel 起始异步预取缩放/零点；FP16 softmax 与输出。风险：朴素 KV4 每元素 5 次 ALU、A100 FP32 CUDA 核 roofline 转折点仅 9.8 Ops/Byte，融合核会变成计算受限（A100 上 1.1-1.2× 反而变慢）；QServe 四项优化后对 TRT-LLM KV8 核达 1.5×（kernel 级）<span class="ev ev-p">P</span>（第 10 页 §5.3、表 1；1.7× 为端到端注意力改进，第 14 页 §6.4）。</li>
+  <li><strong>⑤ KV 写路径：</strong>新 token 的 k/v 逐头做非对称 INT4 动态量化（缩放/零点在线更新），INT4 特征与该头 FP16 缩放/零点内联写入缓存页；SmoothAttention 已离线融合进 W_Q/W_K，运行时零额外调用。每步解码循环 ②→⑤<span class="ev ev-p">P</span>（第 8 页 §5.1、第 6 页 §4.2）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与事实（机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>精度格式：权重 W4（per-channel INT8 + per-group INT4 两级）、激活 A8（per-token 对称 INT8）、KV 缓存 KV4（per-head 非对称 INT4）</td><td>QoQ「W4A8KV4g128」＝渐进分组量化（组 128）；「W4A8KV4」为 per-channel 对应版本</td><td><span class="ev ev-p">P</span> 第 5 页 §4.1、第 10-11 页 §6.1</td></tr>
+      <tr><td>所有 GEMM：W4A8 输入、INT8 张量核计算、FP16 输出；所有注意力：FP16 CUDA 核；块 FP16 进出</td><td>运行时精度映射（GEMM 与注意力精度分离）</td><td><span class="ev ev-p">P</span> 第 7-8 页图 11</td></tr>
+      <tr><td>保护区间 [-119,119]；直接级联溢出反例 [-113,120]→128；饱和指令拖慢至多 67%</td><td>渐进量化正确性前提（保证 RLP 乘法不溢出 INT8）</td><td><span class="ev ev-p">P</span> 第 5-6 页、第 10 页开头</td></tr>
+      <tr><td>权重按 32×32 tile 计算顺序落盘、32 通道拼单个 128bit 字；零点/缩放同重排</td><td>离线完成、运行时零开销</td><td><span class="ev ev-p">P</span> 第 8-9 页图 12</td></tr>
+      <tr><td>分页 KV 缓存 + in-flight batching 与 vLLM/TRT-LLM 同类；KV 量化为 per-head 动态（对比两框架 per-tensor 静态）</td><td>服务运行时 KV 路径</td><td><span class="ev ev-p">P</span> 第 8 页 §5.1</td></tr>
+      <tr><td>激活量化融合点：LayerNorm（QKV、FFN1）/ 激活 kernel（FFN2）；out_proj 前独立量化节点</td><td>INT8 激活的生产位置</td><td><span class="ev ev-p">P</span> 第 7-8 页</td></tr>
+      <tr><td>KV 量化/反量化算子的绝对耗时、KV 页内缩放零点的空间占比：论文未明确披露</td><td>数据路径运行细节</td><td><span class="ev ev-p">P</span>（本次证据源未载明，页面不补写）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong><span class="ev ev-p">P</span> 口径提醒（读数方式）：</strong>论文效率数字的完整条件是：A100-80G-SXM4 或 L40S-48G、同显存预算（80GB/48GB）内<strong>最大可达吞吐</strong>（tokens/s）、输入 1024 / 输出 512 token、对 TRT-LLM v0.9.0 三种精度（FP16/W8A8/W4A16）最优配置、A100 用 per-channel / L40S 用 per-group 权重量化（第 11-12 页 §6.1/§6.3）<span class="ev ev-p">P</span>。引用本页任何吞吐数字必须携带这些条件，且不可与其他论文的数字横向比较。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>精度组合选择 ↔ 精度代价</h3>
+    <p><span class="ev ev-p">P</span> W4A8KV4 不是免费的：Llama-2-7B WikiText2 困惑度 FP16 5.47 → QoQ(W4A8KV4) 5.75（per-channel）/ 5.67（g128）；对 W8A8 SmoothQuant 与 W4A16 AWQ 至多增加 0.16；五项常识任务平均对 FP16 损失 1.03%/0.89%/0.40%（7B/13B/70B，第 11-12 页表 2/表 3）。KV4 这一步在消融中再恶化 0.14（5.66→5.80，第 13-14 页图 16）。<span class="ev ev-i">I</span> 即 QServe 用「可量化的精度预算」换 INT8 张量核路径，接受与否取决于业务对困惑度/下游任务的敏感度。</p>
+  </li>
+  <li>
+    <h3>理论 roofline ↔ 实测可实现性</h3>
+    <p><span class="ev ev-p">P</span> KV4 理论上对 KV8 有 2× 峰值，但朴素替换在 A100 上 1.1-1.2× 反而变慢（CUDA 核 roofline 转折 9.8 Ops/Byte 提前到来，第 10 页表 1 及 §5.3）；W4A4 理论上 m&gt;78 占优，但 Atom/QuaRot 实测显著落后（第 3-4 页）。<span class="ev ev-i">I</span> 论文的核心方法论即「位宽选择必须与 kernel 实现协同」——引用任何「INT4 更快」的推导前先看实现是否避开了 CUDA 核瓶颈。</p>
+  </li>
+  <li>
+    <h3>算法—系统协同 ↔ 设计耦合</h3>
+    <p><span class="ev ev-p">P</span> 渐进量化的保护区间是为「乘后减 + vadd4 的寄存器级并行」能安全工作而反推出来的量化格式约束（第 5-6、9-10 页）；SmoothAttention 以 RoPE 配对硬约束换取融合进权重、运行时零开销（第 6 页）；权重重排按 kernel 瓦片顺序落盘（第 8-9 页）。<span class="ev ev-i">I</span> 三者都把算法格式与具体 GPU 指令（vadd4、128bit 访存、ldmatrix 的局限）绑定——换硬件架构（不同 ALU/访存粒度）时这套协同需要重新验证，不是纯算法层可移植的成果。</p>
+  </li>
+  <li>
+    <h3>吞吐收益 ↔ 延迟口径缺失</h3>
+    <p><span class="ev ev-p">P</span> 论文全部效率结论是「同显存预算内最大可达吞吐」（batch 由显存约束扫描决定），未报告 TTFT/TPOT/单请求延迟（第 12 页 §6.3；全文无延迟 SLO 指标）。同 batch 拆解显示 1.88×（L40S、Llama-2-7B）＝1.45×（同 batch）×1.3×（更大 batch），即约三分之一收益来自「KV4 省出的显存装了更大 batch」（第 14 页图 17 及正文）。<span class="ev ev-i">I</span> 以单请求延迟为首要 SLO 的场景不能直接引用这些倍数。</p>
+  </li>
+  <li>
+    <h3>显存容量 ↔ 基础设施降本</h3>
+    <p><span class="ev ev-p">P</span> W4 权重量化在消融中省 3.5GB、KV4 使 GPU 内存使用减半（第 13-14 页图 16 文字结论；显存面板无数值标注）；L40S-48G 因此能容纳与 A100-80G 相同的 batch，34B 以下 7 模型中 5 个「L40S+QServe」吞吐超过「A100+TRT-LLM」，表 4 表注据此称「有效把 LLM 服务美元成本降低 3×」（第 12-13 页）。<span class="ev ev-i">I</span> 该 3× 是论文级断言，其隐含的 L40S/A100 价格比未在论文中披露，落到具体云价需另行核算（见 <a href="#cost-slo">#cost-slo</a>）。</p>
+  </li>
+  <li>
+    <h3>实测领先 ↔ 基线陈旧</h3>
+    <p><span class="ev ev-p">P</span> 效率基线为 TRT-LLM v0.9.0（2023 年版本）与 QuaRot/Atom 的 2024-04-18 main 分支（第 11 页 §6.1）；论文附录自述「绝对吞吐因机器条件略有差异，相对加速比应保持一致」（第 18 页表 6 注）。<span class="ev ev-i">I</span> 对照当下软件栈（TRT-LLM 已多年迭代，且官方仓库 README 称 QServe 已于 2024 年 12 月集成进 TensorRT-LLM，<span class="ev ev-r">R</span>），绝对数字不可代表当前版本表现；决策前应在目标栈上复测，论文数字用于理解机制与量级。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>QServe 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算：A100-80G-SXM4 / L40S-48G 两档 GPU；核心论点是「较便宜的 L40S 类卡 + W4A8KV4 ≥ 较贵的 A100 + 基线」</th>
+        <td><span class="ev ev-e">E</span> 按吞吐 SLO 在「A100 80GB 类」与「L40S/L40 48GB 类」实例间做容量规划；新购/扩容场景优先试 Ada 类卡 + 量化，存量 A100 用量化提密</td>
+        <td>两档 GPU 与同显存预算口径为论文事实 <span class="ev ev-p">P</span>（第 12 页 §6.3、第 11 页图 15 图注）；「5/7 模型 L40S 反超 A100」为论文结果 <span class="ev ev-p">P</span>（第 13 页）；实例选型为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">交付形态：预构建 Docker 镜像（QServe + TensorRT-LLM + 依赖），NVIDIA Container Toolkit 运行</th>
+        <td><span class="ev ev-e">E</span> 容器服务/ GPU 节点池拉取制品化镜像；镜像 digest 与驱动/CUDA 版本矩阵纳入节点镜像管理</td>
+        <td>论文附录 A 明确以 Docker + NVIDIA Container Toolkit 交付（镜像 <code>shang12138/qserve-mlsys25-ae</code>）<span class="ev ev-p">P</span>（第 18 页）；容器平台落位为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">容量规划变量：权重（W4）+ KV 缓存（KV4，页内含 per-head FP16 缩放/零点）+ 激活 + 框架开销</th>
+        <td><span class="ev ev-e">E</span> 容量模型进编排：按显存预算反推最大 batch（论文口径即「同预算内最大可达吞吐」）；为回退 FP16/W8A8 预留余量或配套降载</td>
+        <td>KV 页结构与 per-head 统计量内联为论文事实 <span class="ev ev-p">P</span>（第 8 页）；「W4 省 3.5GB、KV4 内存减半」为论文消融文字结论 <span class="ev ev-p">P</span>（第 13-14 页）；容量公式与回退余量为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">配置面：量化粒度按 GPU 选型（A100 per-channel / L40S per-group）、组大小 g=128 与否（W4A8KV4g128）</th>
+        <td><span class="ev ev-e">E</span> 配置随模型制品下发（模型卡注明量化格式与粒度）；变更走灰度 + 精度回归</td>
+        <td>粒度选择依据（L40S CUDA 核更强）与两种格式定义为论文事实 <span class="ev ev-p">P</span>（第 12 页 §6.3、第 10-11 页 §6.1）；配置治理为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">与主流服务栈的关系：官方仓库 README 称 QServe 已于 2024 年 12 月集成进 NVIDIA TensorRT-LLM</th>
+        <td><span class="ev ev-e">E</span> 生产环境优先评估推理框架内置实现/等效 W4A8KV4 配方，自建 QServe 库仅作对照或特殊调优</td>
+        <td>集成说法来自官方仓库 README 新闻（2026-09-15 在线核验）<span class="ev ev-r">R</span>；论文本身未描述该集成 <span class="ev ev-p">P</span>；平台选型建议为编辑推断 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：吞吐（tokens/s）、显存水位、批量上限、精度抽样</th>
+        <td><span class="ev ev-e">E</span> 监控最大可达吞吐与 OOM 边界批量、显存构成（权重/KV）、Wikitext 困惑度或下游任务抽样分数；异常回退 W8A8/FP16 配置并告警</td>
+        <td>论文以吞吐为效率指标、困惑度/常识/长上下文为精度指标 <span class="ev ev-p">P</span>（第 10-13 页）；监控设计为编辑建议 <span class="ev ev-i">I</span>、接入为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> ①QServe 的价值主张集中在「同预算下更高吞吐 + 低价位卡承载同 batch」，最适合大批量、成本敏感的云端推理池；②论文负载口径固定为输入 1024/输出 512，真实流量分布不同时收益需复测；③仓库近两年几乎无提交（见 <a href="#links">#links</a>），把它当「论文级参考实现 + TRT-LLM 集成思路」比当「活跃开源服务框架」更符合现状。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 指标口径（论文使用的）</h3>
+<p><span class="ev ev-p">P</span>（第 12 页 §6.3）效率主指标＝<strong>同显存约束内最大可达吞吐</strong>（tokens/s；输入 1024 / 输出 512；A100 80GB / L40S 48GB 预算；A100 用 per-channel、L40S 用 per-group 权重量化）。精度指标＝WikiText2 困惑度（序列 2048，越低越好）、五项常识任务零样本平均（PIQA/ARC-e/ARC-c/HellaSwag/WinoGrande，越高越好）、LongBench 长上下文。TTFT、TPOT、单请求延迟、能耗：论文未明确披露。</p>
+
+<h3>7.2 主效率结果上下文（表 4 全量转录，第 13 页）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 4 转录：绝对吞吐 tokens/s 与对 TRT-LLM 三精度最优者的加速比（<span class="ev ev-p">P</span>；同显存预算，输入 1024/输出 512；OOM＝该精度下超显存）</caption>
+    <thead>
+      <tr><th scope="col">GPU</th><th scope="col">系统</th><th class="num" scope="col">Llama-3 8B</th><th class="num" scope="col">Llama-2 7B</th><th class="num" scope="col">Mistral 7B</th><th class="num" scope="col">Llama-2 13B</th><th class="num" scope="col">LLaMA-1 30B</th><th class="num" scope="col">Yi 34B</th><th class="num" scope="col">Llama-2 70B</th><th class="num" scope="col">Qwen1.5 72B</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="5">L40S-48G</th><th scope="row">TRT-LLM-FP16</th><td class="num">1326</td><td class="num">444</td><td class="num">1566</td><td class="num">92</td><td class="num">OOM</td><td class="num">OOM</td><td class="num">OOM</td><td class="num">OOM</td></tr>
+      <tr><th scope="row">TRT-LLM-W4A16</th><td class="num">1431</td><td class="num">681</td><td class="num">1457</td><td class="num">368</td><td class="num">148</td><td class="num">313</td><td class="num">119</td><td class="num">17</td></tr>
+      <tr><th scope="row">TRT-LLM-W8A8</th><td class="num">2634</td><td class="num">1271</td><td class="num">2569</td><td class="num">440</td><td class="num">123</td><td class="num">364</td><td class="num">OOM</td><td class="num">OOM</td></tr>
+      <tr><th scope="row">QServe (Ours)</th><td class="num">3656</td><td class="num">2394</td><td class="num">3774</td><td class="num">1327</td><td class="num">504</td><td class="num">869</td><td class="num">286</td><td class="num">59</td></tr>
+      <tr><th scope="row">加速比*</th><td class="num">1.39×</td><td class="num">1.88×</td><td class="num">1.47×</td><td class="num">3.02×</td><td class="num">3.41×</td><td class="num">2.39×</td><td class="num">2.40×</td><td class="num">3.47×</td></tr>
+      <tr><th scope="row" rowspan="5">A100-80G</th><th scope="row">TRT-LLM-FP16</th><td class="num">2503</td><td class="num">1549</td><td class="num">2371</td><td class="num">488</td><td class="num">80</td><td class="num">145</td><td class="num">OOM</td><td class="num">OOM</td></tr>
+      <tr><th scope="row">TRT-LLM-W4A16</th><td class="num">2370</td><td class="num">1549</td><td class="num">2403</td><td class="num">871</td><td class="num">352</td><td class="num">569</td><td class="num">358</td><td class="num">143</td></tr>
+      <tr><th scope="row">TRT-LLM-W8A8</th><td class="num">2396</td><td class="num">2334</td><td class="num">2427</td><td class="num">1277</td><td class="num">361</td><td class="num">649</td><td class="num">234</td><td class="num">53</td></tr>
+      <tr><th scope="row">QServe (Ours)</th><td class="num">3005</td><td class="num">2908</td><td class="num">2970</td><td class="num">1741</td><td class="num">749</td><td class="num">797</td><td class="num">419</td><td class="num">340</td></tr>
+      <tr><th scope="row">加速比*</th><td class="num">1.20×</td><td class="num">1.25×</td><td class="num">1.22×</td><td class="num">1.36×</td><td class="num">2.07×</td><td class="num">1.23×</td><td class="num">1.17×</td><td class="num">2.38×</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 11 页图 15、第 13 页表 4、第 12-13 页 §6.3）补充口径：图 15 几何平均加速比对 TRT-LLM v0.9.0 为 L40S 2.36×、A100 1.68×（同为 80GB/48GB 显存预算）；表 4 表注「QServe 在 L40S 上对比 TRT-LLM 在 A100 有竞争力吞吐，有效把 LLM 服务美元成本降低 3×」；§6.3 正文「34B 以下 7 个模型中的 5 个在 L40S 用 QServe 服务甚至高于 A100 用 TRT-LLM」「L40S 上跑 Llama-2-7B 比 Atom 高 10% 吞吐」；对 Atom/QuaRot（A100）为 2.5-2.9×（第 2 页引言）。<span class="ev ev-i">I</span> 摘要「1.2×/1.4×/2.4×/3.5×」与表 4「1.20×/1.39×/2.38×/3.47×」为舍入关系；§6.3 文字「1.47× 到 3.47× 覆盖七个模型」与表 4 八列（最小 1.39×）存在口径出入——页面以表 4 精确值为准并保留各处原始表述。</p>
+
+<h3>7.3 容量与成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+权重显存 ≈ 参数量 × 0.5 字节（W4）+ 两级缩放/零点开销（per-channel FP16 缩放 + 每组 UINT8 缩放/零点）<br>
+KV 显存/token ≈ 2(K与V) × 层数 × KV 头数 × 头维 × (4bit + per-head FP16 缩放/零点摊销)/8<br>
+单实例可容 batch ≈ (显存预算 − 权重 − 激活/框架开销 − 回退余量) ÷ (单请求 KV 字节 × 序列长)<br>
+每百万 token 成本 ≈ 实例时单价 ÷ (batch × 单请求 tokens/s × 3600) × 10^6（记录单价查询日期）
+</div>
+<p><span class="ev ev-i">I</span> 公式中可由论文支撑的量：KV4 使 KV 显存约减半、W4 省 3.5GB（Llama-2-7B，图 16 文字结论）、同预算内吞吐倍数（表 4）；其余（单价、激活开销、回退余量、请求长度分布）需按部署实测填写，本页不给出伪精确数字。<span class="ev ev-p">P</span> 论文对「美元成本降 3×」的表述以 L40S 吞吐 ≥ A100 吞吐为前提（表 4 表注），未给出任何价格数据。<span class="ev ev-e">E</span> 云单价随时段/区域/折扣变化，核算时以查询当时厂商目录为准并记录日期。</p>
+
+<h3>7.4 敏感项与数据缺口</h3>
+<ul>
+  <li><span class="ev ev-p">P</span> 敏感项（各自条件下）：模型规模（越小加速越保守——Llama-3-8B 在 A100 仅 1.20×，72B 级 2.38×-3.47×，表 4）；GPU 代际（L40S CUDA 核更强、收益整体高于 A100，第 12 页 §6.3）；量化粒度（A100 per-channel vs L40S per-group，第 12 页）；batch（同 batch 加速 1.45× 与更大 batch 因子 1.3× 叠加，第 14 页图 17）。</li>
+  <li><span class="ev ev-p">P</span> 数据缺口：TTFT/TPOT/单请求延迟、能耗、不同上下文长度下的吞吐曲线、校准数据集（默认 Pile validation）之外的超参敏感性、KV 页内统计量的空间占比——论文未明确披露。</li>
+  <li><span class="ev ev-i">I</span> 云价格、量化流水线（校准+离线重排）的一次性工程成本、每轮模型升级的再量化成本：论文未涉及，部署前自测。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>KV 缓存即用户数据：</strong><span class="ev ev-i">I</span> KV4 量化不改变 KV 缓存的语义——它仍逐 token 保留对话状态（只是精度降为 4bit 并内联 per-head 统计量），量化不是加密。多租户实例复用前必须重置/清零 KV 显存（含页内缩放/零点），显存 dump 即数据泄露。</li>
+  <li><strong>数据驻留与边界：</strong><span class="ev ev-p">P</span> KV 缓存驻留 GPU 显存（分页管理，第 8 页），论文无外置/卸载设计。<span class="ev ev-i">I</span> 云上驻留边界＝实例边界；跨可用区不复制 KV。</li>
+  <li><strong>供应链：</strong><span class="ev ev-r">R</span> 代码来自摘要印明的官方仓库 <code>github.com/mit-han-lab/omniserve</code>（第 1 页；2026-09-15 在线核验：Apache-2.0、main 分支、未归档）。<span class="ev ev-p">P</span> 论文附录 A 提供预构建 Docker 镜像（<code>shang12138/qserve-mlsys25-ae</code>）、代码许可 Apache License 2.0、数据许可 MIT、制品存档 DOI 10.5281/zenodo.14991385（第 18 页）。<span class="ev ev-i">I</span> 引入时 pin commit/镜像 digest、扫描 CUDA/PTX kernel 与依赖、保留可回退版本；第三方镜像内容与论文制品的一致性需自行校验。</li>
+  <li><strong>输出风险继承：</strong><span class="ev ev-p">P</span> 量化改变输出分布：WikiText2 困惑度与常识/长上下文基准的平均退化见 <a href="#experiments">#experiments</a>（第 11-13 页）。<span class="ev ev-i">I</span> 合规审查应以「量化后模型的实际输出」为对象；长尾任务退化可能大于均值口径。</li>
+</ul>
+
+<h3>8.2 可运维性（含恢复与回滚）</h3>
+<ul>
+  <li><strong>回退路径：</strong><span class="ev ev-i">I</span> 回退＝切换到基线服务栈（论文口径即 TRT-LLM FP16/W8A8/W4A16）。关键运维约束：回退后 KV 显存占用上升（KV4→KV8 翻倍）、同容量下 batch 变小，必须预留显存余量或同步降载，否则回退动作本身会触发 OOM（表 4 中多款大模型基线即 OOM）。</li>
+  <li><strong>配置变更管理：</strong><span class="ev ev-p">P</span> 量化粒度与 GPU 绑定（A100 per-channel / L40S per-group）、组大小 g=128 与否是两个独立格式（W4A8KV4 vs W4A8KV4g128，第 10-11 页）。<span class="ev ev-i">I</span> 把「量化格式 + GPU 型号 + 模型版本」作为绑定配置资产管理，变更走灰度 + 精度回归，禁止热改。</li>
+  <li><strong>离线量化流水线运维：</strong><span class="ev ev-p">P</span> 每个模型上线前需跑校准（默认 Pile validation）→ 旋转/平滑/重排/裁剪 → 两级量化 → 权重重排落盘（第 5-7 页、第 12 页 §6.2）。<span class="ev ev-i">I</span> 这是一次性但必须纳入发布流程的环节：新模型、新版本都要重量化 + 重评精度；建议归档校准集快照与量化超参保证可重建。</li>
+  <li><strong>故障恢复：</strong><span class="ev ev-i">I</span> 推理服务无训练态，故障恢复＝实例重启 + 模型/权重制品重载；KV 缓存不持久化、丢失即重算（prefill 重放）。多实例无状态水平扩展，单实例故障由负载均衡摘除（云编排能力，<span class="ev ev-e">E</span>）。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 建议：①吞吐相对验收基线的漂移（kernel 性能回归或调度异常）；②显存水位与 OOM 边界批量（KV 页内统计量异常增长或碎片化会先表现为容量下降）；③困惑度/下游任务抽样分数（量化格式配错时先伤精度）；④in-flight batching 队列深度与 token 延迟分位数（论文未提供延迟口径，需自建基线）。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-i">I</span> CUDA/PTX kernel 与框架版本配对 pin；升级走金丝雀 + 双基线回归（开/关量化各测吞吐与精度）；回滚＝上一配对制品或切回基线栈，两者独立可执行。复现环境参考附录 A：x86_64 主机 + 至少一块 A100（推荐）或 L40S、磁盘约 512G、拉镜像约 1 小时、QServe 基准约 1 小时、TRT-LLM 基准 2-4 GPU 小时<span class="ev ev-p">P</span>（第 18 页）。</li>
+  <li><strong>验收基线：</strong><span class="ev ev-i">I</span> 上线前固定「基线栈 vs QServe」两组读数：同预算最大吞吐、OOM 边界批量、困惑度与硬任务抽样，形成可复核差值；此后任何变更以差值回归验收。附录 A 提醒：绝对吞吐因机器条件略有差异，相对加速比应保持一致<span class="ev ev-p">P</span>（第 18 页表 6 注）。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>大批量、成本敏感的云端推理服务，且显存预算限制并发。</strong>触发：同显存预算下吞吐不达 SLO，或批量被显存卡住。理由：同预算内最大可达吞吐对 TRT-LLM v0.9.0 在 A100 提升 1.20×~2.38×、L40S 提升 1.39×~3.47×（8 模型，输入 1024/输出 512）<span class="ev ev-p">P</span>（第 13 页表 4）；KV4 让 L40S-48G 容纳与 A100-80G 相同 batch<span class="ev ev-p">P</span>（第 13 页 §6.3）。</li>
+  <li><strong>采购/扩容决策点上的「低价位卡 + 量化」路线评估。</strong>触发：新购 GPU 或云实例选型。理由：论文显示 34B 以下 7 模型中 5 个「L40S+QServe」吞吐超过「A100+TRT-LLM」，表 4 表注称有效降低美元成本 3×<span class="ev ev-p">P</span>（第 12-13 页）；<span class="ev ev-i">I</span> 落地前须以当期云价与自身流量复算。</li>
+  <li><strong>KV 显存压力大、上下文较长的批量服务。</strong>触发：KV 占显存比例高、想在不换卡的情况下扩 batch 或上下文。理由：消融显示 KV4 使 GPU 内存使用减半、该步吞吐 +1.47×（L40S、Llama-2-7B、64 请求×1024/512）<span class="ev ev-p">P</span>（第 13-14 页图 16）；长上下文精度退化小（LongBench 平均 38.52→38.38，Llama-3.1-8B-Instruct）<span class="ev ev-p">P</span>（第 13 页表 5）。</li>
+  <li><strong>需要「INT8 张量核友好」量化格式的自研 kernel 团队。</strong>触发：自建推理栈、想复用 W4A8 主循环设计。理由：保护区间 + 乘后减 + vadd4 的 RLP 设计、计算感知权重重排均有完整推导与消融<span class="ev ev-p">P</span>（第 5-10 页）；官方仓库 Apache-2.0 允许商用集成<span class="ev ev-r">R</span>（2026-09-15 核验）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>低批量、边缘或端侧部署。</strong>触发：batch 小（GEMM 计算强度 m&lt;78）、显存富余。理由：论文明确「现有 INT4 只加速低批量边缘推理」的反面诉求是大批量云端服务，且其 roofline 显示小 m 时 W4A16 的省带宽路径理论上已更优<span class="ev ev-p">P</span>（第 1 页摘要、第 3 页 §3.1）；收益对象是批量吞吐而非单请求。</li>
+  <li><strong>以单请求延迟（TTFT/TPOT）为首要 SLO 的交互式场景。</strong>触发：目标是个位数毫秒级每 token 延迟或首字延迟。理由：论文只报同预算最大可达吞吐，未报告 TTFT/TPOT/单请求延迟<span class="ev ev-p">P</span>（第 12 页 §6.3；全文无延迟指标）。<span class="ev ev-i">I</span> 「吞吐倍数」不能自动兑换成「延迟倍数」。</li>
+  <li><strong>追求 W4A4 理论峰值、且有能力改造 kernel 的极端显存压缩场景。</strong>触发：需要 W4A4 才能装下的模型/批量。理由：QServe 的立场是 W4A4 理论增益在现有 GPU 架构上兑现不了、其实现走 INT8 张量核路径，不提供 W4A4 主循环<span class="ev ev-p">P</span>（第 3-5 页 §3.2、图 5）。</li>
+  <li><strong>把官方仓库当活跃开源产品依赖的团队。</strong>触发：需要长期社区支持、多框架适配、新模型开箱即用。理由：仓库截至 2026-09-15 共 25 commits、无 release、README 最新动态为 2025 年 2 月（「OmniServe is now publicly available!」），近一年半近乎无更新<span class="ev ev-r">R</span>（2026-09-15 核验）；README 称 QServe 已于 2024 年 12 月集成进 TensorRT-LLM，<span class="ev ev-i">I</span> 生产路径建议优先评估框架内置实现而非自行维护论文仓库。</li>
+  <li><strong>对量化精度零容忍的业务。</strong>触发：无法接受任何困惑度/下游任务退化。理由：QoQ 相对 W8A8/W4A16 至多增加 0.16 困惑度、对 FP16 有 0.40%~1.03% 常识任务损失、KV4 一步 +0.14 困惑度<span class="ev ev-p">P</span>（第 11-12、13-14 页）——非零退化是设计前提。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span>（第 10-12 页）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（页码均已核验）</caption>
+    <tbody>
+      <tr><th scope="row">模型</th><td>精度评测：Llama-1（7B/13B/30B）、Llama-2（7B/13B/70B）、Llama-3-8B、Mistral-7B、Mixtral-8x7B、Yi-34B（第 11 页 §6.1 Benchmarks）；效率评测：Llama-3-8B、Llama-2-7B、Mistral-7B、Llama-2-13B、LLaMA-1-30B、Yi-34B、Llama-2-70B、Qwen1.5-72B 共 8 个 <span class="ev ev-p">P</span>（第 13 页表 4）</td></tr>
+      <tr><th scope="row">量化格式</th><td>激活 per-token 对称 INT8；KV per-head 非对称 INT4；「W4A8KV4g128」＝渐进分组量化（组 128），「W4A8KV4」＝per-channel 对应版本 <span class="ev ev-p">P</span>（第 10-11 页 §6.1）</td></tr>
+      <tr><th scope="row">实现</th><td>QoQ 用 HuggingFace/PyTorch 实现；QServe 系统用 CUDA + PTX 汇编、提供纯 PyTorch 前端；吞吐基准 PyTorch 2.2.0 + CUDA 12.2 <span class="ev ev-p">P</span>（第 11 页 §6.1）</td></tr>
+      <tr><th scope="row">基线</th><td>TensorRT-LLM v0.9.0（FP16/W8A8/W4A16）；Atom（W4A4）与 QuaRot（W4A4）main 分支截至 2024-04-18；精度另对比 SmoothQuant、GPTQ-R、AWQ；paged attention 除 QuaRot（不支持）外全部启用 <span class="ev ev-p">P</span>（第 11-12 页 §6.1/§6.3）</td></tr>
+      <tr><th scope="row">硬件与指标</th><td>A100-80G-SXM4 与 L40S-48G；主指标＝同显存预算（80GB/48GB）内最大可达吞吐，输入 1024/输出 512；A100 用 per-channel、L40S 用 per-group 权重量化（L40S CUDA 核更强）<span class="ev ev-p">P</span>（第 12 页 §6.3）</td></tr>
+      <tr><th scope="row">基线限制</th><td>Atom 仅支持 Llama-2-7B；QuaRot 不支持 GQA——测基线时跳过不支持的模型组合 <span class="ev ev-p">P</span>（第 12 页 §6.3）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 精度结果（表 2 关键列 / 表 3 全量 / 表 5）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 2 转录（节选）：WikiText2 困惑度、序列 2048，越低越好（<span class="ev ev-p">P</span>，PDF 第 11 页；Llama-2-7B 列为全精度配置对比，多模型列为 QoQ g128 vs FP16）</caption>
+    <thead>
+      <tr><th scope="col">精度 / 算法（Llama-2-7B）</th><th class="num" scope="col">困惑度</th><th scope="col">模型（QoQ g128 vs FP16）</th><th class="num" scope="col">QoQ g128</th><th class="num" scope="col">FP16</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">FP16</th><td class="num">5.47</td><th scope="row">Llama-3-8B</th><td class="num">6.70</td><td class="num">6.14</td></tr>
+      <tr><th scope="row">W8A8 SmoothQuant</th><td class="num">5.54</td><th scope="row">Llama-2-13B</th><td class="num">5.06</td><td class="num">4.88</td></tr>
+      <tr><th scope="row">W4A16 GPTQ-R（g128）</th><td class="num">5.63</td><th scope="row">Llama-2-70B</th><td class="num">3.46</td><td class="num">3.32</td></tr>
+      <tr><th scope="row">W4A16 AWQ（g128）</th><td class="num">5.60</td><th scope="row">Llama-1-30B</th><td class="num">4.27</td><td class="num">4.10</td></tr>
+      <tr><th scope="row">W4A4 QuaRot（灰）</th><td class="num">6.10</td><th scope="row">Mistral-7B</th><td class="num">5.41</td><td class="num">5.25</td></tr>
+      <tr><th scope="row">W4A4 QuaRot†（g128，灰）</th><td class="num">5.93</td><th scope="row">Mixtral-8x7B</th><td class="num">4.13</td><td class="num">3.84</td></tr>
+      <tr><th scope="row">W4A4 Atom†（g128，灰）</th><td class="num">6.03</td><th scope="row">Yi-34B</th><td class="num">4.73</td><td class="num">4.60</td></tr>
+      <tr><th scope="row">W4A4 Atom†（g128，Pile 校准）</th><td class="num">6.12</td><th scope="row">Llama-1-7B</th><td class="num">5.88</td><td class="num">5.68</td></tr>
+      <tr><th scope="row">W4A8KV4 RTN / AWQ / QoQ</th><td class="num">6.51 / 6.28 / 5.75</td><th scope="row">Llama-1-13B</th><td class="num">5.23</td><td class="num">5.09</td></tr>
+      <tr><th scope="row">W4A8KV4g128 RTN / AWQ / QoQ</th><td class="num">5.99 / 5.83 / <strong>5.67</strong></td><th scope="row">Llama-1-30B</th><td class="num">4.27</td><td class="num">4.10</td></tr>
+      <tr><th scope="row">表注</th><td colspan="4">QoQ 全称 quattuor-octō-quattuor（拉丁语 4-8-4，第 1 页）；†＝QuaRot/Atom 对激活也施加组量化；W4A4 下 Mixtral-8x7B 为 NaN（不支持）；灰色结果用 WikiText2 作校准集，其余主要用 Pile validation（†、灰色与 NaN 为第 11 页表 2 表注；校准集说明在第 12 页 §6.2 正文）</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（对比表述在第 12 页 §6.2 正文；表 2 数值在第 11 页）口径：对 Llama-2-7B，QoQ 相对 W8A8 SmoothQuant 与 W4A16 AWQ 至多增加 0.16 困惑度，相对 W4A4 QuaRot 至多改善 0.49。表 2 共 10 个模型列（本页转录 Llama-2-7B 全配置对比与 QoQ g128 vs FP16 的多模型对比；完整逐格值见 PDF 第 11 页）。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>表 3 转录：五项常识任务零样本平均准确率（PIQA/ARC-e/ARC-c/HellaSwag/WinoGrande）、序列 2048、越高越好（<span class="ev ev-p">P</span>，PDF 第 12 页）</caption>
+    <thead>
+      <tr><th scope="col">模型</th><th scope="col">配置</th><th class="num" scope="col">平均</th><th scope="col">模型</th><th scope="col">配置</th><th class="num" scope="col">平均</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="5">Llama-2-7B</th><td>FP16</td><td class="num">68.98</td><th scope="row" rowspan="5">Llama-2-70B</th><td>FP16</td><td class="num">76.57</td></tr>
+      <tr><td>W4A4 QuaRot</td><td class="num">64.69</td><td>W4A4 QuaRot</td><td class="num">75.43</td></tr>
+      <tr><td>W4A4g128 Atom</td><td class="num">59.73</td><td>W4A4g128 Atom</td><td class="num">67.52</td></tr>
+      <tr><td>W4A8KV4 QoQ</td><td class="num">67.57</td><td>W4A8KV4 QoQ</td><td class="num">75.91</td></tr>
+      <tr><td>W4A8KV4g128 QoQ</td><td class="num">67.95</td><td>W4A8KV4g128 QoQ</td><td class="num">76.40</td></tr>
+      <tr><th scope="row" rowspan="5">Llama-2-13B</th><td>FP16</td><td class="num">71.72</td><th scope="row" colspan="3">论文口径（第 12 页正文）</th></tr>
+      <tr><td>W4A4 QuaRot</td><td class="num">69.01</td><td colspan="3">WinoGrande 上 QoQ 比 QuaRot 高 4.82%；</td></tr>
+      <tr><td>W4A4g128 Atom</td><td class="num">63.51</td><td colspan="3">相对 FP16，QoQ 在 7B/13B/70B 仅损失</td></tr>
+      <tr><td>W4A8KV4 QoQ</td><td class="num">70.56</td><td colspan="3">1.03% / 0.89% / 0.40%</td></tr>
+      <tr><td>W4A8KV4g128 QoQ</td><td class="num">70.83</td><td colspan="3"></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>表 5 转录：LongBench（Llama-3.1-8B-Instruct，QoQ W4A8KV4g128，<span class="ev ev-p">P</span>，PDF 第 13 页；10 任务得分与平均）</caption>
+    <thead>
+      <tr><th scope="col">配置</th><th class="num" scope="col">DuReader Retrieval</th><th class="num" scope="col">GovReport</th><th class="num" scope="col">HotpotQA</th><th class="num" scope="col">MultiNews</th><th class="num" scope="col">Musique</th><th class="num" scope="col">QMSum</th><th class="num" scope="col">SAMSum</th><th class="num" scope="col">TriviaQA</th><th class="num" scope="col">TREC</th><th class="num" scope="col">MultiFieldQA-En</th><th class="num" scope="col">平均</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">BF16</th><td class="num">35.07</td><td class="num">34.54</td><td class="num">16.68</td><td class="num">26.84</td><td class="num">11.68</td><td class="num">23.48</td><td class="num">43.50</td><td class="num">91.65</td><td class="num">72.50</td><td class="num">29.22</td><td class="num">38.52</td></tr>
+      <tr><th scope="row">QoQ</th><td class="num">35.45</td><td class="num">34.09</td><td class="num">17.46</td><td class="num">26.73</td><td class="num">12.05</td><td class="num">23.45</td><td class="num">44.42</td><td class="num">91.45</td><td class="num">71.00</td><td class="num">27.65</td><td class="num">38.38</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="num"><span class="ev ev-p">P</span>（结论句在第 12 页 §6.2 正文；表 5 数值在第 13 页）结论：QoQ 相对 BF16 基线在长上下文上保持最小退化（平均 38.52→38.38）。注：表 5 表头为斜排文字，文本提取易错位；本表列序与数值已按 220dpi 放大原页逐列复核（DuReader Retrieval 至 MultiFieldQA-En 从左至右），纠正了早期提取中任务名与数值的一列错位。</p>
+
+<h3>10.3 效率与消融</h3>
+
+<h4>KV4 注意力 kernel（表 1，A100，核级延迟）</h4>
+<div class="table-scroll">
+  <table>
+    <caption>表 1 转录：注意力核延迟（ms）（<span class="ev ev-p">P</span>，PDF 第 10 页；A100；TRT-LLM KV8 核为基线）</caption>
+    <thead>
+      <tr><th scope="col">Seq len</th><th class="num" scope="col">8-bit KV</th><th class="num" scope="col">4-bit KV（朴素）</th><th class="num" scope="col">4-bit KV（QServe）</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">128</th><td class="num">0.09</td><td class="num">0.10（0.87×）</td><td class="num">0.07（1.29×）</td></tr>
+      <tr><th scope="row">256</th><td class="num">0.14</td><td class="num">0.16（0.86×）</td><td class="num">0.11（1.32×）</td></tr>
+      <tr><th scope="row">512</th><td class="num">0.23</td><td class="num">0.27（0.87×）</td><td class="num">0.16（1.44×）</td></tr>
+      <tr><th scope="row">1024</th><td class="num">0.42</td><td class="num">0.48（0.88×）</td><td class="num">0.28（1.49×）</td></tr>
+      <tr><th scope="row">1536</th><td class="num">0.62</td><td class="num">0.69（0.90×）</td><td class="num">0.41（1.51×）</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 10 页）表 1 图注：朴素 KV4 注意力在 L40S 上比 TRT-LLM-KV8 快 1.7×，但在 A100 上因 CUDA 核 roofline 转折点提前而慢 1.1-1.2×。四项优化：FP32 全换 FP16（计算 roof 翻倍）、位技巧把反量化算术强度降到每元素 2 次运算、简化控制逻辑、kernel 起始预取缩放/零点——对 TRT-LLM KV8 核达 <strong>1.5×（A100，attention kernel 级）</strong>（第 10 页 §5.3）。<span class="ev ev-p">P</span>（第 14 页 §6.4）改进拆解（64×1024 输入）：基础 KV4 0.48ms → 位技巧 0.44 → 简化控制流 −0.05 → QKᵀ/SV 转 FP16 各 −0.03 → 预取后 0.28ms，端到端注意力改进 1.7×。<span class="ev ev-i">I</span> 注意区分三个口径：表 1 是<strong>注意力核延迟</strong>；1.7× 是<strong>注意力环节的端到端改进</strong>；表 4 的 1.20×~3.47× 才是<strong>整服务吞吐</strong>。</p>
+
+<h4>量化技术消融（图 16，Llama-2-7B、L40S、64 请求×1024/512）</h4>
+<div class="table-scroll">
+  <table>
+    <caption>图 16 转录：逐步量化技术的困惑度与吞吐（<span class="ev ev-p">P</span>，PDF 第 13-14 页；起点为 RTN W8A8KV8 per-channel+per-token，第 13 页 §6.4）</caption>
+    <thead>
+      <tr><th scope="col">累积配置</th><th class="num" scope="col">WikiText-2 困惑度</th><th class="num" scope="col">L40S 吞吐（tokens/s）</th><th scope="col">说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">W8A8KV8（8bit 起点）</th><td class="num">5.58</td><td class="num">1367</td><td>RTN W8A8（per-channel 权重 + per-token 激活）</td></tr>
+      <tr><th scope="row">+ W4 权重量化（W4A8KV8）</th><td class="num">6.00</td><td class="num">1538</td><td>吞吐 ×1.12、省 3.5GB GPU 显存（正文）</td></tr>
+      <tr><th scope="row">+ 块旋转与平滑</th><td class="num">5.82</td><td class="num" rowspan="2">—（图未标该步柱值）</td><td>抑制激活离群，困惑度改善 0.18</td></tr>
+      <tr><th scope="row">+ 块级 MSE 权重裁剪</th><td class="num">5.66</td><td>再改善 0.16</td></tr>
+      <tr><th scope="row">+ KV4（W4A8KV4）</th><td class="num">5.80</td><td class="num">2254</td><td>困惑度恶化 0.14；吞吐 ×1.47、GPU 内存使用减半（正文）</td></tr>
+      <tr><th scope="row">+ SmoothAttention</th><td class="num">5.75</td><td class="num">—</td><td>改善 0.05，无系统开销</td></tr>
+      <tr><th scope="row">+ 渐进分组量化</th><td class="num">5.70</td><td class="num">2190</td><td>再改善 0.04，去量化开销仅微增（吞吐 2254→2190）</td></tr>
+      <tr><th scope="row">+ 激活感知重排（=QoQ 全家桶）</th><td class="num">5.67</td><td class="num">—</td><td>再改善 0.03</td></tr>
+      <tr><th scope="row">对照：Atom（W4A4KV4）</th><td class="num">6.12</td><td class="num">1732</td><td rowspan="2">同图 SOTA 对照</td></tr>
+      <tr><th scope="row">对照：QuaRot（W4A4KV4）</th><td class="num">6.19</td><td class="num">688</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-i">I</span> 图 16 的 GPU 显存面板（权重 + KV 缓存堆叠柱，坐标 0-32GB）无数值标注，论文文字仅承诺「W4 省 3.5GB」「KV4 使 GPU 内存使用减半」两处结论；任何具体 GB 读数（如全配置约 16GB）都是编辑读图近似，本页不引用。</p>
+
+<h4>系统消融与去量化开销（图 17-18，第 14 页）</h4>
+<p><span class="ev ev-p">P</span>（第 14 页）同 batch 对比（L40S，输入 1024/输出 512）：Llama-2-7B 对 TRT-LLM 的 1.88× 可分解为 1.45×（同 batch）×1.3×（更大 batch）；Llama-2-13B 两个因子同等重要。图 18：QServe per-group W4A8 GEMM 的去量化开销与 TRT-LLM-W4A16 相当、远小于 Atom-W4A4（后者至多 90%）——但 QServe 计算在 INT8 张量核上、享受 2× 更高吞吐。<span class="ev ev-i">I</span> 图 18 为柱状图、无数值标注，上述为图注/正文文字结论，不代表逐 batch 精确占比。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>各结果条件字段完整性（缺项一律显式标注）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col">硬件</th><th scope="col">精度</th><th scope="col">批量/负载</th><th scope="col">基线</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">吞吐主表（表 4）</th><td>A100-80G-SXM4 / L40S-48G（同预算 80/48GB）</td><td>QServe W4A8KV4（A100 per-channel、L40S per-group）vs TRT-LLM FP16/W4A16/W8A8</td><td>输入 1024 / 输出 512；batch 为预算内最大可达</td><td>TRT-LLM v0.9.0 三精度最优者</td><td><span class="ev ev-p">P</span> 第 13 页</td></tr>
+      <tr><th scope="row">困惑度（表 2）</th><td>论文未明确披露</td><td>W4A8KV4(g128) 及对比配置</td><td>WikiText2、序列 2048</td><td>FP16 / W8A8 / W4A16 / W4A4</td><td><span class="ev ev-p">P</span> 第 11 页</td></tr>
+      <tr><th scope="row">常识任务（表 3）</th><td>论文未明确披露</td><td>同上</td><td>零样本、序列 2048</td><td>FP16 / QuaRot / Atom</td><td><span class="ev ev-p">P</span> 第 12 页</td></tr>
+      <tr><th scope="row">长上下文（表 5）</th><td>论文未明确披露</td><td>QoQ W4A8KV4g128</td><td>LongBench 10 任务</td><td>BF16</td><td><span class="ev ev-p">P</span> 第 13 页</td></tr>
+      <tr><th scope="row">注意力核（表 1）</th><td>A100</td><td>KV4 vs KV8</td><td>seq 128-1536（§6.4 拆解用 64×1024 输入）</td><td>TRT-LLM KV8 核</td><td><span class="ev ev-p">P</span> 第 10、14 页</td></tr>
+      <tr><th scope="row">量化消融（图 16）</th><td>L40S</td><td>W8A8KV8→W4A8KV4 逐步</td><td>64 请求 × 1024/512</td><td>组内逐步互比 + Atom/QuaRot</td><td><span class="ev ev-p">P</span> 第 13-14 页</td></tr>
+      <tr><th scope="row">同 batch 拆解（图 17）</th><td>L40S</td><td>同上</td><td>7B batch 4-64、13B batch 2-32</td><td>TRT-LLM / Atom / QuaRot</td><td><span class="ev ev-p">P</span> 第 14 页</td></tr>
+      <tr><th scope="row">附录参考吞吐（表 6）</th><td>未注明 GPU 型号（脚本名 benchmark_a100.sh）<span class="ev ev-i">I</span></td><td>TRT-LLM W8A8KV8 vs QServe</td><td>未披露</td><td>TRT-LLM W8A8KV8</td><td><span class="ev ev-p">P</span> 第 18 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①全部效率数字仅在「论文所述 8 模型 + A100/L40S 两卡 + 输入 1024/输出 512 + 同显存预算 + 基线 TRT-LLM v0.9.0」语境成立，不可外推到其他模型/负载/版本，<strong>不可与本站其他论文的数字直接比较</strong>；②「吞吐 1.39×~3.47×」是<strong>服务级最大可达吞吐</strong>，不得与 1.5×（GEMM 核级）、1.29×~1.51×（注意力核级）、1.7×（注意力环节端到端）混用；③基线陈旧（TRT-LLM v0.9.0 为 2023 年版本、QuaRot/Atom 取 2024-04-18 main），绝对值不代表当前软件栈；④摘要/引言倍数与表 4 存在舍入与口径差异，页面以表 4 为准；⑤图 16 显存面板与图 18 去量化占比无数值标注，只能引用论文文字结论。
+</div>
+
+<h3>10.4 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 取官方仓库代码（已核验归属/许可，pin commit/digest）；或直接使用附录 A 的预构建 Docker 镜像（x86_64 + A100/L40S、约 512G 磁盘）<span class="ev ev-p">P</span>（第 18 页）。</li>
+  <li><span class="ev ev-i">I</span> 精度复测：目标模型跑 FP16/BF16 基线与 QoQ W4A8KV4g128（校准集默认 Pile validation），对齐 WikiText2（序列 2048）、五项常识任务（lm-eval）与 LongBench 口径；可用开源库 deepcompressor 复现精度结果（论文仅提名称，未给 URL）<span class="ev ev-p">P</span>（第 11-13、18 页）。</li>
+  <li><span class="ev ev-i">I</span> 效率复测：A100-80G-SXM4 与 L40S-48G、输入 1024/输出 512，从 batch 2 起扫描至显存预算上限，记录最大可达吞吐；对照表 4 形状（小模型差距小、大模型/低配基线 OOM 处差距大）。附录 A 提醒绝对吞吐随机器条件浮动、应以相对加速比为准<span class="ev ev-p">P</span>（第 18 页）。</li>
+  <li><span class="ev ev-i">I</span> 目标业务实测：以真实上下文长度分布与并发区间测「基线栈 vs QServe」差值（吞吐、显存、硬任务抽样精度），并补测论文缺失的 TTFT/TPOT；再决定启用范围与量化粒度（per-channel/per-group）。</li>
+  <li><span class="ev ev-i">I</span> 若生产栈为 TensorRT-LLM：先评估框架内置实现（官方仓库 README 称 2024 年 12 月已集成<span class="ev ev-r">R</span>），再决定是否需要论文仓库级自建。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2405.04532" rel="noopener noreferrer">https://arxiv.org/abs/2405.04532</a></td>
+        <td><span class="ev ev-p">P</span> 本地 PDF 为 <strong>arXiv v3</strong>（水印逐字核验「arXiv:2405.04532v3 [cs.CL] 1 May 2025」，19 页，文件创建时间 2025-05-02）；MLSys 2025（第 1 页版权行印刷文本；注：该 PDF 嵌入元数据 Subject 写「mlsys 2024」，与印刷文本不一致，以印刷文本为准）。本地 PDF：<code>10_QServe_2405.04532.pdf</code></td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/mit-han-lab/omniserve" rel="noopener noreferrer">https://github.com/mit-han-lab/omniserve</a></td>
+        <td><span class="ev ev-r">R</span> 论文摘要末句印明「Code is released at https://github.com/mit-han-lab/omniserve」（第 1 页逐字核验）。<strong>在线核验（只读）</strong>：2026-09-14 GitHub API 核验归属/许可/默认分支 main/最新 commit 02b2925（2025-02-21 提交、pushed_at 2025-03-06）；2026-09-15 复核页面可达（HTTP 200）：描述「[MLSys'25] QServe…; [MLSys'25] LServe…」、Apache-2.0、main 分支、未归档、25 commits、无 release、858 stars、README 最新动态 2025-02，并称 QServe 已于 2024-12 集成进 TensorRT-LLM。属 MIT HAN Lab 官方组织，与论文一致。</td>
+      </tr>
+      <tr>
+        <th scope="row">项目页</th>
+        <td><a href="https://hanlab.mit.edu/projects/qserve" rel="noopener noreferrer">https://hanlab.mit.edu/projects/qserve</a></td>
+        <td><span class="ev ev-r">R</span> 论文第 1 页作者行下方印明；2026-09-14 记录在线可达（HTTP 200），页面内容未逐项审阅。</td>
+      </tr>
+      <tr>
+        <th scope="row">制品存档 DOI</th>
+        <td><a href="https://doi.org/10.5281/zenodo.14991385" rel="noopener noreferrer">https://doi.org/10.5281/zenodo.14991385</a></td>
+        <td><span class="ev ev-p">P</span> 论文附录 A「Archived (provide DOI)?」印明（第 18 页）；本次会话未在线访问该 DOI，出处为论文原文印明。</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库 / 工具</th>
+        <td>不提供链接</td>
+        <td><span class="ev ev-p">P</span> 附录 A 提及开源库 deepcompressor 可复现精度结果，但论文未给出 URL，按本站「不猜测 URL」策略不链接。<span class="ev ev-i">I</span> 第三方镜像/框架集成（含各推理发行版）未经核验，一律不链接。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验项，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认瓶颈与收益对象匹配：大批量、同预算吞吐不足或 batch 被显存卡住，而非单请求延迟问题（P：收益口径＝同显存预算内最大可达吞吐，第 12 页 §6.3；TTFT/TPOT 论文未披露）</label></li>
+      <li><label><input type="checkbox"> 明确批量区间：小批量（GEMM m&lt;78）时论文的 roofline 论证不倾向 W4A8（P：第 3-4 页）</label></li>
+      <li><label><input type="checkbox"> 盘点模型清单与量化格式映射：W4A8KV4g128 vs W4A8KV4（per-group vs per-channel）按 GPU 选型（P：A100 per-channel / L40S per-group，第 12 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 优先评估生产推理框架的内置实现/等效配方（官方 README 称 2024-12 已集成进 TensorRT-LLM）（R：2026-09-15 核验；I：选型判断）</label></li>
+      <li><label><input type="checkbox"> 若自建：确认目标 GPU 的 vadd4/128bit 访存等指令前提与 kernel 移植成本（P：RLP 设计绑定 CUDA/PTX 与 A100/L40S，第 9-10 页；I：移植评估）</label></li>
+      <li><label><input type="checkbox"> 确认与现有系统组件（分页 KV、in-flight batching、投机解码等）的叠加关系，论文未测这些组合（P：第 8 页仅自述同类；I：叠加需自测）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 复测「基线栈 vs QServe」同预算最大可达吞吐（输入 1024/输出 512 起步，再换真实分布）（P：第 12-13 页；I：方法）</label></li>
+      <li><label><input type="checkbox"> 精度回归：WikiText2 困惑度 + 2-3 个业务下游任务，对照论文容忍度（QoQ vs W8A8/W4A16 至多 +0.16 困惑度；KV4 一步 +0.14）（P：第 11-12、13-14 页）</label></li>
+      <li><label><input type="checkbox"> 补测论文缺失口径：TTFT/TPOT 分位数、不同上下文长度吞吐曲线（P：论文未披露；I：自建基线）</label></li>
+      <li><label><input type="checkbox"> 记录 OOM 边界批量，验证「L40S 容纳 A100 同 batch」的容量结论在自身负载下成立（P：第 13 页 §6.3；I：实测要求）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.3 公式重算单实例可容 batch：显存预算 − W4 权重（含两级统计量）− KV4（含 per-head 统计量）− 激活/框架开销 − 回退余量（P：页结构，第 8 页；「W4 省 3.5GB、KV4 减半」，第 13-14 页；I：公式与余量）</label></li>
+      <li><label><input type="checkbox"> 为回退路径预留显存：KV4→KV8 显存翻倍、同容量 batch 变小，回退动作本身不得触发 OOM（I：回退膨胀推算；P：表 4 基线 OOM 分布，第 13 页）</label></li>
+      <li><label><input type="checkbox"> 72B 级模型单独规划：48GB 预算下吞吐绝对值低（表 4 L40S 上 70B 仅 286 tokens/s），按业务量决定是否值得（P：第 13 页表 4）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义吞吐 SLO 并以「开/关量化」双基线固化验收差值（I）</label></li>
+      <li><label><input type="checkbox"> 定义精度 SLO：困惑度/下游任务阈值，跌破即回退（P：精度代价非零是设计前提，第 11-14 页；I：阈值自定）</label></li>
+      <li><label><input type="checkbox"> 故障演练：实例重启重载、切回基线栈降级各演练一次（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 以「当期云价 + 查询日期」复算「L40S+QServe vs A100+基线」的单 token 成本，不把论文「降 3×」当价格结论（P：表 4 表注为论文断言、无价格数据，第 13 页；I：核算方法）</label></li>
+      <li><label><input type="checkbox"> 计入一次性成本：离线量化流水线、每轮模型升级的再量化与再评测（P：附录 A 基准时长参考，第 18 页；I：成本项）</label></li>
+      <li><label><input type="checkbox"> 用同 batch 拆解区分「kernel 加速」与「容量换 batch」两个收益来源，避免重复计价（P：1.88×＝1.45××1.3×，第 14 页图 17）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> KV 显存（含页内 per-head 缩放/零点）按用户数据处理：租户/会话切换清零，显存 dump 纳入威胁模型（P：页结构，第 8 页；I：残留风险）</label></li>
+      <li><label><input type="checkbox"> 供应链 pin：官方仓库 commit/镜像 digest 锁定 + CUDA/PTX kernel 扫描 + 可回退层（R：Apache-2.0 已核验；P：附录 A 制品清单，第 18 页；I：流程要求）</label></li>
+      <li><label><input type="checkbox"> 输出合规以「量化后模型实际输出」为审查对象（I：量化改变输出分布）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 运行时「切回基线量化配置」开关就绪，并与降载联动、有告警（I）</label></li>
+      <li><label><input type="checkbox"> 监控：吞吐漂移、显存水位/OOM 边界批量、困惑度与硬任务抽测、in-flight 队列深度与延迟分位数（I）</label></li>
+      <li><label><input type="checkbox"> 「量化格式 + GPU 型号 + 模型版本」绑定变更管理：灰度 + 精度回归，禁止热改（P：粒度按 GPU 选型，第 12 页；I：治理）</label></li>
+      <li><label><input type="checkbox"> 升级走金丝雀 + 双基线回归；复现环境对齐附录 A（Docker、x86_64、A100/L40S、约 512G 磁盘）（P：第 18 页；I：流程）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 退出成本评估：切回基线栈即回退，无数据格式迁移；但容量回到 KV8/FP16 水位，需重算容量与预算（I；P：基线即回退态）</label></li>
+      <li><label><input type="checkbox"> 归档量化制品、校准集快照、超参与双基线读数，保证可重建（P：附录 A 制品化思路，第 18 页；I：归档要求）</label></li>
+      <li><label><input type="checkbox"> 若转向其他量化/缓存方案（KV8 服务栈、W4A16 weight-only 等），把「QServe 的 INT8 张量核路径设计」作为对比基线而非二选一（I：对比框架；P：图 5 各格式主循环对比，第 5 页）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与核验记录见构建文件 <code>sources/qserve.evidence.json</code>（31+ 条，EV-01~EV-32）。核验日期为 <time datetime="2026-09-15">2026-09-15</time>。</p>
+
+<div class="callout">
+  <strong>核验范围声明：</strong>两轮核验。第一轮（2026-09-14，记录于 evidence.json）：PDF 全部 19 页渲染为 130dpi PNG，第 1-14、18 页共 15 页逐项目检（含第 14 页图 16 显存面板 300dpi 局部放大）；第 15-17、19 页经文本提取交叉核对。<code>sources/qserve.txt</code>（summarize --extract 产物）可读但双栏提取有交错与表格错序，仅作检索索引。第二轮（2026-09-15，本页写作时）：以版面保留（-layout）文本提取重新提取第 1-2、3-6、6-9、9-11、10-12、13、14、18 页，对表 1-6、图 2b/15/16/17 图注与正文结论逐格逐句复核，全部一致；并在线复核官方仓库（只读）。已知提取陷阱：摘要/引言的舍入倍数（1.4×/3.5×）与表 4 精确值（1.39×/3.47×）并存、§6.3「七个模型」区间与表 4 八列不一致、PDF 嵌入元数据 Subject「mlsys 2024」与印刷版权行 2025 不一致——三处均已对照原页确认并在页面并排说明。
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位（PDF 页码）</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名/作者/共同一作分工/MLSys 2025 Santa Clara/arXiv v3；摘要末句印明仓库 github.com/mit-han-lab/omniserve；项目页印于第 1 页</td><td><span class="ev ev-p">P</span>/<span class="ev ev-r">R</span></td><td>第 1 页</td><td>已核验（原页目检 + 两轮文本复核）；仓库 2026-09-14/15 在线核验</td></tr>
+      <tr><td>摘要级结论：现有 INT4 去量化开销 20-90%；QoQ=W4A8KV4；Llama-3-8B 1.2×(A100)/1.4×(L40S)、Qwen1.5-72B 2.4×/3.5×（对 TRT-LLM）；L40S QServe 可超 A100 TRT-LLM</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要（精确倍数见表 4）</td><td>已核验；舍入关系与表 4 逐一对照</td></tr>
+      <tr><td>问题背景：Atom 比 TRT-LLM W4A16/W8A8 慢 20-25%；CUDA 核运算≈50 次 INT4 张量核 MAC；图 2b batch64 印刷柱值 2104 vs 986/817；解码≈6× prefill</td><td><span class="ev ev-p">P</span></td><td>第 1-3 页引言、图 2</td><td>已核验（原页目检 + 文本复核）</td></tr>
+      <tr><td>roofline：A100 FP16/INT8/INT4＝312/624/1248 TOPS、2TB/s；m&lt;78 W4A16 优、m&gt;78 W8A8 优、W4A8 两头占优；KV4 等效加倍带宽；batch64 时注意力占比过半</td><td><span class="ev ev-p">P</span></td><td>第 3-4 页图 3、§3.1 及脚注</td><td>已核验</td></tr>
+      <tr><td>为什么不是 W4A4：主循环 100+ 次迭代主导；W4A16 需 INT4→FP16、Atom 需 INT32→FP32 转换；FP32 CUDA 核仅 INT4 张量核 2%；单部分和去量化≈50 MAC；双份寄存器限制 warp</td><td><span class="ev ev-p">P</span></td><td>第 4 页 §3.2、图 4</td><td>已核验</td></tr>
+      <tr><td>渐进分组量化：两级缩放（per-channel INT8 + per-group INT4）；[-113,120]→128 溢出反例；饱和指令拖慢 67%；s_u8≤17 ⇒ 保护区间 [-119,119]</td><td><span class="ev ev-p">P</span></td><td>第 5-6 页式 4/5、图 6</td><td>已核验（公式与推导逐行）</td></tr>
+      <tr><td>与 VSQuant/DoubleQuant/DGQ 对比；DGQ 的 W4A8 GEMM 慢于 cuBLAS W8A8；QServe W4A8 per-group GEMM 对 cuBLAS W8A8 达 1.5×（GEMM 核级）</td><td><span class="ev ev-p">P</span></td><td>第 6 页</td><td>已核验（口径＝GEMM 核级，非端到端）</td></tr>
+      <tr><td>SmoothAttention：Key 每头固定离群 ~10×、Value 无；λ=max(|K|)^0.5；RoPE 配对约束 λ_i=λ_{i+D/2}；融合进 W_Q/W_K、运行时零开销（图 16）</td><td><span class="ev ev-p">P</span></td><td>第 6 页图 7、式 7-9；第 13-14 页</td><td>已核验</td></tr>
+      <tr><td>通用优化：块输入 scaled Hadamard 旋转；块输出平滑 α≈0（照搬则 ppl 至多 +0.05）；激活感知重排替代混合精度；权重裁剪（q/k 投影用块输出 MSE）</td><td><span class="ev ev-p">P</span></td><td>第 7 页图 8-10、§4.3</td><td>已核验</td></tr>
+      <tr><td>运行时精度映射：GEMM 全部 W4A8→INT8 张量核→FP16；注意力全部 FP16 CUDA 核；激活量化融合进 LayerNorm/激活 kernel；out_proj 前独立量化节点</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页图 11</td><td>已核验</td></tr>
+      <tr><td>KV 缓存：分页 + in-flight batching 同 vLLM/TRT-LLM；KV 量化 per-head 动态（对比 per-tensor 静态）；FP16 缩放/零点内联页内、在线更新</td><td><span class="ev ev-p">P</span></td><td>第 8 页 §5.1</td><td>已核验</td></tr>
+      <tr><td>计算感知重排：CUDA 核仅 INT8 张量核 1/32；ldmatrix 在 W4A8 失效（字节/元素不一致）；32×32 tile 计算顺序落盘、32 通道拼 128bit、零运行时开销</td><td><span class="ev ev-p">P</span></td><td>第 8-9 页图 12</td><td>已核验</td></tr>
+      <tr><td>快速去量化：32 个 UINT4 重排 w0,w16,w1,w17… 仅 3 次逻辑运算解包；per-channel 零点并入尾注（t_X 预计算融合进前趋访存受限 kernel）；per-group 乘后减 + vadd4 + MSB 补 24 零（保护区间保证不溢出）</td><td><span class="ev ev-p">P</span></td><td>第 9-10 页图 13-14、式 11-13</td><td>已核验</td></tr>
+      <tr><td>通用 GEMM 优化：软件流水/异步拷贝、L1 swizzle、L2 分区置换、小 m 时 k 切片归约</td><td><span class="ev ev-p">P</span></td><td>第 10 页 §5.2.4</td><td>已核验</td></tr>
+      <tr><td>KV4 注意力：表 1 核延迟（A100）8bit 0.09-0.62ms vs 朴素 0.87-0.90× vs QServe 1.29-1.51×；朴素 A100 慢 1.1-1.2×/L40S 快 1.7×；四项优化后 1.5×（核级）；§6.4 拆解 0.48→0.28ms＝1.7×（注意力环节）</td><td><span class="ev ev-p">P</span></td><td>第 10 页表 1、§5.3；第 14 页 §6.4</td><td>已核验（逐格对照）</td></tr>
+      <tr><td>评估设置：8 模型；TRT-LLM v0.9.0、QuaRot/Atom main@2024-04-18；paged attention 除 QuaRot；A100/L40S 同预算最大可达吞吐、1024/512；A100 per-channel / L40S per-group；PyTorch 2.2.0+CUDA 12.2；Atom 仅 7B、QuaRot 无 GQA</td><td><span class="ev ev-p">P</span></td><td>第 10-12 页 §6.1/§6.3</td><td>已核验</td></tr>
+      <tr><td>表 2 困惑度（Llama-2-7B 列全量 + 多模型）；QoQ vs W8A8/W4A16 至多 +0.16、vs QuaRot 改善至多 0.49；灰色行用 WikiText2 校准；Mixtral 的 W4A4 为 NaN</td><td><span class="ev ev-p">P</span></td><td>表 2 数值第 11 页；0.16/0.49 对比表述第 12 页 §6.2</td><td>已核验（逐格对照；2026-09-15 复核补注页码）</td></tr>
+      <tr><td>表 3 五任务平均（3 模型全量）；WinoGrande QoQ 比 QuaRot 高 4.82%；对 FP16 损失 1.03%/0.89%/0.40%</td><td><span class="ev ev-p">P</span></td><td>第 12 页表 3</td><td>已核验（逐格对照）</td></tr>
+      <tr><td>表 4 吞吐全量（2 GPU×8 模型）；几何平均 L40S 2.36×/A100 1.68×；「美元成本降 3×」；5/7 模型 L40S 反超 A100；比 Atom 高 10%（7B、L40S）</td><td><span class="ev ev-p">P</span></td><td>第 11 页图 15、第 13 页表 4、第 12-13 页 §6.3</td><td>已核验（逐格对照；舍入/口径差异已并排说明）</td></tr>
+      <tr><td>表 5 LongBench（10 任务全量 38.52→38.38）；量化消融图 16 全柱值（5.58→5.67、1367→2254、+W4 省 3.5GB、KV4 减半/×1.47）；同 batch 拆解 1.88×＝1.45××1.3×；图 18 去量化开销结论</td><td><span class="ev ev-p">P</span></td><td>第 13-14 页表 5、图 16-18</td><td>已核验；图 16 显存面板/图 18 无数值标注，仅文字结论</td></tr>
+      <tr><td>附录 A：Docker 镜像 shang12138/qserve-mlsys25-ae；x86_64 + A100/L40S；512G 磁盘、1h 拉镜像、1h+2-4 GPU 小时基准；Apache-2.0 代码/MIT 数据；DOI 10.5281/zenodo.14991385；表 6 参考吞吐；deepcompressor（无 URL）</td><td><span class="ev ev-p">P</span></td><td>第 18 页</td><td>已核验；DOI 未在线访问</td></tr>
+      <tr><td>官方仓库现状：归属 MIT HAN Lab、描述含 QServe/LServe、Apache-2.0、main 分支、未归档；25 commits、无 release、README 最新动态 2025-02；commit 02b2925（2025-02-21）；README 称 2024-12 集成进 TensorRT-LLM</td><td><span class="ev ev-r">R</span></td><td>论文出处第 1 页；在线核验 2026-09-14（API）/2026-09-15（页面，只读）</td><td>已核验（可达性、归属、许可、分支、动态）</td></tr>
+      <tr><td>项目页 hanlab.mit.edu/projects/qserve 可达</td><td><span class="ev ev-r">R</span></td><td>论文出处第 1 页；2026-09-14 HTTP 200</td><td>已核验（可达性；内容未逐项审阅）</td></tr>
+      <tr><td>云实例/容器/监控映射示例（A100/L40S 类实例、容器服务、NVIDIA Container Toolkit 等）</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开实例目录与容器/监控产品文档</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>成本/容量公式、SLO/监控/回滚设计、决策清单、控制面-数据面划分、数据路径图编号与面板编排、表 6 GPU 型号推断（benchmark_a100.sh）、基线陈旧性影响评估</td><td><span class="ev ev-i">I</span></td><td>本报告 §3-§12 与 sources/qserve.evidence.json</td><td>编辑标注完成；不含伪精确数字，无标注处不引用读图值</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="09-quarot.html" rel="prev">上一篇：09 QuaRot（文件可能尚未发布）</a>
+  <a href="11-flashattention-3.html" rel="next">下一篇：11 FlashAttention-3（文件可能尚未发布）</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页论文事实基于本地 <code>10_QServe_2405.04532.pdf</code>（arXiv:2405.04532v3，2025-05-01 水印，MLSys 2025，19 页；页面采用 v3 版本），经文本提取检索并回 PDF 原页两轮核验（页码见各处标注与 <a href="#evidence">#evidence</a>）；图 16 显存面板与图 18 柱状图无数值标注，仅引用论文文字结论。官方仓库经只读在线核验（2026-09-15）。云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有（MLSys 2025，Copyright 2025 by the author(s)，第 1 页印刷文本；PDF 嵌入元数据 Subject 写「mlsys 2024」，以印刷文本为准）；官方仓库代码许可 Apache-2.0、制品数据许可 MIT（附录 A，第 18 页；仓库 2026-09-15 在线核验一致）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-15；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

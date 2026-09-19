@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 840" role="img" aria-labelledby="ms-svg-title ms-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="ms-svg-title">MegaScale 数据路径图：超过 10,000 GPU 生产级 LLM 训练的关键路径、通信重叠、检查点与稳健训练控制面</title>
+  <desc id="ms-svg-desc">流程方向自上而下：控制面（虚线）为稳健训练框架——作业提交后由 Driver 与定制 Kubernetes 按节点分配 Executor（Pod），训练守护进程周期发送心跳，异常或心跳超时即暂停全集群、运行轻量自检诊断、屏蔽故障 IP 并等量补位，再从最新检查点恢复。数据面（实线）为一次训练迭代的关键路径：数据管道以每机单一 dataloader 写共享内存、预处理异步执行；启动期经 TCPStore 换 Redis 与初始化顺序设计把 NCCL 通信组初始化从 1047 秒压到 30 秒以内；微批前向反向计算采用并行 transformer block、滑窗注意力、FlashAttention-2 与融合 LayerNorm/GeLU；TP/SP 把 all-gather 与 reduce-scatter 融合进 FFN 并行 Linear 并切块 GEMM 流水重叠；PP 交错 1F1B 解耦 send/recv 异步重叠，LAMB 四倍批量把流水线气泡削减 87.5%；DP 梯度 reduce-scatter 与参数 all-gather 重叠且高优先级通信先行；LAMB 优化器更新后进入两阶段快速检查点——GPU 状态先写主机内存（数秒、训练不停），后台异步写 HDFS，恢复时组内单 worker 读取共享分区后广播。底部两条支撑带：定制数据中心网络（Tomahawk 4、三层 CLOS、1:1 无收敛、multi-rail、ECMP 抑制、Swift+DCQCN）与可观测旁路（CUDA event 热力图、分布式 trace、3D 并行可视化、Kafka 实时入库）。实线为数据面，虚线为控制面与可观测旁路；编号一至九对应正文数据路径步骤。</desc>
+  <defs>
+    <marker id="ms-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="ms-arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f3a5f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="840" fill="#ffffff"/>
+  <text x="30" y="32" font-size="19" font-weight="700" fill="#14385c">MegaScale：超过 10,000 GPU 生产级 LLM 训练的数据路径与关键路径</text>
+  <text x="30" y="54" font-size="12" fill="#4b5563">方向：数据管道 → 启动初始化 → 微批计算（PTB/SWA）→ TP/SP·PP·DP 通信重叠 → LAMB 更新 → 两阶段检查点　｜　依据论文第 2–9 页（arXiv:2402.15627v1）</text>
+
+  <!-- 图例 -->
+  <g font-size="11.5" fill="#374151">
+    <rect x="30" y="68" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="49" y="79">迭代关键路径（实线）</text>
+    <rect x="176" y="68" width="14" height="14" fill="#fdeada" stroke="#c2410c" stroke-width="1.6"/>
+    <text x="195" y="79">通信重叠 / 隐藏</text>
+    <rect x="294" y="68" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="313" y="79">检查点 / 存储（紫）</text>
+    <rect x="428" y="68" width="14" height="14" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="447" y="79">控制面（蓝虚线）</text>
+    <rect x="552" y="68" width="14" height="14" fill="#f3f4f6" stroke="#4b5563" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="571" y="79">可观测旁路（灰虚线）</text>
+  </g>
+
+  <!-- ⑨ 控制面 -->
+  <rect x="30" y="94" width="920" height="128" rx="8" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="44" y="116" font-size="13" font-weight="700" fill="#1f3a5f">⑨ 控制面 Control Plane：稳健训练框架（论文图 5；异常检测 → 诊断 → 驱逐/补位 → 断点恢复）</text>
+  <rect x="50" y="130" width="196" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+  <text x="62" y="150" font-size="11" font-weight="700" fill="#1f3a5f">Driver + 定制 Kubernetes</text>
+  <text x="62" y="168" font-size="10.5" fill="#374151">提交作业，按节点分配 Pod</text>
+  <text x="62" y="184" font-size="10.5" fill="#374151">监测异常与心跳超时（§4.1）</text>
+  <line x1="248" y1="162" x2="258" y2="162" stroke="#334155" stroke-width="2.2" marker-end="url(#ms-arr)"/>
+  <rect x="262" y="130" width="212" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+  <text x="274" y="150" font-size="11" font-weight="700" fill="#1f3a5f">每节点一个 Executor（Pod）</text>
+  <text x="274" y="168" font-size="10.5" fill="#374151">训练守护进程周期性发送心跳</text>
+  <text x="274" y="184" font-size="10.5" fill="#374151">携带状态、日志与 RDMA 指标</text>
+  <line x1="476" y1="162" x2="486" y2="162" stroke="#334155" stroke-width="2.2" marker-end="url(#ms-arr)"/>
+  <rect x="490" y="130" width="212" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+  <text x="502" y="150" font-size="11" font-weight="700" fill="#1f3a5f">轻量自检诊断套件（§4.3）</text>
+  <text x="502" y="168" font-size="10.5" fill="#374151">主机内 RNIC 回环 / 全互联测试</text>
+  <text x="502" y="184" font-size="10.5" fill="#374151">节点内与同 ToR 跨机 NCCL 测试</text>
+  <line x1="704" y1="162" x2="714" y2="162" stroke="#334155" stroke-width="2.2" marker-end="url(#ms-arr)"/>
+  <rect x="718" y="130" width="212" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+  <text x="730" y="150" font-size="11" font-weight="700" fill="#1f3a5f">驱逐故障节点 + 等量补位</text>
+  <text x="730" y="168" font-size="10.5" fill="#374151">屏蔽 IP，Kubernetes 换入健康节点</text>
+  <text x="730" y="184" font-size="10.5" fill="#374151">自最新检查点恢复训练（§4.4）</text>
+  <text x="44" y="213" font-size="10" fill="#374151">恢复完成前全集群暂停；另提供手动驱逐入口（§4.1，图 5）</text>
+
+  <!-- 数据面 -->
+  <rect x="30" y="234" width="920" height="414" rx="8" fill="#f2fbfd" stroke="#0e7490" stroke-width="1.8"/>
+  <text x="44" y="256" font-size="13" font-weight="700" fill="#0e7490">数据面 Data Plane：一次训练迭代的关键路径（实线；①–⑧ 对应正文步骤）</text>
+
+  <!-- 控制面 → 数据面 衔接（最后绘制，避免被面板覆盖） -->
+  <line x1="490" y1="216" x2="490" y2="246" stroke="#1f3a5f" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ms-arr-blue)"/>
+  <text x="500" y="219" font-size="10" fill="#1f3a5f">配置 / 恢复衔接</text>
+
+  <!-- ① 数据管道 -->
+  <rect x="50" y="268" width="436" height="62" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="288" font-size="12" font-weight="700" fill="#155e75">① 数据管道：卸出关键路径（§3.4）</text>
+  <text x="62" y="306" font-size="10.5" fill="#374151">每机单一 dataloader → 共享内存 → 各 GPU worker 拷贝到显存</text>
+  <text x="62" y="322" font-size="10.5" fill="#374151">树状两层消除冗余磁盘读；预处理与步末梯度同步重叠</text>
+  <line x1="268" y1="330" x2="268" y2="348" stroke="#334155" stroke-width="2.5" marker-end="url(#ms-arr)"/>
+
+  <!-- ② 通信组初始化 -->
+  <rect x="502" y="268" width="428" height="62" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="514" y="288" font-size="12" font-weight="700" fill="#155e75">② 启动期：NCCL 通信组初始化加速（§3.5，一次性）</text>
+  <text x="514" y="306" font-size="10.5" fill="#374151">TCPStore → Redis：2,048 GPU 初始化 1047s → 361s</text>
+  <text x="514" y="322" font-size="10.5" fill="#374151">组初始化顺序设计消除全局 barrier：O(n²)→O(n)；&lt;5s / &lt;30s</text>
+  <line x1="716" y1="330" x2="716" y2="348" stroke="#334155" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ms-arr)"/>
+
+  <!-- ③ 微批计算 -->
+  <rect x="50" y="352" width="436" height="212" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="373" font-size="12" font-weight="700" fill="#155e75">③ 微批前向 / 反向计算（算法层，§3.1/§3.3）</text>
+  <text x="62" y="396" font-size="11.5" font-weight="700" fill="#14385c">y = x + MLP(LN(x)) + Attention(LN(x))</text>
+  <text x="62" y="416" font-size="10.5" fill="#374151">并行 transformer block（PTB）：attention 与 MLP 并行</text>
+  <text x="62" y="432" font-size="10.5" fill="#374151">SWA 滑窗注意力：复杂度 O(s×w)，w ≪ s</text>
+  <text x="62" y="448" font-size="10.5" fill="#374151">FlashAttention-2：改进 thread block / warp 划分</text>
+  <text x="62" y="464" font-size="10.5" fill="#374151">LayerNorm / GeLU 融合为单 kernel，减少启动开销</text>
+  <line x1="62" y1="478" x2="474" y2="478" stroke="#d4d9e0" stroke-width="1.4"/>
+  <text x="62" y="496" font-size="10.5" fill="#374151">微批按交错 1F1B 流经各 PP stage（调度见 ⑤）</text>
+  <text x="62" y="512" font-size="10.5" fill="#374151">激活与权重驻留 HBM；计算与通信经 ④–⑥ 重叠</text>
+  <text x="62" y="528" font-size="10.5" fill="#374151">通信操作由 ④⑤⑥ 与计算重叠/隐藏（§3.2）</text>
+
+  <!-- ④ TP/SP -->
+  <rect x="502" y="352" width="428" height="74" rx="6" fill="#fdeada" stroke="#c2410c" stroke-width="2"/>
+  <text x="514" y="371" font-size="12" font-weight="700" fill="#7c2d12">④ TP/SP：通信融合进 FFN 并行 Linear（§3.2）</text>
+  <text x="514" y="388" font-size="10.5" fill="#7c2d12">all-gather / reduce-scatter 与并行 Linear 融合；GEMM 切块流水</text>
+  <text x="514" y="403" font-size="10.5" fill="#7c2d12">按 model chunk 粒度重叠；首个 all-gather 预取</text>
+  <text x="514" y="418" font-size="10.5" fill="#7c2d12">通信时间按 1/(2·vpp_size) 缩短（预取与数据加载重叠）</text>
+
+  <!-- ⑤ PP -->
+  <rect x="502" y="432" width="428" height="72" rx="6" fill="#fdeada" stroke="#c2410c" stroke-width="2"/>
+  <text x="514" y="452" font-size="12" font-weight="700" fill="#7c2d12">⑤ PP：交错 1F1B 调度，send/recv 解耦异步（§3.2）</text>
+  <text x="514" y="470" font-size="10.5" fill="#7c2d12">warm-up 只依赖前一 receive；steady 收发与计算全重叠</text>
+  <text x="514" y="488" font-size="10.5" fill="#7c2d12">LAMB 4× batch：气泡 (4/v)·(p−1)/m → (1/v)·(p−1)/(4m)，−87.5%</text>
+
+  <!-- ⑥ DP -->
+  <rect x="502" y="512" width="428" height="52" rx="6" fill="#fdeada" stroke="#c2410c" stroke-width="2"/>
+  <text x="514" y="531" font-size="12" font-weight="700" fill="#7c2d12">⑥ DP：梯度同步重叠（ZeRO-2，图 1）</text>
+  <text x="514" y="549" font-size="10.5" fill="#7c2d12">reduce-scatter 聚合梯度 + all-gather 取参数；高优先级通信先行</text>
+
+  <!-- ③ 与通信三维的双向重叠关系 -->
+  <line x1="488" y1="388" x2="500" y2="388" stroke="#334155" stroke-width="2" marker-start="url(#ms-arr)" marker-end="url(#ms-arr)"/>
+  <line x1="488" y1="468" x2="500" y2="468" stroke="#334155" stroke-width="2" marker-start="url(#ms-arr)" marker-end="url(#ms-arr)"/>
+  <line x1="488" y1="538" x2="500" y2="538" stroke="#334155" stroke-width="2" marker-start="url(#ms-arr)" marker-end="url(#ms-arr)"/>
+
+  <!-- ⑦ 优化器 -->
+  <line x1="150" y1="564" x2="150" y2="574" stroke="#334155" stroke-width="2.5" marker-end="url(#ms-arr)"/>
+  <line x1="716" y1="564" x2="716" y2="574" stroke="#334155" stroke-width="2.5" marker-end="url(#ms-arr)"/>
+  <rect x="50" y="578" width="270" height="58" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="597" font-size="12" font-weight="700" fill="#155e75">⑦ LAMB 优化器更新（§3.1）</text>
+  <text x="62" y="614" font-size="10.5" fill="#374151">批量 4×，收敛对照后用于生产（§6.2）</text>
+  <text x="62" y="630" font-size="10.5" fill="#374151">微基准：13B 模型，~250B tokens 损失持平</text>
+
+  <!-- ⑧ 两阶段检查点 -->
+  <rect x="336" y="578" width="594" height="58" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="348" y="597" font-size="12" font-weight="700" fill="#4c1d95">⑧ 两阶段快速检查点与快恢复（§4.4）</text>
+  <text x="348" y="614" font-size="10.5" fill="#4c1d95">阶段一：GPU 状态→主机内存（pinned，数秒、训练不停）→ 阶段二：后台异步写 HDFS</text>
+  <text x="348" y="630" font-size="10.5" fill="#4c1d95">恢复：DP 组内单 worker 读共享分区后组内广播，线性缓解 HDFS 带宽瓶颈</text>
+
+  <!-- 通信基座 -->
+  <line x1="256" y1="649" x2="256" y2="659" stroke="#c2410c" stroke-width="2" stroke-dasharray="4 3"/>
+  <line x1="724" y1="649" x2="724" y2="659" stroke="#4b5563" stroke-width="2" stroke-dasharray="4 3"/>
+  <rect x="30" y="660" width="452" height="108" rx="8" fill="#fdeada" stroke="#c2410c" stroke-width="1.8"/>
+  <text x="44" y="681" font-size="12.5" font-weight="700" fill="#7c2d12">通信基座：定制数据中心网络（§3.6）</text>
+  <text x="44" y="700" font-size="10.5" fill="#7c2d12">Tomahawk 4 芯片 25.6 Tbps、64×400G 端口；三层 CLOS &gt;10,000 GPU</text>
+  <text x="44" y="716" font-size="10.5" fill="#7c2d12">下行:上行 = 1:1（32+32 口）；400G 分裂 2×200G（AOC）</text>
+  <text x="44" y="732" font-size="10.5" fill="#7c2d12">8×200G NIC multi-rail；同 ToR 下最多 64 台服务器</text>
+  <text x="44" y="748" font-size="10.5" fill="#7c2d12">ECMP 冲突抑制；Swift+DCQCN 拥塞控制；adap_retrans 调优</text>
+
+  <!-- 可观测旁路 -->
+  <rect x="498" y="660" width="452" height="108" rx="8" fill="#f3f4f6" stroke="#4b5563" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="512" y="681" font-size="12.5" font-weight="700" fill="#374151">可观测旁路：诊断与排障（§4.2/§5，常开、开销可忽略）</text>
+  <text x="512" y="700" font-size="10.5" fill="#4b5563">CUDA event 计时 → 热力图：约 0.5% 慢机（stragglers）</text>
+  <text x="512" y="716" font-size="10.5" fill="#4b5563">分布式 trace 时间线 + 3D 并行可视化：超时定位故障节点</text>
+  <text x="512" y="732" font-size="10.5" fill="#4b5563">事件经 Kafka → 分析库实时入库；RDMA 毫秒级监控</text>
+  <text x="512" y="748" font-size="10.5" fill="#4b5563">心跳聚合 stdout/stderr 日志实时过滤分析（§4.2）</text>
+
+  <text x="30" y="788" font-size="11" fill="#4b5563">图例编号 ①–⑧ 对应正文「数据路径」文字序列，⑨＝控制面；平面划分、配色与编号为编辑标注（论文本身无此图）。依据论文第 2–9 页图 1–图 8 与 §3–§5 绘制。</text>
+  <text x="30" y="806" font-size="11" fill="#4b5563">关键数字核验：LAMB 气泡 −87.5%（第 4 页）· 初始化 1047s→361s→&lt;5s/&lt;30s（第 5–6 页）· Tomahawk 4 25.6 Tbps（第 6 页）。</text>
+  <text x="30" y="824" font-size="11" fill="#4b5563">检查点两阶段（第 7 页）· 慢机约 0.5%（第 8 页）· 通信时间缩短因子与气泡分数式均为论文原文口径。</text>
+</svg>

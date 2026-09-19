@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 920" role="img" aria-labelledby="dsv3-svg-title dsv3-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="dsv3-svg-title">DeepSeek-V3 训练数据路径图：HAI-LLM 控制面（16PP×64EP×ZeRO-1 DP、DualPipe 双向流水）与 FP8 数据面（MLA → MoE 路由 → FP8 dispatch → 256+1 专家 → BF16 combine → MTP 损失 → 反向 → AdamW/EMA）</title>
+  <desc id="dsv3-svg-desc">流程方向为自上而下：顶部蓝色虚线控制面由 HAI-LLM 框架编排 16 路流水线并行、64 路专家并行（专家均匀铺 8 节点 64 GPU）与 ZeRO-1 数据并行（不使用张量并行），DualPipe 把 micro-batch 从流水线两端双向喂入并手动调配通信用 SM 占比，路由控制器维护 top-8 选择、每 token 至多 4 节点、并在每步末按专家负载以 γ 更新偏置 b_i。下方青色数据面：14.8T token 语料经文档打包（无跨样本注意力掩码）与 0.1 比例 FIM、Byte-level BPE 128K 分词进入 micro-batch（batch 3072 渐增至 15360）；Embedding 与 MTP 模块共享；每层（共 61 层、前 3 层为稠密 FFN）依次为 RMSNorm（原精度、反向重算）、MLA（推理仅缓存 c_KV 与 k_R，attention 算子保原精度）、MoE 路由（sigmoid 亲和度加偏置选 top-8、gating 保原精度、1 个共享专家恒激活）；激活按 1×128 tile 在线量化为 FP8（缩放因子为 2 的整数次幂）后 dispatch，经 IB（50 GB/s）到目标节点同编号 GPU、再经 NVLink（160 GB/s）即时转发到专家 GPU（20 个 SM 分 10 个通信通道、warp 专化、定制 PTX），256 个路由专家以 128×128 块量化权重（E4M3）与 N_C=128 间隔提升到 CUDA core 的 FP32 累加完成 GEMM，combine 以 BF16 合并。MTP 模块（D=1，投影 M_1 属于 d×2d）与主模型同 PP rank 物理共享参数，损失为主 LM 交叉熵加 λ 加权 MTP 损失（λ 先 0.3 后 0.1）。反向路径 Dgrad/Wgrad 走 FP8，attention 后 Linear 输入以 E5M6 缓存，SwiGLU 输入 FP8 缓存输出重算，RMSNorm 与 MLA 上投影反向重算；AdamW 优化器一阶/二阶矩用 BF16、master weights 与梯度保 FP32，EMA 参数异步维护在 CPU 内存。底部琥珀色面板列出论文口径的精度边界与风险点：H800 Tensor Core 累加仅约 14 位（K=4096 初测相对误差近 2%，以 N_C=128 CUDA core 提升对策）、激活梯度块级量化会使 16B 模型发散（附录 B.2 负结果）、跨节点专家并行计算-通信比约 1:1（由 DualPipe 与两跳 all-to-all 抵消）、解码部署单元 40 节点 320 GPU 对小团队构成负担、以及推理态差异（MLA 仅缓存 c_KV/k_R、MTP 可丢弃或转投机解码）。实线为运行时数据流，虚线为控制面与层循环回边。</desc>
+  <defs>
+    <marker id="dsv3-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="dsv3-arr-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+    <marker id="dsv3-arr-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0e7490"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="920" fill="#ffffff"/>
+  <text x="30" y="32" font-size="19" font-weight="700" fill="#14385c">DeepSeek-V3：算法—基础设施协同设计的训练数据路径与控制面</text>
+  <text x="30" y="54" font-size="12" fill="#4b5563">方向：语料/分词 → 控制面编排 → 层内 FP8 数据流（MLA → 路由 → 专家 → combine）→ MTP/损失 → 反向/优化器　｜　依据论文 §2-§4 与图 2/3/4/6/7（arXiv:2412.19437v2）</text>
+
+  <!-- 图例 -->
+  <g font-size="11.5" fill="#374151">
+    <rect x="30" y="68" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="49" y="79">GPU 计算 / 张量流（实线）</text>
+    <rect x="216" y="68" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="235" y="79">显存 / 优化器 / EMA 旁路（紫）</text>
+    <rect x="436" y="68" width="14" height="14" fill="#fdeada" stroke="#c2410c" stroke-width="1.6"/>
+    <text x="455" y="79">IB / NVLink 网络通信（橙）</text>
+    <rect x="620" y="68" width="14" height="14" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="639" y="79">控制面 / 调度（蓝虚线）</text>
+    <rect x="806" y="68" width="14" height="14" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+    <text x="825" y="79">精度边界 / 风险</text>
+  </g>
+
+  <!-- 控制面 -->
+  <rect x="30" y="94" width="920" height="112" rx="8" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="44" y="114" font-size="13.5" font-weight="700" fill="#1f3a5f">② 控制面 Control Plane（HAI-LLM 框架 · 并行编排 · DualPipe 调度 · 路由与偏置控制，虚线）</text>
+  <g>
+    <rect x="50" y="128" width="196" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+    <text x="148" y="148" font-size="12" text-anchor="middle" fill="#1f2937">HAI-LLM 训练框架</text>
+    <text x="148" y="166" font-size="10" text-anchor="middle" fill="#374151">自研高效轻量框架（内部）</text>
+    <text x="148" y="182" font-size="10" text-anchor="middle" fill="#374151">未随权重仓库开源</text>
+    <rect x="286" y="128" width="230" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+    <text x="401" y="148" font-size="12" text-anchor="middle" fill="#1f2937">并行编排（不使用 TP）</text>
+    <text x="401" y="166" font-size="10" text-anchor="middle" fill="#374151">16 路流水线并行 × 64 路专家并行</text>
+    <text x="401" y="182" font-size="10" text-anchor="middle" fill="#374151">× ZeRO-1 数据并行；专家铺 8 节点 64 GPU</text>
+    <rect x="556" y="128" width="200" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+    <text x="656" y="148" font-size="12" text-anchor="middle" fill="#1f2937">DualPipe 双向流水</text>
+    <text x="656" y="166" font-size="10" text-anchor="middle" fill="#374151">micro-batch 从两端喂入</text>
+    <text x="656" y="182" font-size="10" text-anchor="middle" fill="#374151">手动调配通信用 SM 占比</text>
+    <rect x="796" y="128" width="134" height="64" rx="5" fill="#ffffff" stroke="#1f3a5f"/>
+    <text x="863" y="148" font-size="12" text-anchor="middle" fill="#1f2937">路由 / 偏置控制</text>
+    <text x="863" y="166" font-size="10" text-anchor="middle" fill="#374151">top-8 · 每 token ≤4 节点</text>
+    <text x="863" y="182" font-size="10" text-anchor="middle" fill="#374151">步末按负载 ±γ 更新 b</text>
+    <line x1="246" y1="160" x2="286" y2="160" stroke="#1f3a5f" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#dsv3-arr)"/>
+    <line x1="516" y1="160" x2="556" y2="160" stroke="#1f3a5f" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#dsv3-arr)"/>
+    <line x1="756" y1="160" x2="796" y2="160" stroke="#1f3a5f" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#dsv3-arr)"/>
+  </g>
+
+  <!-- 数据面 -->
+  <rect x="30" y="220" width="920" height="478" rx="8" fill="#f2fbfd" stroke="#0e7490" stroke-width="1.8"/>
+  <text x="44" y="240" font-size="13.5" font-weight="700" fill="#0e7490">数据面 Data Plane（语料 → 层内计算 → 损失 → 反向 → 优化器，实线）</text>
+
+  <!-- ① 数据接入 -->
+  <g>
+    <rect x="50" y="252" width="260" height="58" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+    <text x="62" y="271" font-size="11.5" font-weight="700" fill="#0e7490">① 预训练语料 14.8T token</text>
+    <text x="62" y="288" font-size="10" fill="#374151">文档打包（无跨样本 attention mask）</text>
+    <text x="62" y="303" font-size="10" fill="#374151">FIM 0.1（PSM）· Byte-level BPE 词表 128K</text>
+    <rect x="360" y="252" width="200" height="58" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="372" y="271" font-size="11.5" font-weight="700" fill="#0e7490">micro-batch</text>
+    <text x="372" y="288" font-size="10" fill="#374151">batch 3072 → 15360（前 469B token）</text>
+    <text x="372" y="303" font-size="10" fill="#374151">最大序列长 4K</text>
+    <rect x="610" y="252" width="180" height="58" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="622" y="271" font-size="11.5" font-weight="700" fill="#0e7490">Embedding（原精度）</text>
+    <text x="622" y="288" font-size="10" fill="#374151">与 MTP 模块共享</text>
+    <text x="622" y="303" font-size="10" fill="#374151">最浅层与最深层同 PP rank</text>
+    <rect x="840" y="252" width="94" height="58" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="887" y="271" font-size="11.5" font-weight="700" text-anchor="middle" fill="#0e7490">层循环</text>
+    <text x="887" y="288" font-size="10" text-anchor="middle" fill="#374151">Transformer ×61</text>
+    <text x="887" y="303" font-size="10" text-anchor="middle" fill="#374151">前 3 层 dense FFN</text>
+    <line x1="310" y1="281" x2="360" y2="281" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+    <line x1="560" y1="281" x2="610" y2="281" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+    <line x1="790" y1="281" x2="840" y2="281" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+  </g>
+
+  <!-- 层主循环行 -->
+  <g>
+    <rect x="50" y="326" width="290" height="64" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+    <text x="62" y="345" font-size="11.5" font-weight="700" fill="#0e7490">③ MLA 多头潜在注意力</text>
+    <text x="62" y="362" font-size="10" fill="#374151">推理仅缓存 c_KV（512）与 k_R（64）</text>
+    <text x="62" y="377" font-size="10" fill="#374151">attention 算子保原精度（BF16/FP32）</text>
+    <rect x="390" y="326" width="168" height="64" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="402" y="345" font-size="11.5" font-weight="700" fill="#0e7490">RMSNorm（原精度）</text>
+    <text x="402" y="362" font-size="10" fill="#374151">输出激活不持久保存</text>
+    <text x="402" y="377" font-size="10" fill="#374151">反向重算以省显存</text>
+    <rect x="608" y="326" width="326" height="64" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+    <text x="620" y="345" font-size="11.5" font-weight="700" fill="#0e7490">③ MoE 路由（gating 保原精度）</text>
+    <text x="620" y="362" font-size="10" fill="#374151">sigmoid 亲和度 + 偏置 b 选 top-8 · 限 4 节点</text>
+    <text x="620" y="377" font-size="10" fill="#374151">1 个共享专家恒激活 · 训练/推理均不丢 token</text>
+    <line x1="340" y1="358" x2="390" y2="358" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+    <line x1="558" y1="358" x2="608" y2="358" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+  </g>
+
+  <!-- dispatch / 网络 / 专家行 -->
+  <g>
+    <rect x="50" y="404" width="240" height="74" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+    <text x="62" y="423" font-size="11.5" font-weight="700" fill="#0e7490">④ FP8 在线量化 + dispatch</text>
+    <text x="62" y="440" font-size="10" fill="#374151">激活 1×128 tile 量化（MoE 上投影前）</text>
+    <text x="62" y="455" font-size="10" fill="#374151">缩放因子为 2 的整数次幂</text>
+    <text x="62" y="470" font-size="10" fill="#374151">下投影前激活梯度同法处理</text>
+    <rect x="330" y="404" width="360" height="74" rx="6" fill="#fdeada" stroke="#c2410c" stroke-width="2"/>
+    <text x="342" y="423" font-size="11.5" font-weight="700" fill="#c2410c">④ 跨节点 all-to-all 两跳转发（IB → NVLink）</text>
+    <text x="342" y="440" font-size="10" fill="#374151">①经 IB 50 GB/s 到目标节点同编号 GPU</text>
+    <text x="342" y="455" font-size="10" fill="#374151">②经 NVLink 160 GB/s（≈3.2×）即时转发到专家 GPU</text>
+    <text x="342" y="470" font-size="10" fill="#374151">20 SM 分 10 通道 · warp 专化 · 定制 PTX · 平均 3.2 专家/节点</text>
+    <rect x="730" y="404" width="204" height="74" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+    <text x="742" y="423" font-size="11.5" font-weight="700" fill="#0e7490">④ 路由专家 FP8 GEMM</text>
+    <text x="742" y="440" font-size="10" fill="#374151">256 路由 + 1 共享；权重 128×128 块量化</text>
+    <text x="742" y="455" font-size="10" fill="#374151">全张量 E4M3 · N_C=128 元素间隔</text>
+    <text x="742" y="470" font-size="10" fill="#374151">提升 CUDA core FP32 累加（4 WGMMA）</text>
+    <line x1="290" y1="441" x2="330" y2="441" stroke="#c2410c" stroke-width="1.8" marker-end="url(#dsv3-arr-orange)"/>
+    <line x1="690" y1="441" x2="730" y2="441" stroke="#c2410c" stroke-width="1.8" marker-end="url(#dsv3-arr-orange)"/>
+  </g>
+
+  <!-- combine / swiglu 行 -->
+  <g>
+    <rect x="50" y="492" width="230" height="56" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="62" y="511" font-size="11.5" font-weight="700" fill="#0e7490">④ BF16 combine 合并</text>
+    <text x="62" y="528" font-size="10" fill="#374151">前向/反向 combine 均保 BF16</text>
+    <text x="62" y="543" font-size="10" fill="#374151">残差回主通路进入下一层</text>
+    <rect x="330" y="492" width="250" height="56" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="342" y="511" font-size="11.5" font-weight="700" fill="#0e7490">SwiGLU（MoE FFN 内）</text>
+    <text x="342" y="528" font-size="10" fill="#374151">输入以细粒度量化 FP8 缓存</text>
+    <text x="342" y="543" font-size="10" fill="#374151">其输出在反向重算</text>
+    <rect x="620" y="492" width="314" height="56" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="632" y="511" font-size="11.5" font-weight="700" fill="#0e7490">×61 层循环回边（前 3 层不走 MoE）</text>
+    <text x="632" y="528" font-size="10" fill="#374151">DualPipe 在一对 forward/backward chunk 内</text>
+    <text x="632" y="543" font-size="10" fill="#374151">重排 attention/dispatch/MLP/combine 遮盖通信</text>
+    <line x1="280" y1="520" x2="330" y2="520" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+    <line x1="580" y1="520" x2="620" y2="520" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+  </g>
+
+  <!-- MTP / 损失 / 优化器行 -->
+  <g>
+    <rect x="50" y="562" width="310" height="60" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+    <text x="62" y="581" font-size="11.5" font-weight="700" fill="#0e7490">⑤ MTP 模块（D=1）</text>
+    <text x="62" y="598" font-size="10" fill="#374151">共享 embedding 与输出头 · M₁∈R^(d×2d)</text>
+    <text x="62" y="613" font-size="10" fill="#374151">与主模型同 PP rank，参数/梯度物理共享</text>
+    <rect x="410" y="562" width="250" height="60" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="422" y="581" font-size="11.5" font-weight="700" fill="#0e7490">⑤ 损失 = LM 交叉熵 + λ·MTP</text>
+    <text x="422" y="598" font-size="10" fill="#374151">λ=0.3（前 10T）→ 0.1（后 4.8T）</text>
+    <text x="422" y="613" font-size="10" fill="#374151">推理可丢弃 MTP 或转投机解码</text>
+    <rect x="710" y="562" width="224" height="60" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+    <text x="722" y="581" font-size="11.5" font-weight="700" fill="#6d28d9">⑦ AdamW 优化器状态（紫）</text>
+    <text x="722" y="598" font-size="10" fill="#374151">一/二阶矩 BF16 · 无可观察退化</text>
+    <text x="722" y="613" font-size="10" fill="#374151">master weights 与梯度 FP32</text>
+    <line x1="360" y1="592" x2="410" y2="592" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+    <line x1="660" y1="592" x2="710" y2="592" stroke="#0e7490" stroke-width="1.6" marker-end="url(#dsv3-arr-cyan)"/>
+  </g>
+
+  <!-- 反向 / EMA 行 -->
+  <g>
+    <rect x="50" y="634" width="560" height="52" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="62" y="653" font-size="11.5" font-weight="700" fill="#0e7490">⑥ 反向路径：Dgrad / Wgrad 走 FP8（Wgrad 亦可缓存 FP8 激活）</text>
+    <text x="62" y="670" font-size="10" fill="#374151">attention 后 Linear 输入以 E5M6 缓存（反向 1×128→128×1，2 的幂缩放）· RMSNorm/MLA 上投影重算</text>
+    <rect x="660" y="634" width="274" height="52" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="672" y="653" font-size="11.5" font-weight="700" fill="#6d28d9">⑦ EMA → CPU 内存（紫）</text>
+    <text x="672" y="670" font-size="10" fill="#374151">每步训练后异步更新；早估 LR 衰减后性能</text>
+  </g>
+
+  <!-- 层循环虚线回边（沿数据面右内侧上行，回到层循环框） -->
+  <path d="M 938 520 L 944 520 L 944 281 L 938 281" stroke="#0e7490" stroke-width="1.4" stroke-dasharray="6 4" fill="none" marker-end="url(#dsv3-arr-cyan)"/>
+
+  <!-- 精度边界 / 风险面板 -->
+  <rect x="30" y="712" width="920" height="146" rx="8" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+  <text x="44" y="732" font-size="13.5" font-weight="700" fill="#92400e">精度边界与风险点（论文口径）</text>
+  <g>
+    <rect x="50" y="742" width="288" height="50" rx="5" fill="#ffffff" stroke="#92400e" stroke-width="1.4"/>
+    <text x="60" y="759" font-size="10.5" font-weight="700" fill="#92400e">H800 Tensor Core FP8 累加仅约 14 位</text>
+    <text x="60" y="775" font-size="10" fill="#374151">K=4096 初测最大相对误差近 2%</text>
+    <text x="60" y="788" font-size="10" fill="#374151">→ N_C=128 提升 CUDA core FP32 累加</text>
+    <rect x="358" y="742" width="288" height="50" rx="5" fill="#ffffff" stroke="#92400e" stroke-width="1.4"/>
+    <text x="368" y="759" font-size="10.5" font-weight="700" fill="#92400e">激活梯度块级（128×128）量化会发散</text>
+    <text x="368" y="775" font-size="10" fill="#374151">16B MoE 约 300B token 处发散（附录 B.2）</text>
+    <text x="368" y="788" font-size="10" fill="#374151">→ 激活保持 1×128 / 128×1 tile 粒度</text>
+    <rect x="666" y="742" width="264" height="50" rx="5" fill="#ffffff" stroke="#92400e" stroke-width="1.4"/>
+    <text x="676" y="759" font-size="10.5" font-weight="700" fill="#92400e">跨节点 EP 计算-通信比约 1:1</text>
+    <text x="676" y="775" font-size="10" fill="#374151">→ DualPipe + 两跳 all-to-all + 限 4 节点</text>
+    <text x="676" y="788" font-size="10" fill="#374151">→ all-to-all 与 PP 通信完全隐藏</text>
+    <rect x="50" y="800" width="430" height="48" rx="5" fill="#ffffff" stroke="#92400e" stroke-width="1.4"/>
+    <text x="60" y="817" font-size="10.5" font-weight="700" fill="#92400e">推理部署单元大：prefill ≥4 节点/32 GPU，decode ≥40 节点/320 GPU</text>
+    <text x="60" y="833" font-size="10" fill="#374151">论文自述对小团队构成负担（§6）；decode 每 expert batch 通常 &lt;256 token、访存受限</text>
+    <rect x="500" y="800" width="430" height="48" rx="5" fill="#ffffff" stroke="#92400e" stroke-width="1.4"/>
+    <text x="510" y="817" font-size="10.5" font-weight="700" fill="#92400e">⑧ 推理态差异（对照训练态）：MLA 仅缓存 c_KV 与 k_R</text>
+    <text x="510" y="833" font-size="10" fill="#374151">MTP 可整个丢弃，或转投机解码（第二 token 接受率 85%-90%、1.8× TPS）</text>
+  </g>
+
+  <!-- 页脚注记 -->
+  <text x="30" y="876" font-size="11" fill="#4b5563">本图为编辑合成（论文本身无此整图）；面板划分、编号与配色为编辑标注。依据论文图 2/3/4/6/7 与 §2-§4（arXiv:2412.19437v2，53 页）绘制。</text>
+  <text x="30" y="892" font-size="11" fill="#4b5563">关键事实核验：671B/37B 与 14.8T（第 1、5 页）· 16PP×64EP×ZeRO-1 DP（第 12 页）· 表 2 气泡公式（第 13 页）</text>
+  <text x="30" y="908" font-size="11" fill="#4b5563">NVLink 160/IB 50 GB/s 与 20 SM（第 13-14、20 页）· FP8 边界（第 14-18 页）· YaRN 128K（第 23 页）· 部署单元（第 19、35 页）</text>
+</svg>

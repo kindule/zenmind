@@ -122,7 +122,7 @@
   <text x="672" y="573" font-size="10.5" fill="#374151">· 保护区间推导：s_u8 ≤ 17 → q ≤ 119.5</text>
   <text x="672" y="591" font-size="10.5" fill="#374151">· 表 1：KV4 优化核 1.29-1.51×（A100，核级）</text>
   <text x="672" y="609" font-size="10.5" fill="#374151">· 图 15 几何平均：L40S 2.36×、A100 1.68×</text>
-  <text x="672" y="627" font-size="10.5" fill="#374151">· 同 batch 拆解：1.88×＝1.45××1.3×（图 17）</text>
+  <text x="672" y="627" font-size="10.5" fill="#374151">· 同 batch 拆解：1.88×＝1.45× × 1.3×（图 17）</text>
   <text x="672" y="645" font-size="10.5" fill="#374151">· TTFT/TPOT、能耗：论文未披露</text>
 
   <!-- 右侧面板：引用数字必读 -->
@@ -133,7 +133,7 @@
   <text x="672" y="751" font-size="10.5" fill="#374151">精度：W4A8KV4（A100 用 per-channel、</text>
   <text x="692" y="768" font-size="10.5" fill="#374151">L40S 用 per-group 权重量化）</text>
   <text x="672" y="787" font-size="10.5" fill="#374151">负载：输入 1024 / 输出 512，同显存预算</text>
-  <text x="692" y="804" font-size="10.5" fill="#374151">内最大可达吞吐（ tokens/s ）</text>
+  <text x="692" y="804" font-size="10.5" fill="#374151">内最大可达吞吐（tokens/s）</text>
   <text x="672" y="823" font-size="10.5" fill="#374151">基线：TRT-LLM v0.9.0 三精度最优者；</text>
   <text x="692" y="840" font-size="10.5" fill="#374151">与其他论文数字不可直接比较</text>
 

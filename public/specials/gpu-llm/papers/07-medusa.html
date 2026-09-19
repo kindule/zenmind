@@ -5,29 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Medusa：多解码头推测式解码加速（论文 07 解读）</title>
 <meta name="description" content="基于本地论文 PDF（07_Medusa_2401.10774.pdf，arXiv:2401.10774）的中文架构解读：Medusa 以附加解码头并行预测多个后续 token，配合候选树构建、树注意力一次前向并行验证与典型接受方案，在不引入独立草稿模型的前提下加速 LLM 解码；含数据路径、云上部署映射、成本/SLO、安全运维与决策清单。">
+<link rel="stylesheet" href="../assets/css/site.css">
 <link rel="prev" href="06-eagle.html">
 <link rel="next" href="08-kivi.html">
 <style>
 :root{
-  --bg:#ffffff; --fg:#1f2937; --muted:#4b5563; --line:#d4d9e0;
-  --primary:#14385c; --primary-weak:#eef3fa;
-  --cyan:#0e7490; --cyan-weak:#e6f7fb;
-  --purple:#6d28d9; --purple-weak:#f3ecfd;
-  --orange:#c2410c; --orange-weak:#fdeada;
-  --amber:#92400e; --amber-weak:#fef3c7;
-  --red:#b91c1c; --red-weak:#fee2e2;
-  --code-bg:#f3f4f6;
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#10161f; --fg:#e5eaf2; --muted:#b6c0ce; --line:#3a4657;
-    --primary:#c7d9ee; --primary-weak:#1b2a3d;
-    --cyan:#7dd3e8; --cyan-weak:#0d2a33;
-    --purple:#c9b2f5; --purple-weak:#241a3d;
-    --orange:#f3b58a; --orange-weak:#3a2113;
-    --amber:#fbd88a; --amber-weak:#33270e;
-    --red:#f5a9a9; --red-weak:#3a1414;
-    --code-bg:#1a2230;
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
   }
 }
 *{box-sizing:border-box}
@@ -36,68 +37,71 @@ html{scroll-behavior:smooth}
 body{
   margin:0; background:var(--bg); color:var(--fg);
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
-  font-size:16px; line-height:1.7;
+  font-size:14px; line-height:1.5715;
 }
 main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
 @media (min-width:1200px){ main{max-width:1040px} }
-h1{font-size:1.6em; line-height:1.35; color:var(--primary); margin:1.2em 0 .4em}
-h2{font-size:1.28em; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:.25em; margin-top:2.2em}
-h3{font-size:1.05em; margin-top:1.6em}
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
 a{color:var(--cyan)}
 a:hover{color:var(--orange)}
 :focus-visible{outline:3px solid var(--orange); outline-offset:2px}
-code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.92em}
-.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:.6em 1em; z-index:10}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
 .skip-link:focus{left:8px; top:8px}
-.site-header{display:flex; flex-wrap:wrap; gap:.5em 1.5em; justify-content:space-between; align-items:baseline; padding:.7em 16px; border-bottom:1px solid var(--line)}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
 .site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
-.site-header nav a{margin-left:1.2em}
-.breadcrumb{padding:.6em 16px; border-bottom:1px solid var(--line)}
-.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:.3em; margin:0; padding:0; font-size:.92em}
-.breadcrumb li+li::before{content:"/"; margin-right:.3em; color:var(--muted)}
-.fact-card{border:1px solid var(--line); border-radius:8px; background:var(--primary-weak); padding:.9em 1.1em; margin:1.2em 0}
-.fact-card h3{margin:.2em 0 .5em}
-.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:.5em; padding:0; margin:.4em 0 .8em}
-.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:.05em .8em; font-size:.88em}
-.ev{display:inline-block; border:1.5px solid var(--muted); border-radius:5px; padding:0 .45em; font-size:.82em; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
 .ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
 .ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
 .ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
 .ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
-.callout{border:1px solid var(--line); border-left:6px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:.8em 1em; margin:1.1em 0}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
 .callout-warning{border-left-color:var(--red); background:var(--red-weak)}
 .callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
-.table-scroll{overflow-x:auto; margin:1.1em 0}
-table{border-collapse:collapse; width:100%; font-size:.92em}
-caption{caption-side:top; text-align:left; font-weight:700; padding:.3em 0; color:var(--primary)}
-th,td{border:1px solid var(--line); padding:.45em .6em; text-align:left; vertical-align:top}
-thead th{background:var(--primary-weak); color:var(--primary)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
 tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
 td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
-.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:.9em; margin:1.1em 0; padding:0; list-style:none}
-.tradeoff-grid>li{border:1px solid var(--line); border-radius:8px; padding:.8em 1em; background:var(--bg)}
-.tradeoff-grid h3{margin:.1em 0 .4em; font-size:1em; color:var(--primary)}
-.fit-list li{margin:.7em 0}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
 .decision-checklist{padding:0; list-style:none}
-.decision-checklist>li{margin:1em 0}
-.decision-checklist ul{list-style:none; padding-left:.2em}
-.decision-checklist ul li{margin:.35em 0}
-.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:.4em}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
 label{cursor:pointer}
 .touch-target{min-height:44px}
-.pager{display:flex; flex-wrap:wrap; gap:.6em; justify-content:space-between; margin:1.4em 0}
-.pager a{display:inline-block; min-height:44px; padding:.45em 1em; border:1px solid var(--line); border-radius:8px; background:var(--bg); text-decoration:none}
-.pager a:hover{background:var(--primary-weak)}
-.architecture-diagram{border:1px solid var(--line); border-radius:8px; padding:.8em; margin:1.2em 0; overflow-x:auto}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
 .architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
-.architecture-diagram figcaption{font-size:.88em; color:var(--muted); margin-top:.6em}
-.toc{border:1px solid var(--line); border-radius:8px; padding:.6em 1em; margin:1.2em 0; background:var(--bg)}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
 .toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
-.toc ol{margin:.4em 0; padding-left:1.4em; columns:2; column-gap:2em}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
 @media (max-width:640px){.toc ol{columns:1}}
-.lede{font-size:1.02em; color:var(--muted)}
-.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:.8em 1em; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.9em}
-.site-footer{border-top:1px solid var(--line); padding:1em 16px 2em; font-size:.88em; color:var(--muted)}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
 @media print{
   .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
   body{font-size:11pt}
@@ -182,7 +186,7 @@ label{cursor:pointer}
     <tbody>
       <tr><th scope="row">题名</th><td>Medusa（框架名）：Simple LLM Inference Acceleration Framework with Multiple Decoding Heads（英文全题未能本次逐字核验；编辑译名：基于多解码头的大模型推理加速框架）</td></tr>
       <tr><th scope="row">arXiv / 本地 PDF</th><td>arXiv:2401.10774（2024-01 提交；具体版本与总页数未能本次核验）；本地文件 <code>07_Medusa_2401.10774.pdf</code> <span class="ev ev-p">P</span></td></tr>
-      <tr><th scope="row">代码</th><td>论文明示官方仓库 <code>github.com/FMLYD/Medusa</code>（印于论文摘要脚注，第 1 页）；本次会话未解析 PDF 复核该脚注、也未在线核验可达性，使用前请复核（见 <a href="#links">#links</a>）<span class="ev ev-r">R</span></td></tr>
+      <tr><th scope="row">代码</th><td>官方仓库 <code>github.com/FasterDecoding/Medusa</code>（作者在 arXiv 记录的 Comments 中声明；2026-09-15 在线核验可达，见 <a href="#links">#links</a>）<span class="ev ev-r">R</span></td></tr>
       <tr><th scope="row">评估范围</th><td>Vicuna-7B / Vicuna-13B（ShareGPT 数据训练）；Medusa-2 自蒸馏实验含 Vicuna-33B 与 Zephyr-7B；评测为 MT-Bench 多轮对话生成；实验主要在批量 1（单请求交互）进行 <span class="ev ev-p">P</span></td></tr>
       <tr><th scope="row">实验硬件与精度</th><td>论文未明确披露 †（GPU 型号/数量与推理精度均未能本次核验）</td></tr>
     </tbody>
@@ -567,8 +571,8 @@ label{cursor:pointer}
       </tr>
       <tr>
         <th scope="row">官方代码仓库</th>
-        <td><a href="https://github.com/FMLYD/Medusa" rel="noopener noreferrer">https://github.com/FMLYD/Medusa</a></td>
-        <td><span class="ev ev-r">R</span> 论文明示（摘要脚注，第 1 页）。核验状态：本次会话既未解析 PDF 逐字复核该脚注、也未在线访问该 URL；「FMLYD/Medusa 为论文明示官方仓库」来自站外通识与论文记录，<strong>使用前必须人工复核归属、活跃度与许可</strong>。若复核不符，应按「未核验到官方仓库」处理，不得沿用本链接。</td>
+        <td><a href="https://github.com/FasterDecoding/Medusa" rel="noopener noreferrer">https://github.com/FasterDecoding/Medusa</a></td>
+        <td><span class="ev ev-r">R</span> 作者声明：arXiv 2401.10774 记录 Comments 注明「The code for this implementation is available at https://github.com/FasterDecoding/Medusa」。核验状态（2026-09-15 在线核验）：官方仓库可达（HTTP 200），仓库 README 回链本篇 arXiv 报告，页面标注 Apache-2.0 许可、未归档；早前记录的 github.com/FMLYD/Medusa 已失效（HTTP 404），不再使用。</td>
       </tr>
       <tr>
         <th scope="row">其他仓库</th>
@@ -599,7 +603,7 @@ label{cursor:pointer}
     <ul>
       <li><label><input type="checkbox"> 确认目标模型可训练头（有权重/可微调）或可自蒸馏（可大规模生成样本）（P：三种训练形态的前提）</label></li>
       <li><label><input type="checkbox"> 确认推理框架能承载树注意力与接受逻辑（或使用官方实现），并纳入版本管理（P：机制在关键路径上；I：工程前提）</label></li>
-      <li><label><input type="checkbox"> 核验官方仓库归属/许可/活跃度后再引入；本页链接未在线核验（R：核验责任在使用方）</label></li>
+      <li><label><input type="checkbox"> 复核官方仓库许可/活跃度后引入（归属与可达性已于 2026-09-15 在线核验，见 <a href="#links">#links</a>；R：核验责任在使用方）</label></li>
     </ul>
   </li>
   <li>
@@ -690,7 +694,7 @@ label{cursor:pointer}
       <tr><td>树结构消融：稀疏 64 节点 &gt; 密集 256 节点；建树按校准 top-1 准确率贪心</td><td><span class="ev ev-p">P</span></td><td>消融章节</td><td>已核验（工具摘要）；页码复核待补</td></tr>
       <tr><td>训练至多 5 头；推理常用 3-4 头；候选数量有最优区间（仿真）</td><td><span class="ev ev-p">P</span></td><td>训练/消融/附录仿真</td><td>已核验（工具摘要）；页码复核待补</td></tr>
       <tr><td>大批量/长序列收窄相对收益（计算受限转向）</td><td><span class="ev ev-p">P</span></td><td>实验讨论/附录分析</td><td>已核验（工具摘要）；页码复核待补</td></tr>
-      <tr><td>官方仓库 <code>github.com/FMLYD/Medusa</code></td><td><span class="ev ev-r">R</span></td><td>论文摘要脚注（第 1 页）</td><td>未复核（本次未解析 PDF 复核脚注原文、未在线访问；使用前必须人工核验）</td></tr>
+      <tr><td>官方仓库 <code>github.com/FasterDecoding/Medusa</code></td><td><span class="ev ev-r">R</span></td><td>arXiv 2401.10774 记录 Comments（作者声明代码地址）</td><td>已在线核验（2026-09-15：可达 HTTP 200，README 回链本篇报告；原 FMLYD/Medusa 链接已失效 404，不再使用）</td></tr>
       <tr><td>云实例/服务/存储/监控映射示例</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录与推理服务文档</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
       <tr><td>成本公式、SLO/监控/回滚/清单等工程建议；控制面-数据面划分</td><td><span class="ev ev-i">I</span></td><td>本报告 §6-§9、§12</td><td>编辑标注完成；不含伪精确数字</td></tr>
     </tbody>
@@ -698,7 +702,7 @@ label{cursor:pointer}
 </div>
 </section>
 
-<nav class="pager" aria-label="上一篇与下一篇">
+<nav class="pager" aria-label="上一篇与下一篇（页底）">
   <a href="06-eagle.html" rel="prev">上一篇：06 EAGLE（文件可能尚未发布）</a>
   <a href="08-kivi.html" rel="next">下一篇：08 KIVI（文件可能尚未发布）</a>
 </nav>
@@ -707,8 +711,9 @@ label{cursor:pointer}
 
 <footer class="site-footer">
   <p><strong>来源声明：</strong>本页论文事实基于本地 <code>07_Medusa_2401.10774.pdf</code>（arXiv:2401.10774）经 summarize 工具生成的长摘要（<code>sources/medusa.summary.json</code>）；因本地提取文件不可读且本次会话无法解析 PDF，未完成逐页页码核验，所有数字引用前必须回原 PDF 复核。云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
-  <p><strong>许可提醒：</strong>论文版权归原作者所有；官方仓库代码与权重许可以仓库当时声明为准（本页未在线核验，使用前先复核）。引用请遵循相应许可。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；官方仓库代码许可为 Apache-2.0（2026-09-15 于仓库页面核验），权重许可以仓库当时声明为准，使用前先复核。引用请遵循相应许可。</p>
   <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-14；证据标签 P/R/E/I 见页首图例。</p>
 </footer>
+<script src="../assets/js/site.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuaRot：旋转消除离群的端到端 4bit LLM 推理（论文 09 解读）</title>
+<meta name="description" content="基于本地论文 PDF（09_QuaRot_2404.00456.pdf，arXiv:2404.00456v2，NeurIPS 2024，共 21 页）的中文架构解读：QuaRot 用随机 Hadamard 旋转消除激活与 KV 缓存中的离群特征——离线融合进权重、全精度下输出不变——再对全部权重（GPTQ）、激活（对称 per-token RTN）与 KV 缓存（非对称分组）做 4bit 量化，不留任何高精度通道；LLAMA2-70B 4bit 的 WikiText-2 困惑度损失至多 0.47、零样本保留 99%，RTX 3090 单 Transformer 块实测 prefill 至多 3.33×、解码峰值显存至多 3.89×。含两阶段机制拆解、量化数据路径图、云上部署映射、成本/SLO、安全运维回滚与决策清单，全部数字带 PDF 页码定位。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="prev" href="08-kivi.html">
+<link rel="next" href="10-qserve.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">解码加速与量化</a></li>
+    <li aria-current="page">QuaRot</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>QuaRot：用随机 Hadamard 旋转消除离群，权重 / 激活 / KV 缓存全 4bit 的端到端推理</h1>
+<p class="lede">本页为第 9 篇（解码加速与量化类）。定量内容取自本地论文 PDF <code>09_QuaRot_2404.00456.pdf</code>（arXiv:2404.00456v2，NeurIPS 2024，共 21 页）并逐条标注 PDF 页码；全部 21 页已渲染原页逐项目检（表 1-17、图 1-7、公式 1-14 均回原页核对），一处关键提取错误已按原页更正（见 <a href="#evidence">#evidence</a> 与 <code>sources/quarot.evidence.json</code>）。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：推理（权重量化 + 激活量化 + KV 缓存量化）</li>
+    <li>形态：离线旋转变换 + 在线量化路径 + 自研 CUDA 内核（GPTQ 需校准）</li>
+    <li>目标硬件：消费级 GPU（效率实验口径：NVIDIA RTX 3090，第 7-8 页）；校准在单卡 A100</li>
+    <li>核心资源：算力（INT4 TensorCore）· 显存（权重 + KV 缓存）· HBM 带宽（解码 KV 搬运）</li>
+    <li>证据状态：P（论文，21 页全量原页核验）+ R（官方仓库 2026-09-15 在线核验）+ E/I</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-15">2026-09-15</time>。<strong>证据完整度：</strong>论文全部 21 页逐页渲染原页目检，摘要、贡献、方法四阶段（Stage 1a-1d、2a-2c）、表 1-17、图 1-7、公式 (1)-(14) 均逐项核对；发现并更正一处文本提取错误（正文的「每层 1½ 次 Hadamard」被提取成「11」）；论文结论章「3.39× 显存节省」与引言（§1 贡献列表）/§5.2 的 3.89× 不一致，属论文原文笔误，页面照录不作调和。TTFT/TPOT 绝对值、整模型端到端吞吐、云价格论文未披露，页面写「论文未明确披露」。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文印明且经在线核验的官方仓库与依赖仓库">R＝仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/工程建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="08-kivi.html" rel="prev">上一篇：08 KIVI</a>
+  <a href="10-qserve.html" rel="next">下一篇：10 QServe（文件可能尚未发布）</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（逐字核验自 PDF 第 1 页）</caption>
+    <tbody>
+      <tr><th scope="row">题名</th><td>QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs（编辑译名：QuaRot——旋转 LLM 中的无离群 4bit 推理）</td></tr>
+      <tr><th scope="row">作者 / 机构</th><td>Saleh Ashkboos（ETH Zurich）、Amirkeivan Mohtashami（EPFL）、Maximilian L. Croci（Microsoft Research）、Bo Li（ETH Zurich）、Pashmina Cameron（Microsoft）、Martin Jaggi（EPFL）、Dan Alistarh（ISTAustria &amp; Neural Magic）、Torsten Hoefler（ETH Zurich）、James Hensman（Microsoft Research）（第 1 页）</td></tr>
+      <tr><th scope="row">发表</th><td>NeurIPS 2024（38th Conference on Neural Information Processing Systems，第 1 页页脚）；arXiv:2404.00456v2，2024-10-29；本地 PDF <code>09_QuaRot_2404.00456.pdf</code>（21 页）<span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">代码</th><td>摘要末句印明 <code>github.com/spcl/QuaRot</code>（第 1 页）<span class="ev ev-r">R</span>；2026-09-15 在线核验：仓库存在，默认分支 main、HEAD <code>5008669b08c1f11f9b64d52d16fddd47ca754c5a</code>（2024-11-26）、Apache-2.0、无 tag（见 <a href="#links">#links</a>）</td></tr>
+      <tr><th scope="row">评估范围</th><td>模型：LLAMA-2 家族（7B/13B/70B，语言生成 + 零样本）；附录另有 LLAMA-3（8B/70B）与 Phi-3-mini-4k-instruct（第 7、16-17 页）；任务：WikiText-2 困惑度、LM Evaluation Harness 六项零样本（PIQA、WinoGrande、HellaSwag、Arc-Easy、Arc-Challenge、LAMBADA）<span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">实验硬件</th><td>性能实验：NVIDIA RTX 3090（论文定位消费级 GPU，第 7-8 页）；GPTQ 校准/权重修改：单卡 NVIDIA A100（70B 修改约 5 分钟 + GPTQ 约 2 小时，第 7 页）；精度评测的 GPU 型号：论文未明确披露 <span class="ev ev-p">P</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> QuaRot 抓住一个数学事实——<strong>正交旋转不改变模型输出</strong>（计算不变性）——把 4bit 量化最大的敌人「激活离群」在离线阶段旋转掉（图 1：旋转后 FFN 输入分布无离群），且旋转可以全部融进权重或用约每层 1½ 次 Hadamard 在线完成，全精度下输出逐位不变；真正的精度损失只来自第二阶段的取整/裁剪。它第一个做到权重 + 激活 + KV 缓存<strong>全部 4bit、不留任何高精度通道</strong>：LLAMA2-70B 困惑度 3.32→3.79、零样本保留 99%。引用其性能数字必须念对口径：<strong>3.33× prefill 与 3.89× 显存节省都是 RTX 3090 单 Transformer 块实测</strong>（各自 batch/序列条件不同），不是整模型端到端数字；batch≤8 的 INT4 KV 解码反而更慢，LLAMA-3 掉点明显更大。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>推理的 prefill 阶段 compute-bound，联合量化（权重 + 激活 + KV）才能同时省计算与显存；但激活含大量离群元素、比权重难量化得多（第 1 页，图 1 第 2 页）<span class="ev ev-p">P</span>。此前的 4bit 方案都要「养」高精度离群通道：QUIK 保留 256 个离群特征、down-proj 留 8bit，Atom 保留 128 个并配混合精度内核（第 2-3、8 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>关键观察：</strong>对隐藏状态乘一个随机 Hadamard 正交矩阵，离群被「摊平」到所有通道（图 1：LLAMA2-7B 第 10 层 FFN 输入，旋转前 ±0.4 级尖峰、旋转后无离群）<span class="ev ev-p">P</span>；由计算不变性（SliceGPT 定理），权重侧的旋转可被输出侧的逆旋转精确抵消——RMSNorm 按范数归一、对旋转不敏感（第 4 页式 3）<span class="ev ev-p">P</span>。</li>
+  <li><strong>两阶段：</strong>Stage 1 离线（全精度、输出不变）：融合 RMSNorm 缩放与全局旋转进权重、FFN down-proj 前插一次在线 Hadamard、value/out 投影融合 head-wise Hadamard、query/key 在 RoPE 后做在线 head-wise 旋转（Post-RoPE 缓存）；Stage 2 在线量化（唯一误差来源）：权重默认 GPTQ、激活对称 per-token RTN（clip 0.9）、KV 非对称分组量化（组 128、clip 0.95）（第 4-7 页）<span class="ev ev-p">P</span>。</li>
+  <li><strong>精度：</strong>4bit（W4A4KV4）LLAMA2-70B：PPL 3.32→3.79（损 0.47）、零样本均值 77.07→75.98（保留 99%）；7B/13B 损 0.63/0.52、平均分损至多 4.18%；6/8bit 用纯 RTN 免校准即「无损」（INT8 完全保持 FP16）（第 1、7-9 页表 1-3）<span class="ev ev-p">P</span>。</li>
+  <li><strong>性能与边界：</strong>RTX 3090 单 Transformer 块：prefill（TTFT）加速 7B 1.97×~2.16×、70B 至多 3.33×（序列 2048，batch 64，图 4 左）；解码峰值显存至多 3.89×（batch 16，图 4 右）；4bit 线性层内核 3.2×/4.3×（batch 1，Hadamard 在内），Hadamard 开销至多约 7%；但 batch≤8 时 INT4 KV 解码比 FP16 慢（表 15），LLAMA-3 8B 4bit PPL 6.14→8.16（表 11）<span class="ev ev-p">P</span>；整模型端到端吞吐、TTFT/TPOT 绝对值：论文未明确披露<span class="ev ev-i">I</span>（口径核对）。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>瓶颈与动机：</strong>LLM 推理消耗大量计算、显存与能耗，尤其 prefill 阶段要处理长 prompt 并逐层写入缓存；prefill 已知是 compute-bound（引 Ashkboos et al., 2023），因此联合量化——降参数与 KV 缓存（省显存）的同时也降输入（激活）精度、让前向本身跑在低位宽——才有意义（第 1 页）<span class="ev ev-p">P</span>。</p>
+
+<p><strong>核心障碍＝激活离群：</strong>激活中有少数维度幅值远大于其余元素（图 1：LLAMA2-7B 第 10 层 FFN 块输入，HuggingFace 默认权重下纵轴可见 ±0.4 级尖峰），使激活量化远难于权重量化，4bit 下尤其如此（第 1-2 页）<span class="ev ev-p">P</span>。keys 中同样存在离群（引 KVQuant、KIVI，第 6 页）<span class="ev ev-p">P</span>。</p>
+
+<p><strong>既有路线及其代价：</strong><span class="ev ev-p">P</span>（第 2-3 页）①weight-only 量化（GPTQ 等）：权重低位宽存储、计算前反量化，主计算仍是高精度，不降计算量；②保守离群通道：LLM.int8() 推理时把离群特征留 16bit（性能差）；SmoothQuant 用校准集缩放因子、只解决 8bit 且引入额外超参；4bit 下 Atom 为离群存在设计复杂混合精度 MatMul 内核、保留 128 个离群特征，QUIK 保留 256 个、把 down-projection 留 8bit；③旋转思路：QuIP/QuIP# 已把旋转（incoherence processing）用于 weight-only 量化，但每个权重矩阵的 forward 需要两次 Hadamard 变换；④KV 量化线：FlexGen（Sheng et al., 2023）4bit 分组 KV、KVQuant 3bit、KIVI 2bit，均需特征维分组、非均匀表示、高精度离群等复杂技巧处理 key 离群。</p>
+
+<p><strong>目标工作负载与约束：</strong>端到端 4bit（权重 + 激活 + KV 缓存）且<strong>不留任何高精度通道</strong>；方法面向消费级 GPU——全部性能实验在 RTX 3090 上做（第 1 页摘要、第 7-8 页）<span class="ev ev-p">P</span>。</p>
+
+<p><strong>基线口径：</strong>精度基线为同模型 FP16；性能基线为 FP16 实现（prefill 加速、解码峰值显存均相对 FP16）（第 7-9 页）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 因此论文数字回答的是「QuaRot 比 FP16 强多少 / 损多少」，不回答「与 KIVI/QServe 等其他方案比谁优」——本页不做跨论文数字比较。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 数学原语：Hadamard 旋转与 incoherence processing</h3>
+<p>正交矩阵 Q 满足 QQ⊤=I；Hadamard 矩阵是元素取 {+1,−1} 的正交矩阵；Walsh-Hadamard 矩阵按 H₂ = (1/√2)·[[1,1],[1,−1]]、H_{2ⁿ}=H₂⊗H_{2ⁿ⁻¹} 递归构造（式 1），其矩阵-向量积用快速 Walsh-Hadamard 变换在 O(d log₂(d)) 完成<span class="ev ev-p">P</span>（第 3 页；提取文件的 log 下标 2 脱落，已按原页核正）。d 不是 2 的幂时，分解 d=2ⁿ·m（m 取已知 Hadamard 阶，Sloane [2024] 列表）用 Kronecker 构造 H_d=H_{2ⁿ}⊗H_m，计算代价 O(d(m+n))<span class="ev ev-p">P</span>。随机 Hadamard 取 H̃=H·diag(s)（s 为 {+1,−1} 随机向量），仍是正交矩阵<span class="ev ev-p">P</span>。</p>
+<p>「μ-incoherent」指 max(W) ≤ μ‖W‖_F/√(mn)（式 2）——最大元素相对平均幅值过大即难量化；QuIP（Chee et al., 2024）证明左右乘正交矩阵可降 incoherence。QuaRot 采纳该技术但<strong>前向加的算子更少</strong>，且把 incoherence processing 同时施加到激活上（图 1）<span class="ev ev-p">P</span>（第 3 页）。</p>
+
+<h3>3.2 计算不变性：为什么旋转是「免费」的</h3>
+<p>计算不变性定理（SliceGPT [Ashkboos et al., 2024] Theorem 1）：变换器的权重与块间激活可同时用正交矩阵变换而<strong>不改变模型输出</strong>——块内左侧输入权重左乘 Q、同块输出权重右乘 Q⊤ 即可抵消<span class="ev ev-p">P</span>（第 4 页）。它在 RMSNorm 处也成立，因为 RMSNorm 按范数归一化、旋转不改变范数，满足交换律：</p>
+<div class="formula">
+RMSNorm(X) = RMSNorm(XQ⊤)·Q　　（式 3；前提：RMSNorm 内无可学习缩放，实践中先把缩放 diag(α) 吸收进相邻权重）
+</div>
+
+<h3>3.3 Stage 1（离线、全精度、输出不变）：四步改造</h3>
+<p>QuaRot 分两阶段；第一阶段以全精度操纵权重并向 forward 插入两个额外 Hadamard 操作<span class="ev ev-p">P</span>（第 4 页）：</p>
+<ul>
+  <li><strong>Stage 1a 权重修改：</strong>先把 LayerNorm/RMSNorm 的线性部分融进相邻权重（吸收 diag(α)）；选与隐藏维同阶的随机 Hadamard Q，块内左侧权重左乘（如 <code>W_k ← Q⊤·diag(α)·W_k</code>，式 4），块输出侧权重右乘 Q；块间激活随之变为 X←XQ。该修改在全精度假设下不改变模型输出<span class="ev ev-p">P</span>（第 4-5 页、图 3）。</li>
+  <li><strong>Stage 1b FFN：</strong>在 down-projection 前插入一次<strong>全精度在线 Hadamard</strong>（按 QuIP# 的快速 kernel 实现），并通过把 H 融进 down-proj 权重被隐式抵消：<code>W_down ← H·W_down</code>，与全局 Q 合并后为 <code>W_down ← H·W_down·Q</code><span class="ev ev-p">P</span>（第 5 页）。</li>
+  <li><strong>Stage 1c 注意力 value 侧：</strong>注意力输出 Y=concat[(P₁V₁)…(P_{n_h}V_{n_h})]·W_out（式 5-6）暴露 W_v 与 W_out 的头内耦合：对每头做 <code>W_v⁽ʰ⁾←W_v⁽ʰ⁾H_{d_h}</code>、<code>W_out⁽ʰ⁾←H_{d_h}W_out⁽ʰ⁾</code>（式 7），等价 Kronecker 形式 <code>W_v←W_v(I⊗H_{d_h})</code>、<code>W_out←(I⊗H_{d_h})W_out</code>（式 8）；再用恒等式 H_{n_h×d_h}=(I⊗H_{d_h})(H_{n_h}⊗I)（式 9，头数与头维均为 2 的幂时成立）补上跨头部分：插入 <strong>Hadamard heads</strong> 块 Z←Z(H_{n_h}⊗I)（reshape + Walsh-Hadamard 高效计算），并把 W_out 完整变为 <code>W_out←H·W_out</code><span class="ev ev-p">P</span>（第 5-6 页）。</li>
+  <li><strong>Stage 1d key 旋转：</strong>keys 也有离群（引 KVQuant、KIVI）；注意力分数 P_h=Softmax(α·Pos(Q_h)·Pos(K_h⊤)⊙M)（式 10-12），RoPE 的 Pos 直接作用在 Q/K 上、使 Hadamard 无法直接融进 W_q/W_k，故对<strong>查询与键做在线 head-wise 旋转</strong>：Q←Pos(XW_q)(I⊗H_{d_h})、K←Pos(XW_k)(I⊗H_{d_h})（式 13-14）——Q、K 同旋使注意力分数不变<span class="ev ev-p">P</span>（第 6 页）。相比 KVQuant 式 Pre-RoPE Caching（缓存 RoPE 前的 keys：需在线逆旋转、且每个 query 都要旋转全部 keys/values），QuaRot 选 <strong>Post-RoPE caching</strong>——量化发生在 RoPE 之后，解码每步只对单个 token 施加 Hadamard<span class="ev ev-p">P</span>（第 6、13 页 A.1）。</li>
+  <li><strong>在线开销口径：</strong>QuIP# 类方法每个权重矩阵需两次 Hadamard；QuaRot 每 transformer 层只需 <strong>1½ 次</strong><span class="ev ev-p">P</span>（第 3 页 §2、第 15 页 A.5；注：<code>quarot.txt</code> 提取把 1½ 误作 11，已按 PDF 原页更正）。</li>
+</ul>
+
+<h3>3.4 Stage 2（在线量化＝唯一误差来源）：三步</h3>
+<ul>
+  <li><strong>Stage 2a 权重量化：</strong>默认对全网权重应用 GPTQ；旋转后的网络上任何量化方法都可用，简单 RTN 也可替代、代价是一些精度<span class="ev ev-p">P</span>（第 6 页）。</li>
+  <li><strong>Stage 2b 激活量化：</strong>RMSNorm（去缩放后）保持 <strong>FP32</strong> 计算；线性层输入用<strong>对称 per-token</strong>（按输入矩阵的行）量化：行缩放 = 行最大绝对值 ÷ 7（INT4 最大可表示数），行除以缩放后 round-to-nearest；反量化把 GEMM 的 <strong>INT32</strong> 输出 cast 成 <strong>FP16</strong>，再乘行缩放（来自激活）×列缩放（来自权重）<span class="ev ev-p">P</span>（第 7 页）。</li>
+  <li><strong>Stage 2c 量化注意力：</strong>注意力在长序列/大 batch 下显著 memory-bound；旋转 keys/values 后缓存可低位宽量化、减少 IO；<strong>查询保持 FP16</strong>，softmax 用类 FlashAttention 的在线计算；KV 向量逐段从显存载入后<strong>反量化、以 FP16 计算点积</strong><span class="ev ev-p">P</span>（第 7 页）。</li>
+</ul>
+
+<div class="callout">
+  <strong><span class="ev ev-p">P</span> 输出保持 ≠ 量化无损（读法提醒）：</strong>Stage 1 的旋转/融合在全精度下<strong>数学上精确</strong>（式 3、4、7-9 逐项抵消），论文明确「不改变模型输出（假设精度充分）」；精度损失<strong>全部</strong>来自 Stage 2 的取整与裁剪（GPTQ/RTN 权重取整、激活对称 per-token 取整、KV 非对称取整与 0.9/0.95 裁剪比）。因此「旋转使模型变差」与「旋转是量化的一部分」都是误读；FP16 Hadamard 消融显示在线 Hadamard 降到 FP16 仅带来噪声级变化（7B PPL 变化 &lt;0.1，第 15-16 页表 10）<span class="ev ev-p">P</span>。
+</div>
+
+<h3>3.5 精度口径速查：什么在 INT4，什么不在</h3>
+<div class="table-scroll">
+  <table>
+    <caption>QuaRot 前向路径的精度清单（<span class="ev ev-p">P</span>，第 4-7 页 Stage 1a-2c 与图 3、图 6 的逐数据流位宽标注）——不能概括为「整个前向都是 INT4」</caption>
+    <thead>
+      <tr><th scope="col">对象</th><th scope="col">精度</th><th scope="col">依据与条件</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">全部线性层权重（W_q/W_k/W_v/W_out/W_gate/W_up/W_down，融合旋转后）</th><td>INT4</td><td><span class="ev ev-p">P</span> 摘要「all matrix multiplications are performed in 4 bits, without any channels identified for retention in higher precision」（第 1 页）；图 3/图 6 权重块标 INT4</td></tr>
+      <tr><th scope="row">线性层输入激活（每层每个线性层之前）</th><td>INT4</td><td><span class="ev ev-p">P</span> Stage 2b：对称 per-token，行缩放=max|·|/7，裁剪比 0.9（第 7 页）</td></tr>
+      <tr><th scope="row">KV 缓存（keys 与 values，Post-RoPE）</th><td>INT4</td><td><span class="ev ev-p">P</span> Stage 2c + Setup：非对称、组 128（=头维）、裁剪比 0.95（第 7、9 页表 4 注）</td></tr>
+      <tr><th scope="row">查询（query 向量）</th><td>FP16</td><td><span class="ev ev-p">P</span> 「We keep the queries in FP16」（第 7 页）；图 6 的 Q 路径标 FP16</td></tr>
+      <tr><th scope="row">注意力点积与在线 softmax</th><td>FP16</td><td><span class="ev ev-p">P</span> KV 段反量化后 FP16 计算点积；在线 softmax 类 FlashAttention（第 7 页）；prefill 期注意力直接用 FlashAttention（第 17 页 A.10）</td></tr>
+      <tr><th scope="row">RMSNorm 与在线 Hadamard 变换</th><td>FP32</td><td><span class="ev ev-p">P</span> 「computation of RMSNorm (without scaling) in FP32」「We use FP32 online Hadamard transformation across all our experiments」（第 7、15 页；FP16 Hadamard 见 A.7）</td></tr>
+      <tr><th scope="row">矩阵乘累加器与层输出</th><td>INT32 → FP16</td><td><span class="ev ev-p">P</span> CUTLASS INT4 GEMM 在 TensorCore 上、结果存 INT32 累加器，随即 cast+scale 回 FP16（第 5 页图 3 注、第 7-8 页 §5.2）</td></tr>
+      <tr><th scope="row">模型输出 / 残差流（块间激活）</th><td>FP16</td><td><span class="ev ev-p">P</span> FP16 为「the default precision of the model」（第 5 页图 3 注）；Y_Q 输出标 FP16</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝旋转矩阵的随机种子 s、量化方法选择（GPTQ/RTN）与位宽档位（4/6/8bit）、裁剪比（0.9/0.95）与组大小（权重 256/128/64，KV 固定 128）、校准集构成（128 条 WikiText-2、序列 2048）；<strong>数据面</strong>＝每层的量化门、在线 Hadamard 核、CUTLASS INT4 GEMM、KV 的 Init/Append/Decode 三例程。该划分只影响叙述，不改变论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/quarot-data-path.svg"
+       alt="QuaRot 数据路径图：残差流 X 乘随机 Hadamard 矩阵 Q（FP16，离线融合、全精度下输出不变）进入 Transformer 层；RMSNorm 以 FP32 计算、缩放已吸收进权重，其输出经对称 per-token 在线量化（裁剪比 0.9、行缩放为行最大绝对值除以 7）变为 INT4 进入各线性层；注意力分支中 query、key、value 三个投影的权重均为融合旋转后的 INT4，投影输出 FP16——query 经 RoPE 后做在线 head-wise Hadamard 并保持 FP16 不量化，key 经 RoPE 后同样旋转再量化为 INT4 写入 KV 缓存（非对称、组 128、裁剪比 0.95），value 在投影时已融合 head-wise Hadamard、量化为 INT4 写入 KV 缓存；注意力计算保持 FP16（在线 softmax，KV 逐段载入反量化后做 FP16 点积），输出经 Hadamard heads 跨头旋转、量化 INT4 后通过 H·W_out·Q 得到 FP16 输出；FFN 分支中 gate/up 投影为 INT4 权重，门控相乘输出 FP16，经一次 FP32 在线 Hadamard、量化 INT4 后通过 H·W_down·Q 得到 FP16 输出并汇回残差流；每个线性层内 INT4 乘法在 TensorCore 以 INT32 累加、随即乘行缩放与列缩放 cast 回 FP16——并非整条前向都是纯 INT4。右侧面板给出两阶段划分（Stage 1 离线全精度输出不变：1a 权重融合、1b FFN、1c value 投影与 Hadamard heads、1d query/key 在线旋转与 Post-RoPE 缓存；Stage 2 在线量化唯一误差来源：2a GPTQ、2b 对称 per-token 激活、2c 非对称分组 KV）、精度清单、实验参数（GPTQ 校准 128 条 WikiText-2 样本序列 2048、裁剪比 0.9/0.95、KV 组 128 等于头维、每层约 1.5 次 Hadamard、CUTLASS 与 FlashInfer 内核、A100 上修改 70B 五分钟加 GPTQ 两小时）与收益风险（3.33 倍 prefill 为 70B batch 64 序列 2048 单块 RTX 3090；3.89 倍显存节省为解码 50 token batch 16 单块；batch 不大于 8 时 INT4 KV 解码更慢；LLAMA-3 掉点更大；结论章 3.39 倍为原文笔误）。" width="980" height="960">
+  <figcaption>图 1：QuaRot 改造后的单 Transformer 层数据路径与精度标注。实线＝GPU 计算/数据流，虚线＝离线（Stage 1）融合关系与跨层循环；青＝GPU 计算，紫＝KV 缓存读写，琥珀＝风险/口径注意；INT4/FP16/FP32/INT32 为逐数据流位宽标签。依据论文图 3、图 6、式 (1)-(14)、§4-§5、A.1-A.10（arXiv:2404.00456v2）绘制 <span class="ev ev-p">P</span>；编号与平面划分为编辑标注 <span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 残差流输入：</strong>块间激活已被全局旋转 X←XQ（离线融合进上一层输出权重）；全精度下输出不变，且离群已被摊平（图 1：旋转后 FFN 输入无离群）<span class="ev ev-p">P</span>（第 4-5 页、第 2 页图 1）。</li>
+  <li><strong>② RMSNorm → 量化门：</strong>RMSNorm（去缩放）以 FP32 计算；其输出在进入每个线性层前做对称 per-token INT4 量化（行缩放=max|·|/7，裁剪比 0.9）<span class="ev ev-p">P</span>（第 7 页 Stage 2b）。</li>
+  <li><strong>③ 注意力分支：</strong>W_q/W_k/W_v 均为融合后的 INT4 权重（Q⊤(α)W_*），投影输出 FP16——query 经 RoPE 后做在线 head-wise Hadamard、<strong>保持 FP16</strong>；key 经 RoPE 后同样旋转、再量化为 INT4 写入 KV 缓存（非对称、组 128、裁剪 0.95）；value 在投影端已含 head-wise Hadamard、量化为 INT4 写入缓存；注意力计算保持 FP16（在线 softmax，KV 逐段载入反量化后做 FP16 点积）；输出经 Hadamard heads（H_{n_h}⊗I）跨头旋转、量化 INT4，经 H·W_out·Q 得到 FP16 输出 Y_Q<span class="ev ev-p">P</span>（第 5-7 页、第 13 页图 6）。</li>
+  <li><strong>④ FFN 分支：</strong>W_gate/W_up 为融合后的 INT4 权重，σ(gate)⊙up 输出 FP16；随后一次 FP32 在线 Hadamard、量化 INT4，经 H·W_down·Q 得到 FP16 输出 Y_Q<span class="ev ev-p">P</span>（第 5 页 Stage 1b、第 7 页、图 3）。</li>
+  <li><strong>⑤ 线性层精度链：</strong>INT4 权重×INT4 激活在 TensorCore 上计算、INT32 累加，随即 cast 回 FP16 并乘激活行缩放 × 权重列缩放——量化误差只发生在取整/裁剪处<span class="ev ev-p">P</span>（第 5 页图 3 注、第 7-8 页 §5.2）。</li>
+  <li><strong>循环：</strong>Y_Q 汇回残差流进入下一层；每层在线 Hadamard 合计约 1½ 次全尺寸当量；解码期 KV 的写入/读取由 Init/Append/Decode 三例程承担（prefill 注意力直接用 FlashAttention，解码用量化版 flash attention 读 INT4 缓存）<span class="ev ev-p">P</span>（第 3、17 页）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与事实（机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>全局旋转 Q＝随机 Hadamard（H̃=H·diag(s)），阶数＝模型隐藏维；d 非 2ⁿ 时 Kronecker 构造</td><td>Stage 1a 权重融合</td><td><span class="ev ev-p">P</span> 第 3 页 §3.1、第 4-5 页 Stage 1a</td></tr>
+      <tr><td>query/key 在线 head-wise 旋转 (I⊗H_{d_h}) 发生在 RoPE 之后（Post-RoPE caching）</td><td>KV 量化前提</td><td><span class="ev ev-p">P</span> 第 6 页 Stage 1d 式 13-14、第 13 页 A.1</td></tr>
+      <tr><td>激活：对称 per-token、scale=max|·|/7、恒定裁剪比 0.9；KV：非对称、组 128（=头维）、裁剪比 0.95</td><td>Stage 2b/2c 量化参数</td><td><span class="ev ev-p">P</span> 第 7 页 Setup、第 9 页表 4 注；裁剪比消融第 13-14 页表 5</td></tr>
+      <tr><td>权重：GPTQ（默认）/RTN，per-column 对称，裁剪比按 MSE 线性搜索；校准集 128 条 WikiText-2 训练集样本、序列 2048</td><td>Stage 2a 量化参数</td><td><span class="ev ev-p">P</span> 第 7 页 Setup</td></tr>
+      <tr><td>在线 Hadamard：FP32 快速核（down/out-proj 处），每层合计约 1½ 次；FP16 化仅噪声级影响（7B PPL &lt;0.1）</td><td>在线算子</td><td><span class="ev ev-p">P</span> 第 3、15-16 页（1½ 的提取错误已按原页更正）</td></tr>
+      <tr><td>内核栈：CUTLASS INT4 GEMM（TensorCore、INT32 累加）＋ FlashInfer KV 量化；CUDA/12.1 + PyTorch + HuggingFace</td><td>实现栈</td><td><span class="ev ev-p">P</span> 第 7 页 Models/Tasks/GPUs、第 7-8 页 §5.2</td></tr>
+      <tr><td>A100 单卡：修改 LLAMA2-70B（Stage 1）约 5 分钟、GPTQ 再约 2 小时</td><td>离线准备成本</td><td><span class="ev ev-p">P</span> 第 7 页 Setup</td></tr>
+      <tr><td>TTFT/TPOT 绝对值、每步解码时延分布、KV 缩放因子存储精度：论文未明确披露</td><td>数据路径运行细节</td><td><span class="ev ev-p">P</span>（本次证据源未载明，页面不补写）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong><span class="ev ev-p">P</span> 口径提醒（读数方式）：</strong>全部性能数字的完整条件是：NVIDIA RTX 3090、<strong>单个 Transformer block</strong>（论文明确「大 batch 下整模型装不进其 GPU 集群」）、各自标注的 batch 与序列长度、对比对象为 FP16 实现（第 7-8 页）<span class="ev ev-p">P</span>。引用本页任何加速/显存数字时必须携带这些条件，且不可与其他论文的数字横向比较。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>离群消除 ↔ 在线 Hadamard 开销与内核依赖</h3>
+    <p><span class="ev ev-p">P</span> 旋转把 4bit 的离群障碍挪走（图 1），代价是每层约 1½ 次在线 Hadamard 与新内核：CUTLASS INT4 GEMM + FlashInfer KV 量化。Hadamard 对 W_down 线性层至多加约 7% 开销（batch 1、序列 2048，图 7）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> W4A4 依赖 INT4 TensorCore 支持与自研内核栈，这是采用 QuaRot 的真实集成成本。</p>
+  </li>
+  <li>
+    <h3>全 4bit 覆盖 ↔ 4bit 精度损失与模型敏感性</h3>
+    <p><span class="ev ev-p">P</span> 无高精度通道换来 LLAMA2-70B PPL +0.47、零样本 -1.09%；但 7B 损 0.63 / 平均分 -4.18%；LLAMA-3 更敏感（8B PPL 6.14→8.16，70B 2.86→6.66）（第 7-9、16-17 页表 1/2/11/12）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 「全 4bit」是模型家族相关的精度决策，不是无条件的默认。</p>
+  </li>
+  <li>
+    <h3>GPTQ 质量 ↔ 校准成本与免校准档位</h3>
+    <p><span class="ev ev-p">P</span> GPTQ 默认（70B：修改 5 分钟 + 量化 2 小时，单卡 A100）；RTN 免校准免超参，6/8bit 无损、INT8 完全保持 FP16，但 4bit 下 RTN 比 GPTQ 差 2.27（7B）→0.34（70B）PPL（第 7、9 页表 3）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 大模型可用 RTN 快速落地；小模型想上 4bit 基本必须走校准。</p>
+  </li>
+  <li>
+    <h3>显存节省 ↔ 小 batch 解码变慢</h3>
+    <p><span class="ev ev-p">P</span> 解码峰值显存至多 3.89×（单块、batch 16）；但 4bit KV 的收益在降 IO——batch≤8 时 INT4 缓存解码比 FP16 <strong>慢</strong>（32×128 头配置 batch 1：FP16 0.713ms vs INT4 1.033ms），batch 16 起才反超、论文口径至多 1.72×（第 8、18、20 页表 15）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> KV 量化档位应按 batch/序列区间选择，不能默认开启。</p>
+  </li>
+  <li>
+    <h3>单块实测 ↔ 整模型外推</h3>
+    <p><span class="ev ev-p">P</span> 3.33×/3.89× 均为单 Transformer 块实测（整模型大 batch 放不进其集群）；论文预期整模型数值会更大（层数增加后常量大小对象影响变小）但<strong>未测</strong>（第 8-9 页）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 引用这两个数字必须带「单块」限定；整模型端到端吞吐与 TTFT/TPOT 绝对值论文未披露。</p>
+  </li>
+  <li>
+    <h3>KV 3bit 近免费 ↔ 2bit 不可行</h3>
+    <p><span class="ev ev-p">P</span> 旋转后的 KV 缓存到 3bit 困惑度退化至多 0.21（70B 至多 0.07）；keys 比 values 敏感（K4/V3 仅 +0.03、K3/V4 +0.18，7B）；K2/V2 则崩到 9.23（7B）（第 14 页表 6）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> KV 档位的甜点在 3-4bit；把 QuaRot 与 KIVI 的 2bit KV 直接类比是误用（两者离群处理机制不同，且本站不做跨论文比较）。</p>
+  </li>
+  <li>
+    <h3>数学变换免费 ↔ 制品不可逆</h3>
+    <p><span class="ev ev-p">P</span> Stage 1 在全精度下输出不变，但它把权重矩阵永久变成了「旋转系」制品（W←Q⊤diag(α)W 等）；随机正交矩阵不如随机 Hadamard（7B 差 1.35 PPL，表 8）<span class="ev ev-p">P</span>（第 4-5、15 页）<span class="ev ev-i">I</span> 旋转种子、量化方法与校准集构成都是制品的「基因」，必须与制品一起版本化管理，回退对象是原始 FP16 checkpoint 而非「关个开关」。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>QuaRot 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">计算：性能验证在 RTX 3090 级消费卡；离线量化在单卡 A100（70B：5 分钟 + 2 小时）</th>
+        <td><span class="ev ev-e">E</span> 基准/回归可用单卡消费级实例（RTX 3090/4090 类或云上同级），量化作业用单卡 A100/H100 类按需实例（小时级任务，不必常驻）</td>
+        <td>硬件口径为论文事实 <span class="ev ev-p">P</span>（第 7-8 页）；实例选型为厂商目录示例 <span class="ev ev-e">E</span>；量化是低频离线作业 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">模型制品：旋转 + 量化后的权重（W←Q⊤diag(α)W 等）是新制品，非原 checkpoint</th>
+        <td><span class="ev ev-e">E</span> 制品库按「基础模型 × 旋转种子 × 量化配方（方法/位宽/组/裁剪比）× 内核版本」命名与存储；制品不可变、签名分发</td>
+        <td>制品语义为论文事实 <span class="ev ev-p">P</span>（第 4-7 页）；命名与治理为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">推理栈：HuggingFace + PyTorch + CUDA/12.1 + CUTLASS + FlashInfer 自研内核</th>
+        <td><span class="ev ev-e">E</span> 自建推理服务时以容器镜像固化「框架 + 内核 + 驱动」组合；托管/GPU Worker 类产品需确认可注入自定义 CUDA 内核</td>
+        <td>实现栈为论文事实 <span class="ev ev-p">P</span>（第 7 页）；镜像/产品映射为云实践 <span class="ev ev-e">E</span>；论文未绑定任何服务框架 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">显存容量：权重 4bit + KV 缓存 4bit（组 128）+ FP16 激活/残差</th>
+        <td><span class="ev ev-e">E</span> 容量模型进编排：按 §7.2 公式估单实例并发；KV 4bit 相对 FP16 的节省换 batch 或上下文长度</td>
+        <td>精度构成与单块显存节省为论文事实 <span class="ev ev-p">P</span>（第 7 页、第 21 页表 17）；容量公式为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性：收益在「prefill 算力」与「解码显存」两侧兑现</th>
+        <td><span class="ev ev-e">E</span> prefill 段（长输入、大 batch）路由到 INT4 实例收益最大；小 batch 低延迟实例可关闭 KV 量化档位</td>
+        <td>加速随 batch 增大、小 batch KV 更慢为论文事实 <span class="ev ev-p">P</span>（第 8、18、20 页）；路由策略为工程建议 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：困惑度/零样本回归、TTFT、峰值显存</th>
+        <td><span class="ev ev-e">E</span> 监控 TTFT 漂移、显存水位、PPL/零样本抽样回归（上线前固定「FP16 vs QuaRot」双基线读数）；异常回退原 checkpoint 并告警</td>
+        <td>论文评测口径为 <span class="ev ev-p">P</span>（第 7-9 页）；监控指标设计为编辑建议 <span class="ev ev-i">I</span>、接入为云实践 <span class="ev ev-e">E</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> ①QuaRot 的量化作业与推理服务是两类资源：前者小时级单卡、后者常驻——分开规划；②旋转+量化制品是「模型谱系」的一支，多模型多档位（4/6/8bit）会放大制品管理面；③论文目标即消费级 GPU，在已有 RTX 3090/4090 池的团队里落地阻力最小，但要自建内核栈。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 指标口径（论文使用的）</h3>
+<p><span class="ev ev-p">P</span>（第 7-9、18-21 页）精度：WikiText-2 困惑度（序列 2048）与 LM Evaluation Harness 六项零样本均值（默认参数）；效率：<strong>单 Transformer 块</strong>的 TTFT prefill 加速倍数（相对 FP16，序列 2048 × batch 扫描）、解码单 token 峰值显存（GB 与节省倍数）、4bit 线性层/解码例程的毫秒级运行时（100/1000 次平均）。TTFT/TPOT 绝对值、整模型端到端吞吐、能耗：论文未明确披露。</p>
+
+<h3>7.2 容量与成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+INT4 权重显存 ≈ 参数量 N × 4/8 字节 + 分组缩放摊销（每组一个缩放因子，组大小按表 4 选档）<br>
+INT4 KV 显存/token ≈ 2(K与V) × 层数 L × KV 头数 h_kv × 头维 d_h × 4/8 字节 + 非对称缩放摊销（组 128；GQA 模型 h_kv &lt; 注意力头数）<br>
+prefill 时间比 ≈ (INT4 层运行时 + Hadamard/量化开销) ÷ FP16 层运行时（单块实测基准：图 4 左、表 14/16）<br>
+单实例可容 batch ≈ (HBM 容量 − INT4 权重 − INT4 KV×上下文×并发 − FP16 激活/框架开销 − 回退 FP16 余量) ÷ 单请求 KV 字节<br>
+每百万 token 成本 ≈ 实例时单价 ÷ (实测吞吐 tokens/s × 3600) × 10^6（单价按查询当时记录日期，不写死）
+</div>
+<p><span class="ev ev-i">I</span> 公式中可由论文支撑的量：解码峰值显存节省至多 3.89×（单块、batch 16，表 17）；prefill 加速 1.97×~3.33×（单块、序列 2048，图 4 左/表 16）；INT8 无损、6bit 近无损（表 3/9）。其余（云单价、整模型吞吐、激活峰值、回退余量、请求长度分布）需按部署实测与当时目录填写，本页不给出伪精确数字。<span class="ev ev-i">I</span> 注意表 17 的分母是「单块」显存（7B 基线 0.39~1.42GB、70B 1.6~1.9GB），不含整模型其余层——不能直接乘层数外推整卡占用。</p>
+
+<h3>7.3 性能数字上下文速查（RTX 3090 · 单 Transformer 块）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>性能结论速查（均为 <span class="ev ev-p">P</span>；条件列缺一不可）</caption>
+    <thead>
+      <tr><th scope="col">条目</th><th scope="col">数值/结论</th><th scope="col">条件</th><th scope="col">来源</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">prefill 加速（TTFT）</th><td class="num">7B：1.97×/2.06×/2.11×/2.14×/2.16×（batch 1/4/16/32/64）；70B：3.16×/3.27×/3.32×/3.33×（batch 1/4/16/32，图 4 左另含 batch 64 点 3.33×）</td><td>序列 2048；相对 FP16；单块；RTX 3090</td><td><span class="ev ev-p">P</span> 第 8 页图 4 左、第 20 页表 16</td></tr>
+      <tr><th scope="row">解码峰值显存节省</th><td class="num">7B：3.60×~3.75×（batch 16 随序列 256→4096 升至 3.75×）；70B：batch 16 全部 3.89×、batch 1 达 3.92×；两模型至少 3.63×</td><td>解码 50 token；KV 缓存 256~4096；单块；RTX 3090</td><td><span class="ev ev-p">P</span> 第 8 页图 4 右、第 21 页表 17</td></tr>
+      <tr><th scope="row">4bit 线性层（W_down）</th><td class="num">7B 3.2×、70B 4.3×（batch 1，含 Hadamard）；Hadamard 至多 +7% 开销；随 batch 近似线性扩展</td><td>序列 2048；batch 1；1000 次平均（图 7）/100 次（表 14）</td><td><span class="ev ev-p">P</span> 第 18-19 页</td></tr>
+      <tr><th scope="row">INT4 KV 解码例程</th><td class="num">batch≥16 反超 FP16、论文口径至多 1.72×；batch≤8 反而更慢（7B 头配置 batch 1：0.713ms→1.033ms）</td><td>单 token、缓存 2047；序列 2048；单块；RTX 3090；100 次平均</td><td><span class="ev ev-p">P</span> 第 18、20 页表 15</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>7.4 敏感项与数据缺口</h3>
+<ul>
+  <li><span class="ev ev-p">P</span> 敏感项排序（各自条件下）：模型家族（LLAMA-3 掉点约为 LLAMA-2 两倍以上，表 11/12）＞ 权重量化方法（4bit 下 RTN 比 GPTQ 差 2.27→0.34 PPL，表 3）＞ 位宽（8bit 无损、6bit 近无损、4bit 有感，表 3/9）＞ KV 位宽组合（≤3bit 近免费；keys 比 values 敏感，表 6）＞ 权重组大小（256→64 单调变好、更费缩放存储，表 4）。</li>
+  <li><span class="ev ev-p">P</span> 数据缺口：TTFT/TPOT 绝对值、整模型端到端吞吐、能耗、精度评测 GPU 型号、KV 缩放因子存储精度、不同上下文长度的完整吞吐曲线——论文未明确披露。</li>
+  <li><span class="ev ev-i">I</span> 云价格、内核集成一次性工程成本、旋转制品的存储成本：论文未涉及，部署时自测并记录查询日期。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>量化数据仍是用户数据：</strong><span class="ev ev-i">I</span> QuaRot 不改变 KV 缓存的语义——它仍完整保留全部输入 token（只是精度降为 INT4 组 128），量化不是加密。多租户实例复用前必须重置/清零 KV 显存，显存 dump 即数据泄露（通用推理服务要求）。</li>
+  <li><strong>制品完整性与来源：</strong><span class="ev ev-p">P</span> 服务用的权重是「旋转 + 量化」后的新制品（W←Q⊤diag(α)W 等），旋转依赖随机向量 s、量化依赖校准集（128 条 WikiText-2）与裁剪比/组大小（第 4-7 页）<span class="ev ev-i">I</span> 制品必须记录配方元数据并签名；种子/配方不可追溯的制品不应上线。</li>
+  <li><strong>供应链：</strong><span class="ev ev-r">R</span> 代码来自摘要印明的 <code>github.com/spcl/QuaRot</code>（2026-09-15 在线核验：SPCL/ETH Zurich、Apache-2.0、HEAD <code>5008669b</code>、2024-11-26 后无新 push、无 tag）；内核依赖 CUTLASS（论文参考文献印明）与 FlashInfer（同）<span class="ev ev-i">I</span> 引入时 pin commit/镜像 digest、扫描 CUDA 内核与依赖、保留可回退版本；仓库一年无 push，视同「冻结的研究代码」，安全补丁需自行跟进。</li>
+  <li><strong>输出分布变化：</strong><span class="ev ev-p">P</span> 4bit 量化改变输出分布（零样本均值 -1.09%~-4.18%，表 2）<span class="ev ev-i">I</span> 合规审查应以「QuaRot 量化后制品的实际输出」为对象，不能沿用 FP16 模型的评估结论；6/8bit 档位损失在噪声级（表 3），对合规敏感业务可作折中。</li>
+</ul>
+
+<h3>8.2 可运维性（含恢复与回滚）</h3>
+<ul>
+  <li><strong>回退路径＝原始 FP16 checkpoint：</strong><span class="ev ev-i">I</span> 旋转不可逆地改写了权重矩阵，「关闭量化」不是运行时开关——回退必须重新部署原始 FP16 权重（显存占用随之上升，需预留余量或联动降载）。FP16 原始 checkpoint 必须与量化制品同生命周期保存。</li>
+  <li><strong>配置变更管理：</strong><span class="ev ev-p">P</span> 量化配方（方法/位宽/组大小/裁剪比/校准集）直接决定精度（表 3/4/5/6）<span class="ev ev-i">I</span> 把配方作为与制品绑定的配置资产管理，变更走灰度 + PPL/零样本回归；禁用未回归过的组合。</li>
+  <li><strong>故障恢复：</strong><span class="ev ev-i">I</span> 推理服务无训练态，故障恢复＝实例重启 + 制品重载；KV 缓存不持久化、丢失即重算（prefill 重放）。多实例无状态水平扩展，单实例故障由负载均衡摘除（云编排能力，<span class="ev ev-e">E</span>）。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 建议：①TTFT 相对双基线的漂移（内核或批处理异常先在这里显形）；②峰值显存水位（量化失效/回退会先表现为显存回升）；③PPL/零样本抽样分数（配方错误直接掉点）；④INT4 KV 解码时延按 batch 分桶观察（batch≤8 区间应预期更慢而非告警）。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-i">I</span> 内核（CUTLASS/FlashInfer）与框架/驱动版本配对 pin；基础模型升级必须重新走「旋转 → 量化 → 回归」全流程（旧配方对新模型无效，LLAMA-3 即反例）；升级走金丝雀 + 双基线回归（FP16 vs 量化各测一组）。</li>
+  <li><strong>验收基线：</strong><span class="ev ev-i">I</span> 上线前固定「FP16 vs QuaRot」两组读数：prefill 时延（目标 batch/序列）、解码显存、PPL/零样本抽测，形成可复核差值；此后任何变更以差值回归验收。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>prefill/算力受限、追求 W4A4 全 INT4 的推理服务。</strong>触发：长输入、大 batch、prefill 时延或 GPU 租金为主要成本，且硬件支持 INT4 TensorCore。理由：无高精度通道的 4bit 前向，单块 prefill 加速 1.97×~3.33×（序列 2048，batch 随模型 1.97×/3.33× 封顶），加速随 batch 增大 <span class="ev ev-p">P</span>（第 8 页图 4 左、第 20 页表 16）。</li>
+  <li><strong>KV/显存受限的长上下文批量服务（大 batch）。</strong>触发：解码期 KV 显存触顶、想换更大 batch 或更长上下文。理由：解码峰值显存至多 3.89×（单块、batch 16、解码 50 token）；KV 到 3bit 近免费、4bit 几乎无损（退化 ≤0.21）<span class="ev ev-p">P</span>（第 8、14、21 页）。</li>
+  <li><strong>手握 RTX 3090/4090 类消费级 GPU 池、想在单卡/少卡上跑 70B 级模型的团队。</strong>触发：硬件以消费级为主、无力上 A100/H100 集群。理由：论文明确定位消费级 GPU 并在 RTX 3090 上完成全部性能实验 <span class="ev ev-p">P</span>（第 7-8 页）。</li>
+  <li><strong>想要免校准、近无损省显存的快速落地（6/8bit 档）。</strong>触发：不想跑 GPTQ 校准、只求把权重/激活/KV 降到 6 或 8bit。理由：RTN 6/8bit 免校准免超参，INT8 完全保持 FP16、6bit 近无损（如 70B INT6 均值 77.21 vs FP16 77.07）<span class="ev ev-p">P</span>（第 9、16 页表 3/9）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>小 batch（≤8）、单请求延迟敏感的解码场景。</strong>触发：交互式单并发/低并发生成，TPOT 是首要 SLO。理由：4bit KV 收益在降 IO，batch≤8 时 INT4 缓存解码比 FP16 <strong>慢</strong>（7B 头配置 batch 1：0.713ms vs 1.033ms），batch 16 起才反超 <span class="ev ev-p">P</span>（第 18、20 页表 15）；<span class="ev ev-i">I</span> 期望「INT4 一定更快」属于误读收益对象。</li>
+  <li><strong>LLAMA-3 等对量化敏感的模型追求 4bit。</strong>触发：目标模型不在 LLAMA-2 系或实测掉点超阈值。理由：LLAMA-3 8B 4bit PPL 6.14→8.16、零样本均值 73.22→65.18（70B 79.94→69.21），明显差于 LLAMA-2 同规格 <span class="ev ev-p">P</span>（第 16-17 页表 11/12）。</li>
+  <li><strong>无 INT4 TensorCore、或无法集成自定义 CUDA 内核的运行环境。</strong>触发：老 GPU、非 NVIDIA 栈、或托管平台不允许注入 CUTLASS/FlashInfer 自定义内核。理由：QuaRot 的 W4A4 前向完全建立在其自研 CUTLASS INT4 GEMM 与 FlashInfer KV 内核上（CUDA/12.1 + PyTorch）<span class="ev ev-p">P</span>（第 7-8 页）；<span class="ev ev-i">I</span> 缺内核栈时只剩仿真量化，无性能收益。</li>
+  <li><strong>要求输出与 FP16 逐 bit 一致的合规/审计场景。</strong>触发：输出可复现性被硬性要求。理由：4bit 量化改变输出分布（零样本 -1.09%~-4.18%）；即便 INT8 RTN「精度无损」也是统计口径，非逐 bit 一致 <span class="ev ev-p">P</span>（第 7-9 页）＋<span class="ev ev-i">I</span>（口径判断）。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span>（第 7 页）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（页码均已核验）</caption>
+    <tbody>
+      <tr><th scope="row">模型</th><td>LLAMA-2 家族（7B/13B/70B）；附录：LLAMA-3（8B/70B）、Phi-3-mini-4k-instruct（revision=ff07dc01）<span class="ev ev-p">P</span>（第 7、16-17 页）</td></tr>
+      <tr><th scope="row">量化配方</th><td>权重：GPTQ（默认）/RTN，per-column 对称，裁剪比按 MSE 线性搜索；激活：对称 per-token RTN，裁剪比恒 0.9；KV：非对称、组 128、裁剪比恒 0.95；校准集：WikiText-2 训练集 128 样本、序列 2048 <span class="ev ev-p">P</span>（第 7 页）</td></tr>
+      <tr><th scope="row">任务</th><td>WikiText-2 困惑度（序列 2048）；LM Evaluation Harness 默认参数：PIQA、WinoGrande、HellaSwag、Arc-Easy、Arc-Challenge、LAMBADA <span class="ev ev-p">P</span>（第 7 页）</td></tr>
+      <tr><th scope="row">硬件</th><td>性能：NVIDIA RTX 3090（消费级定位），CUDA/12.1；离线量化：单卡 NVIDIA A100（70B 修改 5 分钟 + GPTQ 2 小时）；精度评测 GPU：论文未明确披露 <span class="ev ev-p">P</span>（第 7-8 页）</td></tr>
+      <tr><th scope="row">内核</th><td>自研 CUDA：CUTLASS INT4 GEMM（TensorCore、INT32 累加）+ FlashInfer KV 量化；实现在 HuggingFace + PyTorch 之上 <span class="ev ev-p">P</span>（第 7 页）</td></tr>
+      <tr><th scope="row">性能范围</th><td><strong>单个 Transformer block</strong>（「整模型在大 batch 下装不进我们的 GPU 集群」）；prefill=TTFT 加速、解码=峰值显存与单 token 时延 <span class="ev ev-p">P</span>（第 7-8、17-21 页）</td></tr>
+      <tr><th scope="row">基线</th><td>精度：同模型 FP16；性能：FP16 实现（CUTLASS/FlashInfer 路径的 FP16 对照）<span class="ev ev-p">P</span>（第 7-9 页）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 主精度结果（表 1 / 表 2 全量转录）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 1 转录：WikiText-2 困惑度，4bit 量化全部权重/激活/缓存，序列 2048（<span class="ev ev-p">P</span>，PDF 第 8 页；SmoothQuant/OmniQuant 数字取自 Shao et al., 2023；#离群特征＝保留的高精度通道数）</caption>
+    <thead>
+      <tr><th scope="col">方法</th><th scope="col">权重量化</th><th scope="col" class="num">#离群特征</th><th scope="col" class="num">7B</th><th scope="col" class="num">13B</th><th scope="col" class="num">70B</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Baseline（FP16）</th><td>—</td><td class="num">—</td><td class="num">5.47</td><td class="num">4.88</td><td class="num">3.32</td></tr>
+      <tr><th scope="row">SmoothQuant</th><td>RTN</td><td class="num">0</td><td class="num">83.12</td><td class="num">35.88</td><td class="num">—</td></tr>
+      <tr><th scope="row">OmniQuant</th><td>RTN</td><td class="num">0</td><td class="num">14.26</td><td class="num">12.30</td><td class="num">—</td></tr>
+      <tr><th scope="row">QUIK-4B</th><td>GPTQ</td><td class="num">256</td><td class="num">8.87</td><td class="num">7.78</td><td class="num">6.91</td></tr>
+      <tr><th scope="row">QuaRot</th><td>GPTQ</td><td class="num">0</td><td class="num">6.10</td><td class="num">5.40</td><td class="num">3.79</td></tr>
+      <tr><th scope="row">Atom-128G</th><td>—</td><td class="num">128</td><td class="num">6.03</td><td class="num">5.26</td><td class="num">—</td></tr>
+      <tr><th scope="row">QuaRot-128G</th><td>GPTQ-128G</td><td class="num">0</td><td class="num">5.93</td><td class="num">5.26</td><td class="num">3.61</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>表 2 转录：零样本准确率，4bit（A4W4KV4）QuaRot（<span class="ev ev-p">P</span>，PDF 第 8 页；LM Evaluation Harness 默认参数）</caption>
+    <thead>
+      <tr><th scope="col">模型</th><th scope="col">方法</th><th scope="col" class="num">PIQA</th><th scope="col" class="num">WinoGrande</th><th scope="col" class="num">HellaSwag</th><th scope="col" class="num">Arc-E</th><th scope="col" class="num">Arc-C</th><th scope="col" class="num">LAMBADA</th><th scope="col" class="num">均值</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="2">LLAMA2-7B</th><td>FP16</td><td class="num">79.11</td><td class="num">69.06</td><td class="num">75.99</td><td class="num">74.58</td><td class="num">46.25</td><td class="num">73.90</td><td class="num">69.82</td></tr>
+      <tr><td>QuaRot</td><td class="num">76.77</td><td class="num">63.77</td><td class="num">72.16</td><td class="num">69.87</td><td class="num">40.87</td><td class="num">70.39</td><td class="num">65.64</td></tr>
+      <tr><th scope="row" rowspan="2">LLAMA2-13B</th><td>FP16</td><td class="num">80.47</td><td class="num">72.22</td><td class="num">79.39</td><td class="num">77.48</td><td class="num">49.23</td><td class="num">76.75</td><td class="num">72.59</td></tr>
+      <tr><td>QuaRot</td><td class="num">78.89</td><td class="num">70.24</td><td class="num">76.37</td><td class="num">72.98</td><td class="num">46.59</td><td class="num">73.67</td><td class="num">69.79</td></tr>
+      <tr><th scope="row" rowspan="2">LLAMA2-70B</th><td>FP16</td><td class="num">82.70</td><td class="num">77.98</td><td class="num">83.84</td><td class="num">80.98</td><td class="num">57.34</td><td class="num">79.58</td><td class="num">77.07</td></tr>
+      <tr><td>QuaRot</td><td class="num">82.43</td><td class="num">76.24</td><td class="num">81.82</td><td class="num">80.43</td><td class="num">56.23</td><td class="num">78.73</td><td class="num">75.98</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span> 论文口径：QuaRot 以至多 0.63 困惑度损失（70B 为 0.47）优于全部先前工作，无需重训练、无需高精度离群通道；对 Atom 同分组数：7B 好 0.1、13B 持平；零样本平均分损失至多 4.18%（70B 为 1.09%）（第 7-8 页）。</p>
+
+<h3>10.3 性能结果（RTX 3090 · 单 Transformer 块）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>性能证据要点（均为 <span class="ev ev-p">P</span>；页码已核验；「单块」限定不可省略）</caption>
+    <thead>
+      <tr><th scope="col">证据</th><th scope="col">数值/结论</th><th scope="col">条件</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">图 4 左（TTFT prefill 加速）</th><td class="num">7B：1.97×→2.16×（batch 1/4/16/64）；70B：3.16×→3.33×（同 batch 轴）</td><td>序列 2048；相对 FP16</td><td>第 8 页；柱顶为论文印刷标注值</td></tr>
+      <tr><th scope="row">表 16（分 batch 明细）</th><td class="num">7B 含 batch 32＝2.14×；70B 列至 batch 32＝3.33×（表内无 70B batch-64 行；引言（§1 贡献列表）batch 64 对应图 4 左）</td><td>序列 2048；单块</td><td>第 20 页</td></tr>
+      <tr><th scope="row">图 4 右 + 表 17（解码显存）</th><td class="num">batch 16：7B 3.63×→3.75×（序列 256→4096）；70B 全 3.89×；batch 1 时 70B 3.92×、7B 3.60×~3.67×</td><td>解码 50 token；KV 256~4096；单块</td><td>第 8、21 页</td></tr>
+      <tr><th scope="row">图 7 / 表 14（4bit 线性层）</th><td class="num">7B 3.2×、70B 4.3×（batch 1，含 Hadamard，如 70B W_down 12.45→2.91ms）；Hadamard 至多 +7%</td><td>序列 2048；batch 1；1000/100 次平均</td><td>第 18-19 页</td></tr>
+      <tr><th scope="row">表 15（INT4 KV 解码）</th><td class="num">batch≥16 反超（至多 1.72×）；batch≤8 更慢（32×128：bs1 0.713→1.033ms；bs16 1.348→1.018ms）</td><td>单 token、缓存 2047；单块；100 次平均</td><td>第 18、20 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.4 消融与其他证据</h3>
+<div class="table-scroll">
+  <table>
+    <caption>消融要点（均为 <span class="ev ev-p">P</span>；页码已核验）</caption>
+    <thead>
+      <tr><th scope="col">证据</th><th scope="col">数值/结论</th><th scope="col">条件</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">表 3：RTN vs GPTQ</th><td class="num">7B：INT4 RTN 8.37/均值 58.26 vs GPTQ 6.10/65.64；INT8 RTN 5.50/69.65 ≈ FP16 5.47/69.82；70B：INT4 4.14/73.63、INT8 3.33/77.17 vs FP16 3.32/77.07；RTN-GPTQ 差距 2.27（7B）→0.34（70B）</td><td>RTN 权重+激活；量化全部权重/激活/缓存</td><td>第 9 页</td></tr>
+      <tr><th scope="row">表 4：权重组大小</th><td class="num">7B：256G 5.98 / 128G 5.93 / 64G 5.88（QuaRot 基线 6.10、FP16 5.47）；KV 组固定 128=头维</td><td>GPTQ；4bit</td><td>第 9 页</td></tr>
+      <tr><th scope="row">表 5：裁剪比</th><td class="num">输入 1.0/0.95/0.9/0.85 → 5.938/5.910/5.828（最优）/5.850；KV → 5.513/5.510（最优）/5.517/5.532</td><td>LLAMA2-7B；其余全精度</td><td>第 13-14 页</td></tr>
+      <tr><th scope="row">表 6：KV 位宽组合</th><td class="num">7B：K4V4 5.51、K4V3 5.54、K3V4 5.65、K3V3 5.68、K4V2 5.75、K3V2 5.93、K2V4 8.06、K2V3 8.18、K2V2 9.23（FP16 5.47）；keys 比 values 敏感</td><td>非对称组 128；其余全精度</td><td>第 14 页</td></tr>
+      <tr><th scope="row">表 7：weight-only</th><td>旋转使 4bit GPTQ 改善至多 2.65；RTN 改善至多 0.24；2bit GPTQ 70B 达 5.60（无旋转 25.30）</td><td>非对称 per-column；输入/KV 保持 FP16</td><td>第 14-15 页</td></tr>
+      <tr><th scope="row">表 8：随机正交 vs Hadamard</th><td class="num">Random 7.45/5.84/4.07 vs Hadamard 6.10/5.40/3.79（差距 1.35→0.28 随模型缩小）</td><td>4bit QuaRot</td><td>第 15 页</td></tr>
+      <tr><th scope="row">表 10：Hadamard 精度</th><td>FP16 替代 FP32：7B PPL 变化 &lt;0.1、零样本 &lt;0.6%（视为噪声）；13B PPL 相同、均值差 0.07%</td><td>down/out-proj 在线变换</td><td>第 15-16 页</td></tr>
+      <tr><th scope="row">表 11/12：LLAMA-3</th><td class="num">8B：6.14→8.16（128G 7.36）；零样本 73.22→65.18。70B：2.86→6.66（128G 5.51）；79.94→69.21</td><td>4bit；序列 2048</td><td>第 16-17 页</td></tr>
+      <tr><th scope="row">表 13：Phi-3-mini</th><td class="num">GPTQ INT4 7.85/均值 66.34（FP16 6.35/73.11）；RTN INT4 11.69/56.12；INT8 6.58/73.18</td><td>revision=ff07dc01</td><td>第 17 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>各结果条件字段完整性（缺项一律显式标注）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col">硬件</th><th scope="col">精度</th><th scope="col">批量/负载</th><th scope="col">基线</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">PPL/零样本（表 1-4、9-13）</th><td>论文未明确披露</td><td>W4A4KV4 及 4/6/8bit 档</td><td>LM Harness 默认参数；批量未披露</td><td>同模型 FP16</td><td><span class="ev ev-p">P</span> 第 7-9、13-17 页</td></tr>
+      <tr><th scope="row">prefill 加速（图 4 左、表 16）</th><td>RTX 3090</td><td>W4A4KV4 vs FP16</td><td>序列 2048；batch 1~64；单块</td><td>FP16 实现</td><td><span class="ev ev-p">P</span> 第 8、20 页</td></tr>
+      <tr><th scope="row">解码显存/时延（图 4 右、表 15/17）</th><td>RTX 3090</td><td>W4A4KV4 vs FP16</td><td>解码 50 token / 单 token；KV 256~4096；单块</td><td>FP16 实现</td><td><span class="ev ev-p">P</span> 第 8、20-21 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①3.33×/3.89×/1.72×/3.2×/4.3× 全部是 <strong>RTX 3090 单 Transformer 块</strong>测量，各带不同 batch/序列条件——不得概括为「整模型快 3.33×」或数据中心吞吐结论，论文自己说明整模型大 batch 装不进其集群、端到端数字未测；②结论章的「2.16× prefill / up to 3.39× memory saving」为 7B batch-64 prefill 数字与一处笔误——引言（§1 贡献列表）与 §5.2 均为 3.89×，70B batch 1 的表值甚至为 3.92×——引用时以引言贡献列表/§5.2 口径为准并注明；③表 16 的 70B 行止于 batch 32，batch 64 的 3.33× 见于图 4 左与引言（§1 贡献列表）；④零样本「平均分损失至多 4.18%」是 7B 的百分点差、70B 为 1.09%，不可互换；⑤LLAMA-2 结果不能外推到 LLAMA-3/Phi-3（后者明显更差）；⑥精度实验的 GPU 型号论文未披露。<span class="ev ev-i">I</span> 本站不做跨论文数字比较。
+</div>
+
+<h3>10.5 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-r">R</span>／<span class="ev ev-i">I</span> 从官方仓库取代码（已核验 spcl/QuaRot，pin HEAD <code>5008669b</code> 或后续 commit）；确认 CUTLASS、FlashInfer、PyTorch/CUDA 12.1 版本组合可构建。</li>
+  <li><span class="ev ev-i">I</span> 精度复测：LLAMA2-7B/70B 先行——按论文配方旋转（Stage 1）+ GPTQ 量化（128 条 WikiText-2、序列 2048、裁剪比 0.9/0.95、权重组 128），对齐 WikiText-2 PPL 与 LM Harness 六任务默认参数，对照表 1/2（如 70B：3.79/75.98）。</li>
+  <li><span class="ev ev-i">I</span> RTN 档位复测：同流程换 RTN（免校准），对照表 3（INT8 应完全追平 FP16；4bit 差距随模型规模缩小）。</li>
+  <li><span class="ev ev-i">I</span> 性能复测：单卡 RTX 3090、单 Transformer 块——prefill TTFT（序列 2048、batch 1~64）、解码峰值显存（batch 16、KV 256~4096）、W_down 线性层与 KV 解码例程毫秒数，对照图 4、表 14-17；同时复测 batch≤8 的 KV 解码劣化区间。</li>
+  <li><span class="ev ev-i">I</span> 目标业务实测：在真实上下文/并发分布上测「FP16 vs 量化」双基线差值（TTFT、吞吐、显存、抽样 PPL/零样本），再决定启用位宽档位与 KV 量化开关；记录模型升级后重跑全流程的成本。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2404.00456" rel="noopener noreferrer">https://arxiv.org/abs/2404.00456</a></td>
+        <td><span class="ev ev-p">P</span> arXiv:2404.00456v2（2024-10-29，PDF 竖排水印逐字核验）；NeurIPS 2024（第 1 页页脚）；本地 PDF：<code>09_QuaRot_2404.00456.pdf</code>（21 页）</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/spcl/QuaRot" rel="noopener noreferrer">https://github.com/spcl/QuaRot</a></td>
+        <td><span class="ev ev-r">R</span> 论文摘要末句印明（第 1 页逐字核验：Code is available at github.com/spcl/QuaRot）；2026-09-15 在线核验：spcl（ETH Zurich SPCL 实验室）所有、默认分支 main、HEAD <code>5008669b08c1f11f9b64d52d16fddd47ca754c5a</code>（2024-11-26）、Apache-2.0、tags 为空；此后无新 push，使用前再查最新 commit。</td>
+      </tr>
+      <tr>
+        <th scope="row">论文引用的依赖仓库</th>
+        <td><a href="https://github.com/NVIDIA/cutlass" rel="noopener noreferrer">https://github.com/NVIDIA/cutlass</a>（CUTLASS）；<a href="https://github.com/flashinfer-ai/flashinfer" rel="noopener noreferrer">https://github.com/flashinfer-ai/flashinfer</a>（FlashInfer）</td>
+        <td><span class="ev ev-r">R</span> 两 URL 印于论文参考文献（第 11-12 页）；2026-09-15 在线核验均存在（CUTLASS 最近 push 2026-09-08、许可为 NVIDIA 自定义 BSD 类；FlashInfer Apache-2.0、最近 push 2026-09-15）。属依赖而非论文官方仓库。</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库</th>
+        <td>不提供</td>
+        <td><span class="ev ev-i">I</span> 遵循本站「不猜测仓库」策略：论文引 Sloane [2024] 的 Hadamard 矩阵列表仅有 HTTP 地址（非 HTTPS，本站不外链）；第三方/镜像/框架集成仓库一律不链接。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验项，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 明确收益对象：prefill 算力（大 batch）与解码显存（KV/权重），不是小 batch 单请求延迟（P：加速随 batch 增大、batch≤8 KV 解码更慢，第 8、18、20 页）</label></li>
+      <li><label><input type="checkbox"> 确认目标模型家族与 4bit 掉点容忍度：LLAMA-2 系证据充分，LLAMA-3/其他家族先跑 PPL + 零样本再决定（P：表 11/12，第 16-17 页）</label></li>
+      <li><label><input type="checkbox"> 确认单块数字与自身负载的换算关系：论文无整模型端到端吞吐，须自测（P：单块口径，第 7-8 页；I：换算）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认 GPU 支持 INT4 TensorCore 且 CUDA/驱动可构建 CUTLASS INT4 GEMM 与 FlashInfer KV 内核（P：内核栈，第 7-8 页；I：环境前提）</label></li>
+      <li><label><input type="checkbox"> 确认推理栈可承载 HuggingFace + PyTorch 上的旋转/量化流程与自研内核（P：实现栈，第 7 页）</label></li>
+      <li><label><input type="checkbox"> 核验官方仓库与依赖仓库后 pin commit/镜像 digest（R：spcl/QuaRot 2026-09-15 已核验 HEAD 5008669b；CUTLASS/FlashInfer 同日核验存在）</label></li>
+      <li><label><input type="checkbox"> 隐藏维检查：d 为 2 的幂或可分解 d=2ⁿ·m（Kronecker Hadamard），否则在线变换与内核需适配（P：§3.1，第 3 页；I：工程判断）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 复测「FP16 vs 4bit GPTQ」：WikiText-2 PPL + 六任务零样本，对照表 1/2（70B：3.79/75.98）（P：第 7-8 页；I：方法）</label></li>
+      <li><label><input type="checkbox"> 复测 RTN 8bit/6bit 档：确认 INT8 追平 FP16、6bit 损失可接受（P：表 3/9，第 9、16 页）</label></li>
+      <li><label><input type="checkbox"> 单块性能复测：prefill TTFT（序列 2048、batch 1~64）与解码显存（batch 16、KV 256~4096），对照图 4/表 16/17（P：第 8、20-21 页）</label></li>
+      <li><label><input type="checkbox"> 实测自身 batch 区间的 KV 解码时延：确认不落在 batch≤8 的劣化区间（P：表 15，第 18、20 页；I：分桶方法）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式重算单实例容量：INT4 权重 + INT4 KV（组 128）+ FP16 激活/残差 + 回退余量（P：精度构成，第 7 页；I：公式与余量）</label></li>
+      <li><label><input type="checkbox"> 为「回退 FP16 原始 checkpoint」预留显存余量或配套降载预案——回退不是运行时开关（P：旋转不可逆改写权重，第 4-5 页；I：运维推论）</label></li>
+      <li><label><input type="checkbox"> KV 档位选择：4bit 默认；3bit 近免费（退化 ≤0.21）可作容量紧张时的选项；禁用 2bit（P：表 6，第 14 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义 prefill TTFT 与解码吞吐 SLO，并以「FP16 vs 量化」双基线固化验收差值（I）</label></li>
+      <li><label><input type="checkbox"> 定义精度 SLO：PPL 漂移 + 零样本抽样阈值，跌破即回退原始 checkpoint（P：表 2/11 提供对照尺度；I：阈值自定）</label></li>
+      <li><label><input type="checkbox"> 故障演练：实例重启重载、重新部署 FP16 制品各演练一次（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以「当时单价 + 查询日期」估算成本差；prefill 收益按大 batch 档位、显存收益按 KV/权重字节差分别计（I）</label></li>
+      <li><label><input type="checkbox"> 计入一次性成本：内核栈构建与维护、量化作业（A100 单卡 70B 约 2 小时 + 5 分钟）、每次模型升级的全量回归（P：第 7 页；I：成本项）</label></li>
+      <li><label><input type="checkbox"> 评估 6/8bit 免校准档位作为低成本起步（INT8 无损、INT6 近无损），4bit 仅在掉点可接受时启用（P：表 3/9；I：取舍）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> INT4 KV 缓存按用户数据处理：租户/会话切换清零，显存 dump 纳入威胁模型（I；P：KV 仍保留全部 token，第 7 页）</label></li>
+      <li><label><input type="checkbox"> 制品供应链：旋转种子 s、量化配方、校准集构成与内核版本写入制品元数据并签名；不可追溯制品不上线（P：配方决定精度，第 4-7 页；I：治理）</label></li>
+      <li><label><input type="checkbox"> 输出合规以「量化后制品的实际输出」为审查对象（4bit 改变输出分布）（P：表 2；I：口径）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 内核/框架/驱动版本配对 pin；升级走金丝雀 + 双基线回归；回滚 = 回退上一配对制品或重部署 FP16 checkpoint（I）</label></li>
+      <li><label><input type="checkbox"> 监控：TTFT 漂移、显存水位、PPL/零样本抽样、KV 解码时延按 batch 分桶（I）</label></li>
+      <li><label><input type="checkbox"> 模型升级流程固化「旋转 → 量化 → 回归」全量步骤与预算（LLAMA-3 反例说明旧结论不可沿用）（P：第 16-17 页；I：流程）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 退出 = 重新部署原始 FP16 权重（无数据/格式迁移），但需预演显存回升与降载（P：制品语义；I：评估）</label></li>
+      <li><label><input type="checkbox"> 归档配方、校准集、评测脚本与双基线读数，保证任意档位可重建（I）</label></li>
+      <li><label><input type="checkbox"> 若转投其他方案（KV 专用量化、weight-only、低精度硬件格式），把「旋转消除离群」作为可移植组件评估而非整体绑定（P：旋转对 weight-only 也有效，表 7，第 14-15 页；I：对比框架）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与核验记录见构建文件 <code>sources/quarot.evidence.json</code>（编号与本表一一对应）。核验日期为 <time datetime="2026-09-15">2026-09-15</time>。</p>
+
+<div class="callout">
+  <strong>核验范围声明：</strong>本页写作时完成了全部 21 页的原页逐项目检（表 1-17、图 1-7、公式 (1)-(14) 均回原页核对）。<code>sources/quarot.txt</code> 可读并用作检索索引，但存在双栏交错与符号丢失；两处提取问题已在核验中按 PDF 原页更正：①第 3/15 页的「每层 1½ 次 Hadamard」被提取成「11」；②第 3 页 O(d log₂ d) 的下标 2 脱落。另发现论文自身一处文内不一致：结论章（第 10 页）「up to 3.39× memory saving」与引言（§1 贡献列表）/§5.2 的 3.89× 矛盾，本页照录并标注为原文笔误，不作调和。
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态（编号对应 sources/quarot.evidence.json 的 EV-01~EV-46）</caption>
+    <thead>
+      <tr><th scope="col">编号</th><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位（PDF 页码/URL）</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>EV-01</td><td>题名/9 位作者与机构/NeurIPS 2024/arXiv:2404.00456v2（2024-10-29）/21 页</td><td><span class="ev ev-p">P</span></td><td>第 1 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-02</td><td>摘要级结论：端到端 4bit（权重+激活+KV）、旋转去离群不改输出、全矩阵乘 4bit 无高精度通道、70B ≤0.47 PPL / 99% 零样本、6/8bit RTN 无损、仓库 spcl/QuaRot 印于摘要</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-03</td><td>动机：prefill compute-bound；激活离群难量化；此前靠校准集识别离群并保持高精度（Atom/QUIK）</td><td><span class="ev ev-p">P</span></td><td>第 1 页 §1</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-04</td><td>图 1：LLAMA2-7B 第 10 层 FFN 输入激活，旋转前有离群、旋转后无离群</td><td><span class="ev ev-p">P</span></td><td>第 2 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-05</td><td>贡献三条：权重融合 Hadamard、注意力在线旋转使 KV 可量化、3.33× prefill（bs64/seq2048）与 3.89× 解码显存节省</td><td><span class="ev ev-p">P</span></td><td>第 2 页 §1 贡献列表</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-06</td><td>相关工作：weight-only 主计算仍高精度；LLM.int8/SmoothQuant/Atom/QUIK 的离群通道代价；QuIP/QuIP# 的旋转；KV 量化线（FlexGen/KVQuant/KIVI）</td><td><span class="ev ev-p">P</span></td><td>第 2-3 页 §2</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-07</td><td>在线 Hadamard 口径：QuaRot 每层仅需 1½ 次（QuIP# 类每权重矩阵两次）——提取文件误作 11，已按原页更正</td><td><span class="ev ev-p">P</span></td><td>第 3 页 §2、第 15 页 A.5</td><td>已核验（原页目检；提取错误已更正）</td></tr>
+      <tr><td>EV-08</td><td>数学背景：正交/Hadamard/Walsh-Hadamard O(d log₂ d)；d≠2ⁿ 的 Kronecker 构造 O(d(m+n))；随机 Hadamard H̃=H·diag(s)</td><td><span class="ev ev-p">P</span></td><td>第 3 页 §3.1、式 (1)</td><td>已核验（原页目检；log 下标已核正）</td></tr>
+      <tr><td>EV-09</td><td>incoherence processing（式 2）：μ-incoherent 定义、正交乘可降 incoherence、QuaRot 同时施加到激活</td><td><span class="ev ev-p">P</span></td><td>第 3 页 §3.2、式 (2)</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-10</td><td>计算不变性（SliceGPT Thm 1）：正交变换不改输出；RMSNorm 交换律式 (3)；缩放需先吸收</td><td><span class="ev ev-p">P</span></td><td>第 4 页 §3.4、式 (3)</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-11</td><td>方法总览：两阶段；Stage 1 全精度 + 插入两个额外 Hadamard 操作；默认 GPTQ + RTN 激活</td><td><span class="ev ev-p">P</span></td><td>第 4 页 §4</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-12</td><td>Stage 1a：融合 LN 线性部分与 diag(α)；W_k←Q⊤diag(α)W_k（式 4）；输出侧右乘 Q；X←XQ；全精度下输出不变</td><td><span class="ev ev-p">P</span></td><td>第 4-5 页、图 3</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-13</td><td>Stage 1b：down-proj 前全精度在线 Hadamard（快速核）；W_down←H·W_down·Q</td><td><span class="ev ev-p">P</span></td><td>第 5 页 Stage 1b</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-14</td><td>Stage 1c：W_v/W_out 的 head-wise Hadamard（式 7-8）、恒等式 (9)、Hadamard heads 块 Z←Z(H_nh⊗I)、W_out←H·W_out</td><td><span class="ev ev-p">P</span></td><td>第 5-6 页、式 (5)-(9)</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-15</td><td>Stage 1d：Q/K 在 RoPE 后在线 head-wise 旋转（式 13-14）、分数不变；Post-RoPE caching vs Pre-RoPE（KVQuant）取舍</td><td><span class="ev ev-p">P</span></td><td>第 6 页、式 (10)-(14)；A.1 第 13 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-16</td><td>Stage 2a：默认 GPTQ；任何量化方法可用；RTN 以精度为代价</td><td><span class="ev ev-p">P</span></td><td>第 6 页 Stage 2a</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-17</td><td>Stage 2b：RMSNorm FP32；对称 per-token；scale=max|·|/7；INT32→FP16 反量化乘行×列缩放</td><td><span class="ev ev-p">P</span></td><td>第 7 页 Stage 2b</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-18</td><td>Stage 2c：查询 FP16、在线 softmax 类 FlashAttention、KV 段反量化后 FP16 点积</td><td><span class="ev ev-p">P</span></td><td>第 7 页 Stage 2c</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-19</td><td>Setup：clip 0.9（输入）/0.95（KV）、KV 组 128、权重 per-column 对称（MSE 搜索）；校准 128 条 WikiText-2、序列 2048；A100 上 70B 修改 5 分钟 + GPTQ 2 小时</td><td><span class="ev ev-p">P</span></td><td>第 7 页 §5 Setup</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-20</td><td>模型/内核/GPU：LLAMA-2 家族；CUTLASS INT4 GEMM（INT32 累加）+ FlashInfer KV 量化；消费级定位 → 全部性能实验在 RTX 3090</td><td><span class="ev ev-p">P</span></td><td>第 7 页、第 7-8 页 §5.2</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-21</td><td>表 1 全量：Baseline 5.47/4.88/3.32；SmoothQuant 83.12/35.88；OmniQuant 14.26/12.30；QUIK-4B 8.87/7.78/6.91（256 离群）；QuaRot 6.10/5.40/3.79；Atom-128G 6.03/5.26；QuaRot-128G 5.93/5.26/3.61</td><td><span class="ev ev-p">P</span></td><td>第 8 页 Table 1</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-22</td><td>语言生成结论：至多 0.63 PPL 损失（70B 0.47）；无需重训练/高精度离群；vs Atom：7B 好 0.1、13B 持平</td><td><span class="ev ev-p">P</span></td><td>第 7 页 §5.1</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-23</td><td>表 2 全量：7B 69.82→65.64；13B 72.59→69.79；70B 77.07→75.98；平均分损失至多 4.18%（70B 1.09%）</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页 §5.1、Table 2</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-24</td><td>§5.2 口径：CUDA/12.1、CUTLASS INT4 TensorCore、INT32 累加器；全部实验在单块（整模型大 batch 装不进集群）</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页 §5.2</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-25</td><td>图 4 左：prefill 加速 7B 1.97/2.06/2.11/2.16×、70B 3.16/3.27/3.32/3.33×（batch 1/4/16/64）；可再融合优化</td><td><span class="ev ev-p">P</span></td><td>第 8 页 Figure 4 左</td><td>已核验（柱顶为印刷标注值）</td></tr>
+      <tr><td>EV-26</td><td>图 4 右 + 文字：解码显存至少 3.63×；7B 至多 3.75×、70B 几乎全部 3.89×；7B 的 KV 占比更大（70B 用 GQA）；整模型预期更大（未测）</td><td><span class="ev ev-p">P</span></td><td>第 8 页 Figure 4 右与正文</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-27</td><td>表 3：RTN INT8 完全保持 FP16；4bit RTN-GPTQ 差 2.27（7B）→0.34（70B）；RTN 免校准</td><td><span class="ev ev-p">P</span></td><td>第 9 页 Table 3 与 §5.3</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-28</td><td>表 4：组大小 256/128/64 → 5.98/5.93/5.88（7B）；KV 组固定 128=头维；组越小越准但缩放存储与内核更贵</td><td><span class="ev ev-p">P</span></td><td>第 9 页 Table 4</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-29</td><td>结论章：99% 下游、2.16× prefill（7B 口径）、「up to 3.39× memory saving」——与引言（§1 贡献列表）/§5.2 的 3.89× 矛盾，照录为原文笔误；6/8bit 无损；未来：残差、MoE、对标 B200/FP4</td><td><span class="ev ev-p">P</span></td><td>第 9-10 页 §6（3.39× 在第 10 页顶部）</td><td>已核验（原页目检；文内不一致照录）</td></tr>
+      <tr><td>EV-30</td><td>A.1：注意力改造顺序（逆融合→W_v 头块 Hadamard→K/Q 在 RoPE 后旋转并量化 KV→out 前跨头 Hadamard）；图 5/6 逐数据流位宽</td><td><span class="ev ev-p">P</span></td><td>第 13 页 A.1、图 5-6</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-31</td><td>表 5：裁剪比消融——输入 0.9 最优（5.828）、KV 0.95 最优（5.510）；权重按 MSE 搜索、在线只能常数</td><td><span class="ev ev-p">P</span></td><td>第 13-14 页 A.2、Table 5</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-32</td><td>表 6：KV 至 3bit 退化 ≤0.21（70B ≤0.07）；keys 比 values 敏感（K4V3 +0.03 vs K3V4 +0.18）；K2V2 崩至 9.23</td><td><span class="ev ev-p">P</span></td><td>第 14 页 A.3、Table 6</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-33</td><td>表 7：旋转使 4bit GPTQ 改善至多 2.65、RTN 至多 0.24；2bit GPTQ 70B 5.60</td><td><span class="ev ev-p">P</span></td><td>第 14-15 页 A.4、Table 7</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-34</td><td>表 8：随机正交 vs Hadamard 7.45/5.84/4.07 vs 6.10/5.40/3.79（差 1.35→0.28）；在线仍 1½ 次/层</td><td><span class="ev ev-p">P</span></td><td>第 15 页 A.5、Table 8</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-35</td><td>表 10：全部实验在线 Hadamard 用 FP32；FP16 化仅噪声级（7B PPL &lt;0.1、零样本 &lt;0.6%）</td><td><span class="ev ev-p">P</span></td><td>第 15-16 页 A.7、Table 10</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-36</td><td>表 11/12：LLAMA-3 更敏感——8B 6.14→8.16（128G 7.36）、零样本 73.22→65.18；70B 2.86→6.66、79.94→69.21</td><td><span class="ev ev-p">P</span></td><td>第 16-17 页 A.8</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-37</td><td>表 13：Phi-3-mini（ff07dc01）GPTQ INT4 7.85/66.34；RTN INT4 11.69/56.12；INT8 6.58/73.18</td><td><span class="ev ev-p">P</span></td><td>第 17 页 A.9、Table 13</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-38</td><td>A.10 注意力三例程：Init（prefill 缓存初始化，注意力直接 FlashAttention）/Append（量化并追加）/Decode（量化版 flash attention）</td><td><span class="ev ev-p">P</span></td><td>第 17 页 A.10</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-39</td><td>图 7/表 14：4bit 线性层 7B 3.2×、70B 4.3×（batch 1，含 Hadamard；如 70B W_down 12.45→2.91ms）；Hadamard 至多 +7%；随 batch 近似线性</td><td><span class="ev ev-p">P</span></td><td>第 18-19 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-40</td><td>表 15 + 文字：INT4 KV 解码 batch≥16 反超（至多 1.72×）；batch≤8 更慢（32×128 bs1 0.713 vs 1.033ms）；收益在降 IO</td><td><span class="ev ev-p">P</span></td><td>第 18、20 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-41</td><td>表 16：prefill 分 batch 明细（7B 含 bs32 2.14×；70B 至 bs32 3.33×；表内无 70B bs64 行，引言（§1 贡献列表）bs64 对应图 4 左）</td><td><span class="ev ev-p">P</span></td><td>第 20 页 Table 16</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-42</td><td>表 17：解码峰值显存明细（7B bs16 3.63×→3.75×；70B bs16 全 3.89×、bs1 3.92×；含逐条 GB 数）</td><td><span class="ev ev-p">P</span></td><td>第 21 页 Table 17</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-43</td><td>官方仓库在线核验：spcl/QuaRot（ETH Zurich SPCL），main @ 5008669b（2024-11-26）、Apache-2.0、无 tag、homepage 指向论文</td><td><span class="ev ev-r">R</span></td><td>论文第 1 页摘要印明；GitHub API 2026-09-15 核验</td><td>已在线核验（2026-09-15）</td></tr>
+      <tr><td>EV-44</td><td>论文参考文献印明的依赖仓库 CUTLASS 与 FlashInfer 均在线存在（2026-09-15 核验；CUTLASS 许可为 NVIDIA 自定义 BSD 类）</td><td><span class="ev ev-r">R</span></td><td>论文第 11-12 页 References；GitHub API 2026-09-15 核验</td><td>已在线核验（2026-09-15）</td></tr>
+      <tr><td>EV-45</td><td>云实例/制品库/服务框架/监控映射示例</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录与推理服务文档</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>EV-46</td><td>成本公式、SLO/监控/回滚/清单、数据路径编号与控制面-数据面划分等工程内容</td><td><span class="ev ev-i">I</span></td><td>本报告 §4、§6-§9、§12</td><td>编辑标注完成；不含伪精确数字</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页底）">
+  <a href="08-kivi.html" rel="prev">上一篇：08 KIVI</a>
+  <a href="10-qserve.html" rel="next">下一篇：10 QServe（文件可能尚未发布）</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页论文事实基于本地 <code>09_QuaRot_2404.00456.pdf</code>（arXiv:2404.00456v2，NeurIPS 2024，21 页全部原页目检），经文本提取检索并回 PDF 原页逐项核验（页码见各处标注与 <a href="#evidence">#evidence</a>）；文本提取的「1½→11」错误已按原页更正，论文结论章「3.39×」按原文照录并标注笔误。云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有（NeurIPS 2024）；官方仓库代码许可 Apache-2.0（2026-09-15 核验）、CUTLASS 为 NVIDIA 自定义 BSD 类许可，引用与集成请遵循相应许可并以仓库当时声明为准。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-15；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

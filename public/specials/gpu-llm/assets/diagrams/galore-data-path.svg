@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 830" role="img" aria-labelledby="galore-svg-title galore-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="galore-svg-title">GaLore 数据路径图：梯度经低秩投影进入紧凑优化器状态、再投影回原空间逐层更新权重的训练回路与显存核算</title>
+  <desc id="galore-svg-desc">流程自上而下描述 GaLore 对每个线性层的训练数据路径：面板一为全秩空间的前向与反向——权重 W 属于 R^{m×n}（m 不大于 n）以 BF16 参与计算，反向产生本层梯度 G_t（论文引理 3.3 说明该梯度在训练中趋于低秩；权重本身不做低秩参数化、不引入 BA 因子，这是与 LoRA 的本质区别）；面板二为投影矩阵刷新——每 T 步对 G_t 做奇异值分解 SVD(G_t)=USV^T 并取前 r 个左奇异向量为 P_t（式 12-13），其余步复用上一个 P_t，实现上只取一侧投影（m 不大于 n 时取 P^T·G，否则取 G·Q，见 4.2 节），SVD 总开销小于 10%、T 在 50 到 1000 之间差异不大、默认 T=200；面板三为紧凑空间——投影梯度 R_t=P_t^T·G_t 属于 R^{r×n}，Adam 的一阶与二阶矩 M_t、V_t 只在该 r 秩空间维护（逐层优化器状态 mr+2nr，对比 LoRA 的 2mr+2nr，表 1），这是省显存的核心；面板四为紧凑空间内的 Adam 更新——M_t 与 V_t 做指数滑动平均并做偏置校正，归一化 N_t=M_t 除以（根号 V_t 加 epsilon）（式 15），再乘不随 r 缩放的尺度因子 alpha（4.4 节）；面板五为投影回原空间并更新权重——G 波浪号_t 等于 alpha 乘 P_t 乘 N_t（定义 3.6、式 10），W_t 等于 W_{t-1} 加 eta 乘 G 波浪号_t，增量每步立即并入 W 因而无需保存 BA、也无需 ReLoRA 式全秩热身，可选逐层权重更新在反向传播中就地更新、不保留权重梯度（较 8-bit Adam 省约 13.5G，5.5 节）；面板六为子空间组合——W 等于 W0 加各段时间增量之和（式 14），每 T 步经 SVD 换入新低秩子空间并回到面板二，切换过频会增加开销、破坏固定投影的收敛条件（定理 3.8）并使优化器状态失真，切换过疏则困于失效子空间。右侧旁栏 A 给出逐层内存核算（表 1：GaLore 合计 mn+mr+2nr，LoRA 合计 mn+3mr+3nr）；旁栏 B 给出 LLaMA 7B 显存对照（5.5 节与图 1/图 4：token batch 256、无激活检查点与卸载条件下 8-bit GaLore 实测 22.0G，优化器状态较低秩投影省 9.6G 即 65.5%、逐层权重更新再省 13.5G，总计较 BF16 Adam 基线省 37.92G 即 63.3%、较 8-bit Adam 省 24.5G 即 52.3%，22.0G 在 RTX 4090 的 24GB 容量线内，开激活检查点后 token batch 可至 4096；基线总显存约 59.9G 系由减少量与百分比反推）；旁栏 C 给出 LLaMA 1B 吞吐实测（表 11：8-bit GaLore 5.63G、1019.63 tok/s，8-bit Adam 6.93G、1205.31，AdamW 9.63G、1354.37，Adafactor 10.32G、613.90；论文口径 GaLore 吞吐开销 17%、关闭逐层更新得 1109.38 即加回 8.8%）；底部旁栏 D 为口径与风险注意：82.5% 仅见于摘要、正文未逐项推导，7B 对比为单次试验未调超参（r=1024 对 8-bit Adam，8 节点 64 张 A100、150K 步、19.7B tokens），图 1 为估算而 22.0G 为实测、官方仓库 README 的 7B 演示为 bsz=16、22.8G 且开激活检查点，算法 2 印刷的 M0、V0 形状 R^{n×r} 与 R_t 形状 R^{r×n} 不一致但元素量同为 nr，吞吐 17% 为论文口径而按表 11 原始数直接计算约 15.4%，正文表 2 的训练 tokens（1.1B/2.2B/6.4B/13.1B）与附录表 5 的数据量（1.3B/2.6B/7.8B/13.1B）两处不一致、均照录。依据论文 arXiv:2403.03507v2（ICML 2024，PMLR 235:61121-61143）第 2、5、6、8、9 页正文与图 1、图 2、图 4、表 1、表 3、表 11、算法 2、附录 C 绘制；面板编号一至六为数据路径序列，旁栏 A 至 D 与配色为编辑标注。</desc>
+  <defs>
+    <marker id="gl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="gl-arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/>
+    </marker>
+    <marker id="gl-arr-primary" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f3a5f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="830" fill="#ffffff"/>
+  <text x="30" y="32" font-size="19" font-weight="700" fill="#14385c">GaLore：梯度低秩投影 → 紧凑优化器状态 → 投影回原空间逐层更新的训练数据路径</text>
+  <text x="30" y="54" font-size="12" fill="#4b5563">方向：反向梯度 →（每 T 步 SVD 刷新 P）→ r 秩空间内 Adam → 投影回原空间并立即并入权重 → 每 T 步换子空间循环　｜　依据：arXiv:2403.03507v2（ICML 2024）</text>
+
+  <!-- 图例 -->
+  <g font-size="11" fill="#374151">
+    <rect x="30" y="66" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="49" y="77">GPU 计算路径（青）</text>
+    <rect x="170" y="66" width="14" height="14" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.6"/>
+    <text x="189" y="77">全秩空间 / 权重（蓝）</text>
+    <rect x="330" y="66" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="349" y="77">紧凑空间 / 优化器状态（紫）</text>
+    <rect x="520" y="66" width="14" height="14" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+    <text x="539" y="77">口径与风险注意（琥珀，编辑标注）</text>
+    <line x1="30" y1="94" x2="64" y2="94" stroke="#334155" stroke-width="2.5" marker-end="url(#gl-arr)"/>
+    <text x="72" y="98">实线＝逐层训练数据流</text>
+    <line x1="220" y1="94" x2="254" y2="94" stroke="#1f3a5f" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#gl-arr-primary)"/>
+    <text x="262" y="98">虚线＝控制条件 / 循环（每 T 步）</text>
+    <line x1="450" y1="94" x2="484" y2="94" stroke="#b91c1c" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="492" y="98">红色虚线＝RTX 4090 24GB 容量参考线</text>
+  </g>
+
+  <!-- ① 全秩空间：前向与反向 -->
+  <rect x="30" y="112" width="580" height="66" rx="6" fill="#eef3fa" stroke="#1f3a5f" stroke-width="2"/>
+  <text x="44" y="131" font-size="12.5" font-weight="700" fill="#1f3a5f">① 全秩空间：前向与反向（每个线性层 W ∈ R^m×n，m ≤ n）</text>
+  <text x="44" y="149" font-size="10.5" fill="#374151">前向以 BF16 计算损失，反向产生本层梯度 G_t ∈ R^m×n；引理 3.3：该梯度在训练中趋于低秩</text>
+  <text x="44" y="165" font-size="10.5" fill="#374151">权重不做低秩参数化、不引入 BA 因子——低秩的是梯度，不是权重（与 LoRA 的本质区别）</text>
+
+  <line x1="320" y1="178" x2="320" y2="196" stroke="#334155" stroke-width="2.5" marker-end="url(#gl-arr)"/>
+
+  <!-- ② 投影矩阵刷新 -->
+  <rect x="30" y="200" width="580" height="84" rx="6" fill="#e6f7fb" stroke="#0e7490" stroke-width="2"/>
+  <text x="44" y="219" font-size="12.5" font-weight="700" fill="#155e75">② 投影矩阵刷新（控制条件：t mod T = 0；默认 T=200，§5.1）</text>
+  <text x="44" y="237" font-size="10.5" fill="#374151">每 T 步：SVD(G_t) = U S V^⊤，取前 r 个左奇异向量 P_t = U[:, :r]（式 12-13）；其余步复用 P_{t−1}</text>
+  <text x="44" y="253" font-size="10.5" fill="#374151">实现只取一侧投影：m ≤ n 时 P^⊤G、否则 GQ（§4.2）——优化器状态落在较大一侧的 r 秩空间</text>
+  <text x="44" y="269" font-size="10.5" fill="#374151">SVD 总开销 ＜10%；T 在 50–1000 间差异不大（§4.1）；论文 §1 举例「每约 200 迭代」刷新</text>
+
+  <line x1="320" y1="284" x2="320" y2="302" stroke="#334155" stroke-width="2.5" marker-end="url(#gl-arr)"/>
+
+  <!-- ③ 紧凑空间：投影梯度与优化器状态 -->
+  <rect x="30" y="306" width="580" height="66" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="44" y="325" font-size="12.5" font-weight="700" fill="#6d28d9">③ 紧凑空间：投影梯度 R_t（Adam 的 M、V 只存在这里——省显存的核心）</text>
+  <text x="44" y="343" font-size="10.5" fill="#374151">R_t = P_t^⊤ G_t ∈ R^r×n；一阶矩 M_t 与二阶矩 V_t 只在 r 秩空间维护（算法 2）</text>
+  <text x="44" y="359" font-size="10.5" fill="#374151">逐层优化器状态 mr + 2nr，对比 LoRA 2mr + 2nr（表 1）；梯度本身不长期保存</text>
+
+  <line x1="320" y1="372" x2="320" y2="390" stroke="#6d28d9" stroke-width="2.5" marker-end="url(#gl-arr-purple)"/>
+
+  <!-- ④ 紧凑空间内 Adam 更新 -->
+  <rect x="30" y="394" width="580" height="66" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="44" y="413" font-size="12.5" font-weight="700" fill="#6d28d9">④ 紧凑空间内的 Adam 更新（算法 2「UPDATE(R_t) by Adam」）</text>
+  <text x="44" y="431" font-size="10.5" fill="#374151">M_t ← β₁M_{t−1} + (1−β₁)R_t；V_t ← β₂V_{t−1} + (1−β₂)R_t²（含 1/(1−β^t) 偏置校正）</text>
+  <text x="44" y="447" font-size="10.5" fill="#374151">归一化 N_t = M_t / (√V_t + ε)（式 15）；再乘尺度因子 α（α 不随 r 缩放，§4.4）</text>
+
+  <line x1="320" y1="460" x2="320" y2="478" stroke="#334155" stroke-width="2.5" marker-end="url(#gl-arr)"/>
+
+  <!-- ⑤ 投影回原空间并更新权重 -->
+  <rect x="30" y="482" width="580" height="84" rx="6" fill="#e6f7fb" stroke="#0e7490" stroke-width="2"/>
+  <text x="44" y="501" font-size="12.5" font-weight="700" fill="#155e75">⑤ 投影回原空间并更新权重（定义 3.6 / 式 10）</text>
+  <text x="44" y="519" font-size="10.5" fill="#374151">G̃_t = α·P_t N_t；W_t = W_{t−1} + η·G̃_t——更新立即并入 W：无需保存 BA，无需 ReLoRA 式全秩热身</text>
+  <text x="44" y="535" font-size="10.5" fill="#374151">GaLore 与 AdamW / 8-bit Adam / Adafactor 即插即用（图 3）；论文自述「只改两行代码」（算法 1）</text>
+  <text x="44" y="551" font-size="10.5" fill="#374151">可选逐层权重更新：反向传播中就地更新、不保留权重梯度（较 8-bit Adam 再省 13.5G，§5.5）</text>
+
+  <line x1="320" y1="566" x2="320" y2="584" stroke="#334155" stroke-width="2.5" marker-end="url(#gl-arr)"/>
+
+  <!-- ⑥ 子空间组合 -->
+  <rect x="30" y="588" width="580" height="84" rx="6" fill="#eef3fa" stroke="#1f3a5f" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="44" y="607" font-size="12.5" font-weight="700" fill="#1f3a5f">⑥ 子空间组合：跨子空间实现全参数学习（§4.1、图 2、式 14）</text>
+  <text x="44" y="625" font-size="10.5" fill="#374151">W = W₀ + ΔW_T1 + ΔW_T2 + …：每 T 步经 SVD 换入新低秩子空间 ↺ 回到 ② 重算投影</text>
+  <text x="44" y="641" font-size="10.5" fill="#374151">切换过频：SVD 开销↑、破坏固定投影收敛条件（定理 3.8）、优化器状态跨子空间失真</text>
+  <text x="44" y="657" font-size="10.5" fill="#374151">切换过疏：困于不再重要的子空间；固定单一子空间则退化为「只沿子空间生长」的非全参训练</text>
+
+  <!-- 旁栏 A：逐层内存核算（表 1） -->
+  <rect x="650" y="112" width="300" height="150" rx="6" fill="#ffffff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="662" y="131" font-size="12" font-weight="700" fill="#6d28d9">旁栏 A｜逐层内存核算（表 1）</text>
+  <text x="662" y="149" font-size="10.5" fill="#374151">W ∈ R^m×n（m ≤ n），秩 r，BF16 口径</text>
+  <text x="662" y="167" font-size="10.5" fill="#374151">GaLore 权重：mn（ΔW 逐步并入 W）</text>
+  <text x="662" y="183" font-size="10.5" fill="#6d28d9" font-weight="700">GaLore 优化器状态：mr + 2nr</text>
+  <text x="662" y="199" font-size="10.5" fill="#374151">LoRA 权重＋BA：mn + mr + nr</text>
+  <text x="662" y="215" font-size="10.5" fill="#374151">LoRA 优化器状态：2mr + 2nr</text>
+  <text x="662" y="231" font-size="10.5" fill="#374151">合计 GaLore：mn + mr + 2nr</text>
+  <text x="662" y="247" font-size="10.5" fill="#374151">合计 LoRA：mn + 3mr + 3nr（§4.2）</text>
+
+  <!-- 旁栏 B：LLaMA 7B 显存对照 -->
+  <rect x="650" y="276" width="300" height="220" rx="6" fill="#ffffff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="662" y="295" font-size="12" font-weight="700" fill="#6d28d9">旁栏 B｜LLaMA 7B 显存对照（§5.5）</text>
+  <text x="662" y="313" font-size="10.5" fill="#374151">口径：token batch 256、无激活检查点 / 卸载</text>
+  <text x="662" y="331" font-size="10.5" fill="#374151">BF16 Adam 基线总量 ≈59.9G*（图 1 估算）</text>
+  <text x="662" y="344" font-size="10" fill="#6b7280">*由论文「−37.92G＝63.3%」反推，原文未印出总数</text>
+  <rect x="662" y="349" width="240" height="9" fill="#9ca3af"/>
+  <line x1="758" y1="345" x2="758" y2="396" stroke="#b91c1c" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="662" y="377" font-size="10.5" fill="#6d28d9" font-weight="700">8-bit GaLore 实测 22.0G（batch ≤500）</text>
+  <rect x="662" y="384" width="88" height="9" fill="#6d28d9"/>
+  <line x1="662" y1="408" x2="686" y2="408" stroke="#b91c1c" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="692" y="412" font-size="10" fill="#b91c1c">RTX 4090 24G 容量参考线</text>
+  <text x="662" y="430" font-size="10.5" fill="#374151">优化器状态：−9.6G（−65.5% vs 8-bit Adam）</text>
+  <text x="662" y="446" font-size="10.5" fill="#374151">权重梯度：逐层更新 −13.5G（不保留）</text>
+  <text x="662" y="462" font-size="10.5" fill="#374151">总量：−37.92G（−63.3%）vs BF16 Adam</text>
+  <text x="662" y="478" font-size="10.5" fill="#374151">总量：−24.5G（−52.3%）vs 8-bit Adam</text>
+  <text x="662" y="491" font-size="10" fill="#6b7280">开激活检查点后 token batch 可至 4096（§5.5）</text>
+
+  <!-- 旁栏 C：吞吐实测（表 11） -->
+  <rect x="650" y="506" width="300" height="172" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="662" y="525" font-size="12" font-weight="700" fill="#155e75">旁栏 C｜吞吐实测（表 11）</text>
+  <text x="662" y="543" font-size="10.5" fill="#374151">LLaMA 1B、token batch 256、逐层更新 ✔</text>
+  <text x="662" y="563" font-size="10.5" fill="#374151">AdamW：9.63G｜1354.37 tok/s</text>
+  <text x="662" y="579" font-size="10.5" fill="#374151">Adafactor：10.32G｜613.90 tok/s</text>
+  <text x="662" y="595" font-size="10.5" fill="#374151">8-bit Adam：6.93G｜1205.31 tok/s</text>
+  <text x="662" y="611" font-size="10.5" fill="#155e75" font-weight="700">8-bit GaLore：5.63G｜1019.63 tok/s</text>
+  <text x="662" y="631" font-size="10.5" fill="#374151">论文口径：GaLore 吞吐开销 17%（§5.5）</text>
+  <text x="662" y="647" font-size="10.5" fill="#374151">关闭逐层更新：1109.38 tok/s（+8.8%）、7.95G</text>
+  <text x="662" y="666" font-size="10" fill="#6b7280">「8-bit GaLore」＝GaLore + 8-bit Adam（§5.2 命名）</text>
+
+  <!-- 旁栏 D：口径与风险注意 -->
+  <rect x="30" y="686" width="920" height="116" rx="6" fill="#fef3c7" stroke="#92400e" stroke-width="2"/>
+  <text x="44" y="706" font-size="12" font-weight="700" fill="#92400e">旁栏 D｜口径与风险注意（编辑标注 I，引用前必读）</text>
+  <text x="44" y="725" font-size="10.5" fill="#374151">82.5%（8-bit GaLore 优化器内存 vs BF16 基线）仅见于摘要；正文拆解为 vs 8-bit Adam 的 −65.5%（−9.6G），未给出 82.5% 的逐项推导</text>
+  <text x="44" y="741" font-size="10.5" fill="#374151">7B 对比为「单次试验、未调超参」（8-bit GaLore r=1024 vs 8-bit Adam；8 节点 64×A100、150K 步、19.7B tokens，§5.3）</text>
+  <text x="44" y="757" font-size="10.5" fill="#374151">图 1 为「估算内存」（63.3%/52.3% 挂在估算对比上），22.0G 为实测（图 4）；官方仓库 README 的 7B 演示为 bsz=16、22.8G、开激活检查点（R，口径不同）</text>
+  <text x="44" y="773" font-size="10.5" fill="#374151">算法 2 印刷 M₀、V₀ ∈ R^n×r，而 R_t = P_t^⊤G_t ∈ R^r×n——形状印刷不一致，元素量同为 nr（m ≤ n），本图照录原文</text>
+  <text x="44" y="789" font-size="10.5" fill="#374151">吞吐 −17% 为论文口径；按表 11 原始数（1019.63 vs 1205.31）直接计算约 −15.4%。表 2 训练 tokens（1.1B/2.2B/6.4B/13.1B）与附录表 5 数据量（1.3B/2.6B/7.8B/13.1B）不一致，均照录</text>
+
+  <text x="30" y="820" font-size="10.5" fill="#6b7280">依据：arXiv:2403.03507v2（ICML 2024，PMLR 235:61121-61143）§3–§5、图 1/2/4、表 1/3/11、算法 2、附录 C/D｜面板 ①–⑥＝数据流，旁栏 A–D＝核算与口径（编辑标注）</text>
+</svg>

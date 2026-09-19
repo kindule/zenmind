@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GaLore：梯度低秩投影的显存高效 LLM 训练（论文 15 解读）</title>
+<meta name="description" content="基于本地论文 PDF（15_GaLore_2403.03507.pdf，arXiv:2403.03507v2，ICML 2024 PMLR 235，共 23 页）的中文架构解读：GaLore 对每层梯度做低秩投影（每 T 步 SVD 刷新投影矩阵），让 Adam 的一/二阶矩只驻留 r 秩紧凑空间，再投影回原空间立即并入权重——全参数学习下优化器状态至多省 65.5%、总训练显存省 63.3%，8-bit GaLore 以 22.0G 实测显存把 LLaMA 7B 预训练（19.7B tokens）放进 24GB 消费级 GPU 容量；GLUE 上 rank=4 得 85.89 超 LoRA 85.61。含梯度投影数据路径图、云上映射、成本/SLO、安全运维与决策清单，全部数字带 PDF 页码定位。">
+<link rel="prev" href="14-torchtitan.html">
+<link rel="next" href="16-deepseek-v3.html">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">训练、并行与 GPU Kernel</a></li>
+    <li aria-current="page">GaLore</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>GaLore：以梯度低秩投影实现显存高效的全参数 LLM 训练</h1>
+<p class="lede">本页为第 15 篇（训练、并行与 GPU Kernel 类），全部定量内容取自本地论文 PDF <code>15_GaLore_2403.03507.pdf</code>（arXiv:2403.03507v2，cs.LG，ICML 2024，PMLR 235:61121-61143），并逐条标注 PDF 页码与章节；23 页已全部逐页核对。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：训练（LLM 预训练 + 微调）</li>
+    <li>形态：单机单卡优化器级省显存（可叠加多卡数据并行）</li>
+    <li>目标硬件：消费级 24GB（NVIDIA RTX 4090）至 A100 集群（7B 实验 8 节点 64 GPU）</li>
+    <li>核心资源：GPU HBM 显存（优化器状态、权重梯度）· 单卡吞吐</li>
+    <li>证据状态：P + R（正文含 E/I 标签）</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-15">2026-09-15</time>（PDF 全部 23 页逐页核对；官方仓库与 arXiv/PMLR 记录已在线核验）。</p>
+  <p><strong>证据完整度：</strong>关键定量结论均带 PDF 页码/表号与完整测试条件，未获取的字段一律写明「论文未明确披露」；官方仓库经在线核验（R）；云上产品映射为示例（E，未逐一核验规格与价格）；成本公式、口径换算与运维建议为参数化推断（I）。本页不设任何评分。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文明确链接且经核验的官方仓库">R＝官方仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="14-torchtitan.html" rel="prev">上一篇：14 TorchTitan（训练系统）</a>
+  <a href="16-deepseek-v3.html" rel="next">下一篇：16 DeepSeek-V3（文件可能尚未发布）</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（第 1 页；发表信息另见 <a href="#links">#links</a>）</caption>
+    <tbody>
+      <tr><th scope="row">标题</th><td>GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection（编辑译名：GaLore——梯度低秩投影的显存高效 LLM 训练）</td></tr>
+      <tr><th scope="row">作者与机构</th><td>Jiawei Zhao（Caltech）、Zhenyu Zhang（UT Austin）、Beidi Chen（Meta AI / CMU）、Zhangyang Wang（UT Austin）、Anima Anandkumar*（Caltech）、Yuandong Tian*（Meta AI）；*号为共同指导（equal advising）<span class="ev ev-p">P</span>（第 1 页作者块）</td></tr>
+      <tr><th scope="row">发表 / 版本</th><td>Proceedings of the 41st ICML（Vienna），PMLR 235:61121-61143（第 1 页页脚 <span class="ev ev-p">P</span>；PMLR 卷页号 2026-09-15 在线核验 <span class="ev ev-r">R</span>）；arXiv:2403.03507v2（2024-06-02，左侧水印逐字核验），v1 为 2024-03-06；arXiv Comments 字段为「ICML 2024 (Oral)」（<span class="ev ev-r">R</span>，2026-09-15 核验）</td></tr>
+      <tr><th scope="row">代码</th><td>论文第 1 页摘要末句以链接给出 <code>https://github.com/jiaweizzhao/GaLore</code>，经在线核验（<span class="ev ev-r">R</span>，见 <a href="#links">#links</a>）</td></tr>
+      <tr><th scope="row">评估范围</th><td>预训练：LLaMA 系 60M/130M/350M/1B/7B，C4 数据集、无数据重复，7B 至 19.7B tokens；微调：RoBERTa-Base GLUE、BERT-Base SQuAD、Gemma-2b / Phi-2 / LLaMA-7B 指令微调（OpenAssistant、Belle-1M）<span class="ev ev-p">P</span>（第 1、7-9、22-23 页）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> GaLore 把「低秩」从权重搬到了<strong>梯度</strong>上：不做 LoRA 式低秩重参数化，而是每 T 步对反传梯度做一次 SVD、把 Adam 的动量/方差状态压进 r 秩紧凑空间，更新再投影回原空间立即并入权重——因此保持全参数学习、不改训练动力学，却把优化器状态从 O(mn) 压到 O(r(m+n))。对云平台团队，它的价值是把「7B 量级预训练」的显存门槛从数据中心卡降到 24GB 消费级卡；代价是约 17% 的实现级吞吐开销（论文自评）。是否选它，核心取决于预算约束下「小显存多卡」与「大显存少卡」哪条路线更便宜（见 <a href="#cost-slo">#cost-slo</a>、<a href="#fit">#fit</a>）。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>LLM 训练显存被权重、梯度与优化器状态共同挤占——LLaMA 7B 从零预训练、单 batch 即需至少 58GB（14GB 参数 + 42GB Adam 状态与权重梯度 + 2GB 激活，BF16、序列 2048）；LoRA 省显存但把参数搜索限制在低秩子空间、改变训练动态，预训练还需 ReLoRA 式全秩热身 <span class="ev ev-p">P</span>（第 1-2 页 §1）。</li>
+  <li><strong>方案：</strong>利用「梯度在训练中趋于低秩」（引理 3.3 等理论）这一性质，每 T 步对梯度 G_t 做 SVD 取前 r 个左奇异向量构成投影矩阵 P_t，Adam 的 M/V 只在紧凑空间 R_t = P_t^⊤G_t 上维护；更新经 α·P_t·N_t 投影回原空间并立即并入权重。只需一侧投影：m ≤ n 取 P^⊤G，否则 GQ。每 T 步换子空间，多子空间组合等效全参数学习 <span class="ev ev-p">P</span>（第 4-6 页 §3-§4、算法 2）。</li>
+  <li><strong>论文声称的主要结果：</strong>优化器状态至多省 65.5%、8-bit GaLore 优化器内存较 BF16 基线至多省 82.5%、总训练显存省 63.3%；LLaMA 7B 在 C4 上预训练 19.7B tokens，8-bit GaLore 困惑度 14.65 vs 8-bit Adam 14.61（单次试验）；实测 22.0G 显存即可预训练 7B——在 RTX 4090 的 24GB 容量内（无模型并行/检查点/卸载）；GLUE 上 RoBERTa-Base rank=4 平均 85.89 超 LoRA 85.61 <span class="ev ev-p">P</span>（显存数字见第 1 页摘要；GLUE 分数见第 2 页 §1 与第 9 页表 4；其余见第 7-9 页；条件详见 <a href="#experiments">#experiments</a>）。</li>
+  <li><strong>云上含义：</strong>优化器状态显存从与参数同量级降到约其 1/3 以下，使「消费级单卡/小显存实例跑 7B 级训练」在容量上成立；<span class="ev ev-i">I</span> 但单卡 token batch 很小（≤500，开激活检查点至 4096），实际吞吐要靠数据并行横向补，成本核算必须同时计入 −17% 吞吐开销与小 batch 效率。</li>
+  <li><strong>主要限制：</strong>7B 对比为单次试验、未调超参；65.5%/63.3% 等百分比挂在图 1 的「估算内存」分解上（22.0G 才是实测）；当前实现吞吐开销 17%、效率优化被列为未来工作；8.8% 的吞吐可通过关闭逐层更新换回（显存随之 +2.32G）<span class="ev ev-p">P</span>（第 8-9 页、第 23 页表 11）+ <span class="ev ev-r">R</span>（仓库 README 的 7B 演示口径为 bsz=16、22.8G、开激活检查点，2026-09-15 核验）。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>显存问题解剖：</strong>LLM 训练的显存不只参数本身——Adam 类优化器要为每个可训练参数存一阶矩 M 与二阶矩 V，加上权重梯度，常常超过参数存储自身。论文算例：LLaMA 7B 从零预训练、单 batch 需至少 58GB＝14GB（BF16 参数）+ 42GB（Adam 优化器状态与权重梯度）+ 2GB（激活）；该估算基于 LLaMA 架构、BF16、最大序列长 2048（脚注 1）。这使得 7B 预训练在 RTX 4090 这类 24GB 消费级卡上不可行 <span class="ev ev-p">P</span>（第 1 页 §1）。</p>
+
+<p><strong>LoRA 路线的两个根本限制（论文归纳）：</strong><span class="ev ev-p">P</span>（第 1-2 页 §1）</p>
+<ol>
+  <li><strong>限制参数搜索空间：</strong>LoRA 把 W 重参数化为 W₀ + BA（r ≪ min(m,n)），若最优权重本身非低秩（如线性回归中最优 W* 高秩），低秩假设永远到不了最优解。</li>
+  <li><strong>改变训练动态：</strong>同时优化 B、A 与原模型轨迹不同；预训练场景下 ReLoRA 需要先做全秩训练热身，才能在低秩子空间中继续优化。</li>
+</ol>
+<p>此外，LoRA 在微调上也未被证明能达到全参微调的可比性能（引 Xia et al., 2024）<span class="ev ev-p">P</span>（第 2 页 §1）。</p>
+
+<p><strong>相关方法的定位（论文 §2 与附录 A）：</strong><span class="ev ev-p">P</span>（第 2-3 页 §2、第 13 页附录 A）</p>
+<ul>
+  <li><strong>Adafactor：</strong>对二阶统计做低秩分解省显存；GaLore 与其形似而质不同——GaLore 利用的是<strong>梯度</strong>的低秩结构，且可一/二阶统计同时压缩，还能与 Adafactor 叠加。</li>
+  <li><strong>8-bit 优化器（Dettmers et al., 2022）：</strong>以分块量化压状态位宽；GaLore 可直接叠加（8-bit GaLore）。</li>
+  <li><strong>ReLoRA：</strong>面向预训练的 LoRA 变体，周期性把 BA 并入权重并重置，但需全秩热身与仔细的合并/学习率重置调参。</li>
+  <li><strong>LOMO/AdaLOMO：</strong>融合反向与优化器更新、不保留权重梯度；论文认为其依赖的 vanilla Adafactor 在更大规模上有训练不稳定性记录，直接用于从零大规模预训练存疑，但「GaLore + 融合反向」是论文点名的有前景方向。</li>
+  <li><strong>低秩梯度通信/压缩线（PowerSGD 等）与子空间学习：</strong>梯度天然低秩已被理论与实验广泛观察，GaLore 把它用于优化器状态压缩而非通信压缩。</li>
+</ul>
+
+<p><strong>目标工作负载与约束：</strong>LLaMA 类 Transformer 的从零预训练（60M–7B，C4、无数据重复）与全参微调（GLUE/SQuAD/指令数据）；显存受限单卡到 64 卡 A100 集群；优化器以 Adam 族为主（AdamW、8-bit Adam、Adafactor）<span class="ev ev-p">P</span>（第 7-9 页 §5、第 20 页附录 C）。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 理论地基：低秩的是梯度，不是权重</h3>
+<ul>
+  <li><strong>可逆网络的梯度形式（定理 3.2）：</strong>对可逆网络（含无偏置线性层、ReLU/多项式激活等的组合），ℓ2 或小 logits 的 softmax 损失下，层权重梯度可写成 G_l = J_l^⊤(·) − J_l^⊤J_l W_l f_{l−1}f_{l−1}^⊤ 的结构化形式（batch size 1）——这是「梯度会变低秩」的结构来源 <span class="ev ev-p">P</span>（第 3 页 §3.2、第 13-14 页 B.1）。</li>
+  <li><strong>训练中梯度变低秩（引理 3.3）：</strong>若梯度满足参数化形式 G_t = (1/N)Σ(A_i − B_i W_t C_i)（A_i 常数、B_i/C_i 半正定），vanilla SGD 下稳定秩 sr(G_t) 以指数速度衰减到由 G_{t0} 决定的小值；推论 3.4 进一步给出 sr(G_t) ≤ n/2 的界；特殊结构下可到 rank-1（推论 3.5）<span class="ev ev-p">P</span>（第 3-4 页、第 15-16 页 B.2）。</li>
+  <li><strong>Transformer 外推：</strong>Transformer 不属可逆网络，但借 JoMA 框架可证 FFN project-up 权重的梯度随时间「指数级更低秩」（引理 B.6，第 17-18 页 B.3）<span class="ev ev-p">P</span>。</li>
+</ul>
+<p><span class="ev ev-i">I</span> 编辑注：这组定理解释了「为什么压梯度状态可行」，也解释了 GaLore 的适用边界——它依赖梯度谱在训练中聚集到少数方向；论文未对任意架构/损失给出普适保证。</p>
+
+<h3>3.2 GaLore 定义与收敛性</h3>
+<div class="formula">
+定义 3.6（式 10）：W_T = W₀ + η · Σ_t G̃_t，其中 G̃_t = P_t · ρ_t( P_t^⊤ G_t Q_t ) · Q_t^⊤<br>
+P_t ∈ R^{m×r}、Q_t ∈ R^{n×r} 为投影矩阵；ρ_t 为逐元素状态型正则（如 Adam），其状态只需在 r 秩空间维护<br>
+定理 3.8（固定投影收敛）：梯度满足式 (8) 且相关量 L-连续时，若 min_t κ_t &gt; L_A + L_B·L_C·D²，则 ‖R_t‖_F → 0，GaLore 收敛
+</div>
+<p><span class="ev ev-p">P</span>（第 4 页定义 3.6 与式 10、第 5 页定理 3.8 与式 11；第 18-19 页 B.4 证明）。与 LoRA 的本质区别：当 r = min(m,n) 且 ρ_t ≡ 1 时，GaLore 精确还原原模型训练轨迹；而 LoRA 即使 BA 满秩也与原轨迹不同——GaLore 不引入额外的低秩参数化 <span class="ev ev-p">P</span>（第 5 页 §3.3 末）。</p>
+
+<h3>3.3 投影矩阵怎么取：SVD + 单侧投影（算法 2）</h3>
+<ul>
+  <li><strong>SVD 取主子空间（式 12-13）：</strong>G_t = USV^⊤ ≈ Σ_{i≤r} s_i u_i v_i^⊤，取 P_t = [u_1…u_r]、Q_t = [v_1…v_r]——即取当前梯度谱的前 r 个方向，而非难求的 B̂/Ĉ 特征向量 <span class="ev ev-p">P</span>（第 5 页 §3.3）。</li>
+  <li><strong>单侧投影（省一半投影矩阵）：</strong>实现上只用 P 或 Q 一个：m ≤ n 时投影 P^⊤G，否则 GQ <span class="ev ev-p">P</span>（第 6 页 §4.2）。<span class="ev ev-i">I</span> 这意味着紧凑状态落在矩阵较大一侧的 r 秩空间。</li>
+  <li><strong>算法 2（Adam with GaLore）逐步：</strong>① t mod T = 0 时对 G_t 做 SVD、P_t ← U[:, :r]，否则复用 P_{t−1}；② R_t ← P_t^⊤G_t（紧凑空间）；③ 在 R_t 上做标准 Adam（M/V 指数滑动平均 + 偏置校正）；④ N_t = M_t/(√V_t + ε)（式 15）；⑤ G̃_t ← α·P_t·N_t 投影回原空间；⑥ W_t ← W_{t−1} + η·G̃_t <span class="ev ev-p">P</span>（第 6 页算法 2）。</li>
+  <li><strong>状态形状照录：</strong>算法 2 印刷 M₀、V₀ ∈ R^{n×r}，而 R_t = P_t^⊤G_t ∈ R^{r×n}；<span class="ev ev-i">I</span> 两者元素量同为 nr（m ≤ n 口径，表 1 的 mr + 2nr 亦按元素数计），形状印刷不一致处按原文照录、不作调和。</li>
+</ul>
+
+<h3>3.4 子空间组合：多段低秩 = 全参数学习（§4.1）</h3>
+<p>固定单一子空间只能让权重沿其生长，不是全参数学习；GaLore 每 T 步对当前梯度重新 SVD、切换到新子空间：W_t = W₀ + ΔW_T1 + ΔW_T2 + …（式 14，图 2）<span class="ev ev-p">P</span>（第 5 页 §4.1）。切换频率 T 是关键超参：过频→SVD 开销上升、破坏定理 3.8 的固定投影条件、且优化器状态跨子空间累积会失真；过疏→困于不再重要的子空间。论文实验：T 在 50–1000 间差异不大，SVD 总开销相对其他省显存技术可忽略（&lt;10%）<span class="ev ev-p">P</span>（第 5 页 §4.1、第 9 页图 5 左）。</p>
+
+<h3>3.5 超参数与内存账（§4.2-§4.4，表 1）</h3>
+<ul>
+  <li><strong>仅三个新增超参：</strong>秩 r（与 LoRA 共有）、子空间切换频率 T、尺度因子 α。α 类似 LoRA 的 α/r 但<strong>不随 r 缩放</strong>——预训练时 r 小，α/r 会显著影响收敛 <span class="ev ev-p">P</span>（第 6 页 §4.4）。</li>
+  <li><strong>内存账：</strong>GaLore 增量立即并入 W、无需保存 BA：合计 mn + mr + 2nr；LoRA 需 mn + 3mr + 3nr。逐项：GaLore 优化器状态 mr + 2nr（P 加 M、V），LoRA 为 2mr + 2nr <span class="ev ev-p">P</span>（第 6 页 §4.2、表 1）。由此（§1）声称预训练中较 LoRA 至多省 30% 内存 <span class="ev ev-p">P</span>（第 2 页 §1）。</li>
+  <li><strong>与现有技术组合：</strong>直接套在 8-bit Adam 实现上（8-bit GaLore）；采用逐层权重更新（反向传播中就地更新、不保留权重梯度，同 LOMO 系技术）<span class="ev ev-p">P</span>（第 6 页 §4.3）。8-bit GaLore + 8-bit 优化器 + 逐层更新合计「优化器状态内存成本低于全秩的 10%」<span class="ev ev-p">P</span>（第 2 页 §1）。</li>
+</ul>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝每 T 步的 SVD 调度与子空间切换、超参（r/T/α）管理；<strong>数据面</strong>＝前向/反向计算、梯度投影与回投影、紧凑空间内 Adam 状态更新、逐层权重写入。该划分仅影响叙述，不改变组件职责的论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/galore-data-path.svg"
+       alt="GaLore 数据路径示意图：面板一为全秩空间的前向与反向，权重 W 属于 R^m×n（m 不大于 n）、以 BF16 计算，反向产生本层梯度 G_t（论文引理 3.3 说明训练中梯度趋于低秩；权重不做低秩参数化、不引入 BA 因子）；面板二为投影矩阵刷新——每 T 步对 G_t 做奇异值分解并取前 r 个左奇异向量为 P_t（式 12-13），其余步复用上一个投影矩阵，实现上只取一侧投影（m 不大于 n 时取 P 转置乘 G，否则 G 乘 Q），SVD 总开销小于 10%、T 默认 200 且在 50 到 1000 间差异不大；面板三为紧凑空间——投影梯度 R_t = P_t 转置 G_t 属于 R^r×n，Adam 的一阶矩与二阶矩只在该 r 秩空间维护（逐层优化器状态 mr+2nr，对比 LoRA 的 2mr+2nr），这是省显存的核心；面板四为紧凑空间内的 Adam 更新——滑动平均加偏置校正，归一化 N_t = M_t 除以（根号 V_t 加 ε），再乘不随 r 缩放的尺度因子 α；面板五为投影回原空间并更新权重——更新量等于 α 乘 P_t 乘 N_t，按学习率立即并入权重，无需保存 BA、无需 ReLoRA 式全秩热身，可选逐层权重更新在反向传播中就地更新、不保留权重梯度（较 8-bit Adam 再省 13.5G）；面板六为子空间组合——每 T 步换入新低秩子空间并回到面板二，切换过频增加开销并破坏固定投影收敛条件，切换过疏则困于失效子空间。右侧旁栏 A 给出表 1 的逐层内存核算（GaLore 合计 mn+mr+2nr 对 LoRA mn+3mr+3nr）；旁栏 B 给出 LLaMA 7B 显存对照（8-bit GaLore 实测 22.0G 在 RTX 4090 24GB 容量线内，优化器状态省 9.6G 即 65.5%、逐层更新省 13.5G、总计较 BF16 Adam 省 37.92G 即 63.3%、较 8-bit Adam 省 24.5G 即 52.3%，基线总量约 59.9G 系由减少量与百分比反推）；旁栏 C 给出表 11 的 LLaMA 1B 吞吐实测（8-bit GaLore 5.63G、1019.63 tok/s 对 8-bit Adam 6.93G、1205.31，论文口径开销 17%，关闭逐层更新得 1109.38 即加回 8.8%）；底部旁栏 D 汇总口径与风险注意（82.5% 仅见于摘要、7B 为单次试验未调参、图 1 为估算而 22.0G 为实测、算法 2 状态形状印刷不一致、吞吐 17% 与表 11 原始数的换算差异、表 2 与表 5 的 tokens 数不一致）。" width="980" height="830">
+  <figcaption>图 1：GaLore 梯度低秩投影训练数据路径与内存核算。实线＝逐层训练数据流，虚线＝控制条件与每 T 步循环；蓝＝全秩空间/权重，青＝GPU 计算路径，紫＝紧凑空间/优化器状态，琥珀＝口径与风险注意。依据论文式 (10)-(15)、算法 2、图 1/2/4、表 1/3/11、§3-§5 与附录 C（arXiv:2403.03507v2）绘制 <span class="ev ev-p">P</span>；面板编号 ①–⑥ 与旁栏 A–D 划分、配色为编辑标注（论文本身无此图）<span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 全秩空间前向/反向：</strong>每个线性层 W ∈ R^{m×n}（m ≤ n）以 BF16 参与前向与损失计算，反向产生本层梯度 G_t ∈ R^{m×n}；权重本身不做低秩参数化（与 LoRA 的本质区别），引理 3.3 保证训练中 G_t 趋于低秩 <span class="ev ev-p">P</span>（第 3-4 页 §3.2、第 6 页 §4.2）。</li>
+  <li><strong>② 投影矩阵刷新（每 T 步）：</strong>t mod T = 0 时对 G_t 做 SVD，取前 r 个左奇异向量 P_t = U[:, :r]；其余步复用 P_{t−1}。实现只取一侧投影：m ≤ n 用 P^⊤G，否则 GQ <span class="ev ev-p">P</span>（第 5 页式 12-13、第 6 页 §4.2、算法 2）。</li>
+  <li><strong>③ 进入紧凑空间：</strong>R_t = P_t^⊤G_t ∈ R^{r×n}；Adam 的一/二阶矩 M_t、V_t 只在此 r 秩空间存在——逐层优化器状态 mr + 2nr（LoRA 为 2mr + 2nr）<span class="ev ev-p">P</span>（第 6 页算法 2、表 1）。</li>
+  <li><strong>④ 紧凑空间内 Adam：</strong>M/V 指数滑动平均 + 1/(1−β^t) 偏置校正，N_t = M_t/(√V_t + ε)；再乘不随 r 缩放的尺度因子 α <span class="ev ev-p">P</span>（第 6 页算法 2、式 15、§4.4）。</li>
+  <li><strong>⑤ 投影回原空间并更新：</strong>G̃_t = α·P_t·N_t；W_t ← W_{t−1} + η·G̃_t。增量每步立即并入权重——无需保存 BA、无需全秩热身；可选逐层权重更新在反向传播中就地完成、不保留权重梯度（7B 估算中较 8-bit Adam 再省 13.5G）<span class="ev ev-p">P</span>（第 4 页定义 3.6、第 6 页 §4.3、第 9 页 §5.5）。</li>
+  <li><strong>⑥ 子空间切换（每 T 步循环回 ②）：</strong>W = W₀ + ΔW_T1 + ΔW_T2 + …，多子空间组合实现全参数学习；切换频率 T 默认 200，50–1000 间差异不大，SVD 总开销 &lt;10% <span class="ev ev-p">P</span>（第 5 页 §4.1、式 14、图 2；第 8 页 §5.1）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与容量事实（配置/机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>逐层内存合计：GaLore mn + mr + 2nr；LoRA mn + 3mr + 3nr</td><td>W ∈ R^{m×n}（m ≤ n）、秩 r；BF16 估算口径</td><td><span class="ev ev-p">P</span> 第 6 页 §4.2、表 1</td></tr>
+      <tr><td>预训练较 LoRA 至多省 30% 内存；8-bit GaLore + 8-bit 优化器 + 逐层更新：优化器状态成本低于全秩的 10%</td><td>基于表 1 的内存账推导（§1 口径）</td><td><span class="ev ev-p">P</span> 第 2 页 §1</td></tr>
+      <tr><td>子空间切换频率 T：论文实验取 200；50–1000 差异不大；§1 举例「每约 200 迭代」刷新</td><td>130M 消融（图 5 左）与预训练设置</td><td><span class="ev ev-p">P</span> 第 2、5、8 页</td></tr>
+      <tr><td>SVD 计算总开销 &lt;10%（相对内存卸载等其他省显存技术）</td><td>预训练场景，论文原文口径</td><td><span class="ev ev-p">P</span> 第 5 页 §4.1</td></tr>
+      <tr><td>只取一侧投影：m ≤ n 用 P^⊤G，否则 GQ；GaLore 即插即用于 AdamW / 8-bit Adam / Adafactor（图 3）</td><td>实现规则（算法 1/2）</td><td><span class="ev ev-p">P</span> 第 1、6 页</td></tr>
+      <tr><td>逐层权重更新：反向传播中就地更新、不保留权重梯度；「no retaining grad」即指此技术（图 1 脚注 2）</td><td>与 LOMO（Lv et al., 2023b）同源</td><td><span class="ev ev-p">P</span> 第 1、6 页</td></tr>
+      <tr><td>7B 预训练资源配置：8 节点共 64 张 A100、150K 步、19.7B tokens、r=1024；单卡实测 22.0G（token batch ≤500）</td><td>LLaMA 7B（hidden 4096、32 层）、C4</td><td><span class="ev ev-p">P</span> 第 8 页 §5.3/§5.5</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong><span class="ev ev-p">P</span> 口径提醒（引用前必读）：</strong>①图 1 是<strong>估算</strong>内存（estimated memory），摘要的 63.3% 与第 9 页 §5.5 的 52.3% 总量对比挂在该估算上；22.0G 才是 <strong>实测</strong>值（图 4、§5.5）。②82.5% 仅出现于摘要（8-bit GaLore 优化器内存 vs BF16 基线），正文只拆解出 vs 8-bit Adam 的 −65.5%（−9.6G），未给出 82.5% 的逐项推导。③论文演示的是 22.0G «在» RTX 4090 的 24GB 容量之内，未声称该实测就是在 RTX 4090 上跑的（§5 实验统一用 A100）。④官方仓库 README 的 7B 演示为另一口径：bsz=16、22.8G、开激活检查点 <span class="ev ev-r">R</span>（2026-09-15 核验）。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>全参数学习 ↔ 投影/SVD 开销</h3>
+    <p><span class="ev ev-p">P</span> 不改训练动力学的全参数学习是核心卖点（第 5 页 §3.3）。代价是实现级吞吐开销：8-bit GaLore 1019.63 tokens/s，论文口径较 8-bit Adam 慢 17%；效率优化被列为未来工作（第 9 页 §5.5）。<span class="ev ev-i">I</span> 以吞吐换显存门槛，适合「装不下」比「跑不快」更痛的场景。</p>
+  </li>
+  <li>
+    <h3>优化器状态压缩 ↔ 梯度保真窗口</h3>
+    <p><span class="ev ev-p">P</span> M/V 只在 r 秩空间累积；子空间切换过频会使优化器状态跨子空间失真（第 5 页 §4.1）。<span class="ev ev-i">I</span> 切换瞬间相当于状态「换了坐标系」，论文用 50–1000 的宽容区间掩盖了该风险，但极小 r + 极频切换的组合应避开。</p>
+  </li>
+  <li>
+    <h3>秩 r ↔ 收敛速度与步数</h3>
+    <p><span class="ev ev-p">P</span> 一定范围内降秩只轻微影响收敛：rank 128 跑 80K 步的损失低于 rank 512 跑 20K 步（图 5 右，130M）；1B 上 r=1024 甚至反超全秩基线（第 8-9 页）。<span class="ev ev-i">I</span> 显存受限时「小秩 + 更多步数」是可行的兑换曲线，但总步数即总成本，需在 §7.2 公式中折算。</p>
+  </li>
+  <li>
+    <h3>单侧投影 ↔ 实现简洁</h3>
+    <p><span class="ev ev-p">P</span> 只用 P 或 Q 一个投影矩阵：m ≤ n 取 P^⊤G，否则 GQ（第 6 页 §4.2）。<span class="ev ev-i">I</span> 投影矩阵内存按定义 3.6 的形状（P ∈ R^{m×r}、Q ∈ R^{n×r}）推导：双侧同存合计 (m+n)r；单侧只存其一——m ≤ n 存 P 即 mr、m &gt; n 存 Q 即 nr，恒为两者中较小者（与表 1 优化器状态 mr + 2nr 中投影矩阵 P 占 mr 的口径一致）。代价是定义 3.6 的双侧投影只停留在理论形式；论文未单独消融单/双侧投影的精度差。</p>
+  </li>
+  <li>
+    <h3>即插即用 ↔ 优化器生态依赖</h3>
+    <p><span class="ev ev-p">P</span> GaLore 与优化器正交，两行代码接入（算法 1），适配 AdamW/8-bit Adam/Adafactor（图 3）。<span class="ev ev-i">I</span> 它压的是「逐元素梯度统计」，对不维护此类状态的优化器（如纯 SGD + 动量的部分形态）收益不同；论文实验未覆盖该象限。</p>
+  </li>
+  <li>
+    <h3>消费级可达 ↔ 规模验证边界</h3>
+    <p><span class="ev ev-p">P</span> 7B/19.7B tokens 是论文最大验证点，且 7B 对比为单次试验、未调超参（第 8 页 §5.3）。<span class="ev ev-i">I</span> 更大规模、更长 tokens、多机扩展下的行为（弹性训练仅被列为展望）均无证据；不要外推到「70B 也能这样训」。</p>
+  </li>
+  <li>
+    <h3>逐层更新 ↔ 吞吐</h3>
+    <p><span class="ev ev-p">P</span> 逐层权重更新省 13.5G（7B 估算口径）但拖慢吞吐：关闭后 1019.63→1109.38 tokens/s（+8.8%）、显存 5.63G→7.95G（1B 实测，表 11）。<span class="ev ev-i">I</span> 这是图内最清晰的一根「显存↔吞吐」旋钮，按单卡显存余量择档。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实（硬件、机制）单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>GaLore 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">24GB 级单卡：7B 级预训练/微调的容量门槛（22.0G 实测）</th>
+        <td><span class="ev ev-e">E</span> 消费级/图形级 GPU 实例（RTX 4090 级 24GB、或同级专业卡）；按需/竞价计费更适合小 batch 长周期任务</td>
+        <td>22.0G 与 24GB 容量线为论文事实 <span class="ev ev-p">P</span>（第 8 页 §5.5）；实例类型与价格为云示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">7B 扩展实验：8 节点 64×A100、150K 步</th>
+        <td><span class="ev ev-e">E</span> A100/H100 多机实例 + 节点间 RDMA（RoCEv2/IB）；数据并行即可（论文逐层更新降低梯度通信面的机制未涉及多卡通信改造）</td>
+        <td>集群规模为论文实验配置 <span class="ev ev-p">P</span>（第 8 页 §5.3）；机型/组网为云示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">软件栈：PyTorch 包 galore-torch；逐层更新需 torch≥2.1（register_post_accumulate_grad_hook）；8-bit 变体依赖 8-bit Adam 实现</th>
+        <td><span class="ev ev-e">E</span> 容器镜像 + 版本 pin（PyTorch/包版本 digest 锁定）；GPU 实例预装 CUDA 驱动栈</td>
+        <td>包名、版本要求为官方仓库 README 事实 <span class="ev ev-r">R</span>（2026-09-15 核验）；镜像实践为云建议 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">编排：单卡任务长周期运行；数据并行横向扩吞吐</th>
+        <td><span class="ev ev-e">E</span> 单机任务用抢占式实例 + 检查点续跑；多卡用 torchrun 风格 launcher + 拓扑感知调度</td>
+        <td>论文未指定编排器 <span class="ev ev-p">P</span>（实验为固定配置）；编排建议为 <span class="ev ev-i">I</span>/<span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性训练展望：消费级卡间低带宽弹性数据分布训练（论文开放问题）</th>
+        <td><span class="ev ev-e">E</span> 异构/竞价实例池 + 弹性伸缩组（节点进出不中断作业的编排能力）</td>
+        <td>弹性训练是论文结论章的开放问题、非已验证能力 <span class="ev ev-p">P</span>（第 9 页 §7）；云能力为示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：损失尖峰、困惑度回归、显存与吞吐</th>
+        <td><span class="ev ev-e">E</span> 训练指标接入集中监控（Prometheus/Grafana 或云托管监控）；loss spike 告警 + 显存水位告警</td>
+        <td>指标本身为工程实践 <span class="ev ev-i">I</span>；论文给出损失曲线形态参照（图 6）<span class="ev ev-p">P</span>（第 21 页）</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> GaLore 的通信面与普通数据并行一致（无新的集合通信），因此它对网络的要求低于张量/流水线并行类方案——这使「多台小显存实例 + 普通带宽」成为可行替代路线；瓶颈从互联转移到单卡吞吐（−17%）与小 batch 利用率。选型时优先比价「1×A100-80G」对「N×24GB + GaLore」的同 token 成本。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 训练场景的「SLO」口径</h3>
+<p>预训练没有在线时延 SLO，平台 SLA 通常转化为：<span class="ev ev-i">I</span> ①<strong>吞吐目标</strong>（tokens/s）；②<strong>显存上限</strong>（决定可用最便宜卡型）；③<strong>收敛里程碑</strong>（目标困惑度/下游分）；④<strong> checkpoints 间的有效训练时间占比</strong>。论文对 ①② 提供实测数字（表 11、图 4），对 ③ 提供困惑度参照（表 2/3、图 6），对 ④ 未披露（检查点频率论文未明确披露）。</p>
+
+<h3>7.2 成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+预计 GPU 时（小时）≈ 总 token 数 ÷ (单卡吞吐 tokens/s × 卡数 ÷ 3600)<br>
+算力成本 ≈ GPU 时 × 当时单价（记录查询日期）；GaLore 路线的吞吐项须乘 (1 + 开销系数)，论文口径为 17%（1B 实测）<br>
+显存约束 ≈ 参数 + 梯度 + 优化器状态 + 激活 ≤ 卡容量；GaLore 把优化器状态项从 O(mn) 压到 O(r(m+n))<br>
+有效成本/token ≈ 算力成本 ÷ 有效训练时间占比
+</div>
+<p><span class="ev ev-i">I</span> 公式中由论文支撑的变量：单卡吞吐与显存（带完整条件，见 <a href="#experiments">#experiments</a> 表 E3）与 17%/8.8% 吞吐口径（第 9 页、表 11）。单价、卡型价差、网络与存储成本需按部署时数据填写，论文未披露、本页不给出伪精确数字。</p>
+
+<h3>7.3 敏感项排序（论文口径，条件互不可比）</h3>
+<p><span class="ev ev-p">P</span> ①优化器状态：低秩投影 −65.5%（−9.6G，7B 估算口径 vs 8-bit Adam，第 9 页）；②总显存：−63.3% vs BF16 Adam / −52.3% vs 8-bit Adam（同上）；③优化器叠加：GaLore(rank 512) 在 8-bit Adam/Adafactor 之上再省至多 62.5%（1B、10K 步口径，第 8 页 §5.2）；④对 LoRA：预训练内存至多 −30%（表 1 推导口径，第 2 页）；⑤吞吐代价：−17%（vs 8-bit Adam，1B 实测口径）。<span class="ev ev-i">I</span> 五个数字分属不同模型/基线/估算口径，<strong>禁止横向相乘或相加</strong>；成本模型中最敏感的其实是 ②——它决定卡型单价档位。</p>
+
+<h3>7.4 数据缺口</h3>
+<ul>
+  <li>端到端 TCO、云价格、电费：论文未披露，需部署时自测 <span class="ev ev-i">I</span>。</li>
+  <li>19.7B tokens 之外的长程收敛与更大模型的显存外推：论文未验证（7B 止步）<span class="ev ev-p">P</span>（第 8 页）+ <span class="ev ev-i">I</span>。</li>
+  <li>检查点大小/频率与恢复时间：论文未明确披露 <span class="ev ev-i">I</span>。</li>
+  <li>多租户干扰、抢占对 SVD 调度（每 T 步）的影响：论文未涉及 <span class="ev ev-i">I</span>。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>训练数据合规：</strong>论文实验用 C4（Common Crawl 清洗语料）与 GLUE/SQuAD/OpenAssistant/Belle 公开数据集 <span class="ev ev-p">P</span>（第 7、22-23 页）。<span class="ev ev-i">I</span> 生产替换为自有语料前，需完成来源许可、个人信息与版权审查。</li>
+  <li><strong>模型许可传导：</strong>论文脚注 3 明示「LLaMA materials in our paper are subject to LLaMA community license」<span class="ev ev-p">P</span>（第 7 页）。<span class="ev ev-i">I</span> 用 GaLore 预训练/微调 LLaMA 系模型时，产出物与部署同样落入 LLaMA 社区许可的义务范围，选型前过法务。</li>
+  <li><strong>代码许可与供应链：</strong>官方仓库为 Apache-2.0 <span class="ev ev-r">R</span>（2026-09-15 核验）；<span class="ev ev-i">I</span> 依赖链含 PyTorch（逐层更新要求 ≥2.1）与 8-bit 优化器实现，镜像应 digest 锁定 + CVE 扫描；论文实验的 8-bit Adam 来自 Dettmers et al., 2022 的实现 <span class="ev ev-p">P</span>（第 6 页 §4.3）。</li>
+  <li><strong>训练产物保护：</strong><span class="ev ev-i">I</span> 检查点含全部权重与（低秩）优化器状态，等同模型资产核心机密；存储桶按项目隔离、静态加密、最小权限 + 审计（云存储侧能力，<span class="ev ev-e">E</span>）。</li>
+</ul>
+
+<h3>8.2 可运维性</h3>
+<ul>
+  <li><strong>数值稳定与损失尖峰：</strong><span class="ev ev-p">P</span> 论文附录 C.1 指出 α 作为「分数学习率」（0.01×0.25=0.0025）仍属较大稳定学习率，而全秩基线通常用 ≤0.001 以避免训练损失尖峰（第 20 页）。<span class="ev ev-i">I</span> 运维上应把 loss spike 告警与 r/T/α 联动排查写进 runbook；官方称 GaLore 对超参不敏感、同一组超参跨模型尺寸可用（第 20 页）。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-i">I</span> GaLore 在优化器层封装，回退路径天然是「换回 8-bit Adam/AdamW」——但优化器状态形状不同（低秩 vs 全秩），<strong>切换不能原地续训</strong>，需从权重检查点重启并重预热；该迁移成本论文未讨论，属工程评估项。版本升级走金丝雀：新 PyTorch/包版本先小规模收敛对照再全量。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 建议：tokens/s 相对基线跌幅（SVD 卡顿或逐层更新退化）、显存水位（22.0G 距 24GB 仅 ~2G 余量，激活增长即 OOM）、loss 发散、SVD 失败次数。论文口径参照：吞吐 1019.63 tokens/s（1B，表 11）。</li>
+  <li><strong>验收基线：</strong><span class="ev ev-p">P</span> 收敛形态可对照图 6 训练进程曲线（130M–7B，C4）<span class="ev ev-p">P</span>（第 21 页）；<span class="ev ev-i">I</span> 验收时锁定 commit 与包版本，记录 r/T/α 与数据配比，避免「复现不出来」。</li>
+  <li><strong>功能边界随仓库演进：</strong><span class="ev ev-r">R</span> 仓库当前 README 已含论文之外的动态（Q-GaLore INT4 投影 2024-07-11、GaLore 2 研制中 2024-09-01、ICML 2024 Oral 公告 2024-07-01；2026-09-15 核验）。<span class="ev ev-i">I</span> 评估以「pin 的那个 commit」实测为准，不按 README 最新文案外推。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>显存受限的 LLaMA 类预训练：单卡 24GB 想训 ≤7B，或多卡但买不起大显存卡型。</strong>触发：OOM 而非算力不足是主要矛盾；能接受 Adam 族优化器与 BF16。理由：8-bit GaLore 实测 22.0G 完成 7B 预训练配置（token batch ≤500），在 24GB 容量内 <span class="ev ev-p">P</span>（第 8 页 §5.5）。</li>
+  <li><strong>LoRA 预训练/微调不达标的场景。</strong>触发：LoRA 精度损失不可接受（1B 预训练 LoRA 困惑度 19.21 vs GaLore 15.64；GLUE rank=4：85.61 vs 85.89），又想保留低显存。理由：GaLore 保持全参数学习且内存账优于 LoRA（表 1）<span class="ev ev-p">P</span>（第 7、9 页、第 6 页）。</li>
+  <li><strong>全参微调的显存压缩（RoBERTa/BERT 及 LLM 指令微调）。</strong>触发：全参微调质量必需、但优化器状态放不下。理由：GLUE 上 253M vs 全参 747M 内存、平均分 85.89 vs 86.28；SQuAD/OpenAssistant/Belle 亦 Comparable <span class="ev ev-p">P</span>（第 9、22-23 页）。</li>
+  <li><strong>已有 AdamW/8-bit Adam 技术栈的增量改造。</strong>触发：不想换训练框架。理由：优化器级即插即用（算法 1「两行代码」），图 3 验证三类优化器兼容 <span class="ev ev-p">P</span>（第 1、6、7 页）+ <span class="ev ev-r">R</span>（官方 pip 包 galore-torch，2026-09-15 核验）。</li>
+  <li><strong>消费级/异构算力池的弹性训练探索。</strong>触发：低带宽互联的小显存集群。理由：论文把「消费级硬件弹性数据分布训练」列为可行方向（非已完成验证）<span class="ev ev-p">P</span>（第 9 页 §7）+ <span class="ev ev-i">I</span>。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>吞吐优先的生产级大集群预训练。</strong>触发：GPU 预算充足、追求单位时间 token 最大化。理由：当前实现有 17% 吞吐开销且作者明言实现优化留作未来工作 <span class="ev ev-p">P</span>（第 9 页 §5.5）。</li>
+  <li><strong>超大模型（≫7B）的显存救急预期。</strong>触发：想当然把 63.3% 外推到数十亿～千亿参数。理由：论文最大验证点为 7B/19.7B tokens，更大规模无证据 <span class="ev ev-p">P</span>（第 8 页）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>非 Adam 族优化器为主的技术栈。</strong>触发：主力优化器不维护逐元素梯度统计。理由：GaLore 的收益来自压缩 M/V 类状态；论文实验全部为 Adam/Adafactor 族，其他优化器未验证 <span class="ev ev-p">P</span>（第 6-7 页）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>期望「原地切换」的存量作业。</strong>触发：训练中途想从普通 Adam 换成 GaLore（或反向）省显存。理由：优化器状态形状不同，切换需从权重检查点重启 <span class="ev ev-i">I</span>（论文未讨论迁移）。</li>
+  <li><strong>推理/服务场景。</strong>触发：拿它做在线 serving 优化。理由：GaLore 是训练策略，不含推理时改进 <span class="ev ev-p">P</span>（全文范畴）。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 实验设置与口径 <span class="ev ev-p">P</span>（第 7-8 页 §5、第 20 页 C.1）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与指标口径（论文事实）</caption>
+    <tbody>
+      <tr><th scope="row">硬件</th><td>预训练/微调实验全部在 NVIDIA A100 GPU（§5 首句）；7B 预训练 8 节点共 64 A100；显存/吞吐实测为单设备、无激活检查点、无内存卸载、无优化器状态分区（§5.5）</td></tr>
+      <tr><th scope="row">数据与序列</th><td>C4、无数据重复；最大序列长 256（所有模型）、每步 batch 131K tokens；10% 步数学习率预热 + 余弦退火至 10%（C.1）</td></tr>
+      <tr><th scope="row">架构</th><td>LLaMA 系（RMSNorm + SwiGLU）；7B：hidden 4096、32 层、32 头（§5.3、表 5）；遵循 Lialin et al., 2024 的实验设置</td></tr>
+      <tr><th scope="row">精度与优化器</th><td>全实验 BF16；Adam 默认超参 β₁=0.9、β₂=0.999、ε=1e-8；学习率按算力预算等额逐方法调优取最佳（网格 {0.01…0.0001}）</td></tr>
+      <tr><th scope="row">GaLore 超参</th><td>各模型统一：lr 0.01、α=0.25、T=200；表 2 各尺寸 rank：128/256/256/512（7B 用 r=1024）；低秩方法统一 rank、施加于全部 MHA 与 FFN 层；LoRA α=32、dropout 0.05；ReLoRA 无全秩热身（公平对比）</td></tr>
+      <tr><th scope="row">内存口径</th><td>表 2/表 6 为「参数 + 优化器状态」的 BF16 理论估算；图 1 为 7B 分项估算；图 4 与表 11 为实测；表 3 的 Mem 列（18G/26G）为估算</td></tr>
+      <tr><th scope="row">7B 对比口径</th><td>「Due to computational constraints」仅单次试验、不调超参：8-bit GaLore (r=1024) vs 8-bit Adam（§5.3 原文明示）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 论文实验结果（全量转录，条件逐表完整）</h3>
+
+<h4>表 E1＝论文表 2：LLaMA 预训练验证困惑度（C4；括号为参数+优化器状态 BF16 内存估算）<span class="ev ev-p">P</span>（第 7 页）</h4>
+<div class="table-scroll">
+  <table>
+    <caption>论文表 2 转录（困惑度越低越好；实际显存见图 4）</caption>
+    <thead>
+      <tr><th scope="col">方法</th><th scope="col" class="num">60M</th><th scope="col" class="num">130M</th><th scope="col" class="num">350M</th><th scope="col" class="num">1B</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Full-Rank</th><td class="num">34.06 (0.36G)</td><td class="num">25.08 (0.76G)</td><td class="num">18.80 (2.06G)</td><td class="num">15.56 (7.80G)</td></tr>
+      <tr><th scope="row">GaLore</th><td class="num">34.88 (0.24G)</td><td class="num">25.36 (0.52G)</td><td class="num">18.95 (1.22G)</td><td class="num">15.64 (4.38G)</td></tr>
+      <tr><th scope="row">Low-Rank（W=BA）</th><td class="num">78.18 (0.26G)</td><td class="num">45.51 (0.54G)</td><td class="num">37.41 (1.08G)</td><td class="num">142.53 (3.57G)</td></tr>
+      <tr><th scope="row">LoRA</th><td class="num">34.99 (0.36G)</td><td class="num">33.92 (0.80G)</td><td class="num">25.58 (1.76G)</td><td class="num">19.21 (6.17G)</td></tr>
+      <tr><th scope="row">ReLoRA（无热身）</th><td class="num">37.04 (0.36G)</td><td class="num">29.37 (0.80G)</td><td class="num">29.08 (1.76G)</td><td class="num">18.33 (6.17G)</td></tr>
+      <tr><th scope="row">r / d_model</th><td class="num">128 / 256</td><td class="num">256 / 768</td><td class="num">256 / 1024</td><td class="num">512 / 2048</td></tr>
+      <tr><th scope="row">训练 tokens（表 2 原文）</th><td class="num">1.1B</td><td class="num">2.2B</td><td class="num">6.4B</td><td class="num">13.1B</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><strong>论文要点：</strong>GaLore 与全秩基本持平且优于其他低秩方法；1B 上 r=1024 时甚至反超全秩基线（正文 §5.1）。<span class="ev ev-i">I</span> 注意：表 2 的 tokens 行（1.1B/2.2B/6.4B/13.1B）与附录表 5 的数据量（1.3B/2.6B/7.8B/13.1B，= 步数 10K/20K/60K/100K × 131K tokens/步）不一致，两处均照录、未作调和。</p>
+
+<h4>表 E2＝论文表 3：LLaMA 7B 预训练（150K 步，8-bit GaLore r=1024 vs 8-bit Adam，单次试验）<span class="ev ev-p">P</span>（第 7 页）</h4>
+<div class="table-scroll">
+  <table>
+    <caption>论文表 3 转录（验证困惑度；Mem 为内存估算）</caption>
+    <thead>
+      <tr><th scope="col">方法</th><th scope="col" class="num">Mem</th><th scope="col" class="num">40K</th><th scope="col" class="num">80K</th><th scope="col" class="num">120K</th><th scope="col" class="num">150K</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">8-bit GaLore</th><td class="num">18G</td><td class="num">17.94</td><td class="num">15.39</td><td class="num">14.95</td><td class="num">14.65</td></tr>
+      <tr><th scope="row">8-bit Adam</th><td class="num">26G</td><td class="num">18.09</td><td class="num">15.47</td><td class="num">14.83</td><td class="num">14.61</td></tr>
+      <tr><th scope="row">Tokens (B)</th><td class="num">—</td><td class="num">5.2</td><td class="num">10.5</td><td class="num">15.7</td><td class="num">19.7</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><strong>论文要点：</strong>150K 步处 8-bit GaLore 14.65 vs 8-bit Adam 14.61——「comparable」（论文原词）；显存估算 18G vs 26G。<span class="ev ev-i">I</span> 末点困惑度 GaLore 略高 0.04，且为单次试验未调参，引用时两个限定都要带上。</p>
+
+<h4>表 E3＝论文表 11：LLaMA 1B 显存与吞吐实测（C4、token batch 256、单设备）<span class="ev ev-p">P</span>（第 23 页）</h4>
+<div class="table-scroll">
+  <table>
+    <caption>论文表 11 转录（Layer Wise＝是否启用逐层权重更新）</caption>
+    <thead>
+      <tr><th scope="col">逐层更新</th><th scope="col">方法</th><th scope="col" class="num">token batch</th><th scope="col" class="num">显存 (G)</th><th scope="col" class="num">吞吐 (tok/s)</th><th scope="col" class="num">样本 (samples/s)</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row" rowspan="4">✘</th><td>AdamW</td><td class="num">256</td><td class="num">13.60</td><td class="num">1256.98</td><td class="num">6.33</td></tr>
+      <tr><td>Adafactor</td><td class="num">256</td><td class="num">13.15</td><td class="num">581.02</td><td class="num">2.92</td></tr>
+      <tr><td>Adam8bit</td><td class="num">256</td><td class="num">9.54</td><td class="num">1569.89</td><td class="num">7.90</td></tr>
+      <tr><td>8-bit GaLore</td><td class="num">256</td><td class="num">7.95</td><td class="num">1109.38</td><td class="num">5.59</td></tr>
+      <tr><th scope="row" rowspan="4">✔</th><td>AdamW</td><td class="num">256</td><td class="num">9.63</td><td class="num">1354.37</td><td class="num">6.81</td></tr>
+      <tr><td>Adafactor</td><td class="num">256</td><td class="num">10.32</td><td class="num">613.90</td><td class="num">3.09</td></tr>
+      <tr><td>Adam8bit</td><td class="num">256</td><td class="num">6.93</td><td class="num">1205.31</td><td class="num">6.07</td></tr>
+      <tr><td>8-bit GaLore</td><td class="num">256</td><td class="num">5.63</td><td class="num">1019.63</td><td class="num">5.13</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><strong>论文要点（§5.5 口径）：</strong>当前实现 1019.63 tokens/s，较 8-bit Adam 开销 17%；关闭逐层更新得 1109.38（+8.8%）。<span class="ev ev-i">I</span> 编辑换算注：按表 11 原始数（1019.63 vs 同组 8-bit Adam 1205.31）直接计算为 −15.4%；论文未写明 17% 的对照行，引用时注明口径。</p>
+
+<h4>表 E4＝论文表 4：GLUE 微调（RoBERTa-Base；报告各任务平均分）<span class="ev ev-p">P</span>（第 9 页）</h4>
+<div class="table-scroll">
+  <table>
+    <caption>论文表 4 转录（内存为微调内存口径；30 epochs、batch 16（CoLA 32）、max seq 512；GaLore r=4 时 α=4、r=8 时 α=2）</caption>
+    <thead>
+      <tr><th scope="col">方法</th><th scope="col" class="num">Memory</th><th scope="col" class="num">CoLA</th><th scope="col" class="num">STS-B</th><th scope="col" class="num">MRPC</th><th scope="col" class="num">RTE</th><th scope="col" class="num">SST2</th><th scope="col" class="num">MNLI</th><th scope="col" class="num">QNLI</th><th scope="col" class="num">QQP</th><th scope="col" class="num">Avg</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">全参微调</th><td class="num">747M</td><td class="num">62.24</td><td class="num">90.92</td><td class="num">91.30</td><td class="num">79.42</td><td class="num">94.57</td><td class="num">87.18</td><td class="num">92.33</td><td class="num">92.28</td><td class="num">86.28</td></tr>
+      <tr><th scope="row">GaLore (rank=4)</th><td class="num">253M</td><td class="num">60.35</td><td class="num">90.73</td><td class="num">92.25</td><td class="num">79.42</td><td class="num">94.04</td><td class="num">87.00</td><td class="num">92.24</td><td class="num">91.06</td><td class="num">85.89</td></tr>
+      <tr><th scope="row">LoRA (rank=4)</th><td class="num">257M</td><td class="num">61.38</td><td class="num">90.57</td><td class="num">91.07</td><td class="num">78.70</td><td class="num">92.89</td><td class="num">86.82</td><td class="num">92.18</td><td class="num">91.29</td><td class="num">85.61</td></tr>
+      <tr><th scope="row">GaLore (rank=8)</th><td class="num">257M</td><td class="num">60.06</td><td class="num">90.82</td><td class="num">92.01</td><td class="num">79.78</td><td class="num">94.38</td><td class="num">87.17</td><td class="num">92.20</td><td class="num">91.11</td><td class="num">85.94</td></tr>
+      <tr><th scope="row">LoRA (rank=8)</th><td class="num">264M</td><td class="num">61.83</td><td class="num">90.80</td><td class="num">91.90</td><td class="num">79.06</td><td class="num">93.46</td><td class="num">86.94</td><td class="num">92.25</td><td class="num">91.22</td><td class="num">85.93</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><strong>论文要点：</strong>rank=4 时 GaLore 85.89 &gt; LoRA 85.61（第 2 页 §1 引言引用的正是这一对）；rank=8 时 85.94 vs 85.93 基本持平；两者均与全参微调 86.28 有约 0.3-0.4 差距、显存约 1/3。<span class="ev ev-i">I</span> 第 2 页 §1 引言只引用了 GaLore 占优的 rank=4 对比，rank=8 的持平事实在第 9 页表 4 中，引用时应一并给出。</p>
+
+<h4>附录补充实验 <span class="ev ev-p">P</span>（第 22-23 页 D 节）</h4>
+<ul>
+  <li><strong>SQuAD（BERT-Base，rank 16，表 8）：</strong>Exact Match/F1：基线 80.83/88.41；GaLore 80.52/88.29；LoRA 77.99/86.11——GaLore 两项均优于 LoRA。</li>
+  <li><strong>OpenAssistant（表 9，测试困惑度，rank 128）：</strong>Gemma-2b：基线 4.53 / GaLore 4.51 / LoRA 4.56；Phi-2：3.81 / 3.83 / 4.24；LLaMA-7B：2.98 / 2.95 / 2.94。</li>
+  <li><strong>Belle-1M（表 10，测试困惑度，rank 128）：</strong>Gemma-2b：5.44 / 5.35 / 5.37；Phi-2：2.66 / 2.62 / 2.75；LLaMA-7B：2.27 / 2.28 / 2.30。</li>
+  <li><strong>内存估算附录（表 6）：</strong>1B 全参：权重 2.60G + 优化器状态 5.20G；GaLore：2.60G + 1.78G；LoRA/ReLoRA：3.79G + 2.38G——与表 2 合计一致。</li>
+</ul>
+
+<h4>消融 <span class="ev ev-p">P</span>（第 9 页 §6、图 5；第 21 页图 6）</h4>
+<ul>
+  <li><strong>子空间频率（图 5 左，130M）：</strong>过频与过疏都损害收敛；小 r 应更频繁切换。</li>
+  <li><strong>秩与步数（图 5 右）：</strong>rank 128 @ 80K 步的损失低于 rank 512 @ 20K 步——显存受限时「小秩多步」可行。</li>
+  <li><strong>训练进程（图 6）：</strong>GaLore 全程贴近全秩轨迹，训练初期甚至略快；7B 图与表 3 数字一致。</li>
+</ul>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①表 2/3/6 与图 1 的内存为<strong>估算</strong>（理论参数量 × BF16），实测为图 4/表 11，两条口径不可混用；②7B 对比为单次试验、未调超参（§5.3 原文）；③训练 tokens 数在表 2 与表 5 间不一致（1.1B/2.2B/6.4B vs 1.3B/2.6B/7.8B）；④「8-bit GaLore」＝GaLore + 8-bit Adam 的论文命名（§5.2），不是 8bit 化的投影矩阵；⑤17% 吞吐开销与表 11 原始数的直接换算（−15.4%）有出入，论文未写明对照行。<span class="ev ev-i">I</span> 引用任何数字时保留上述限定，禁止跨表相加或与站内其他论文数字直接比较。
+</div>
+
+<h3>10.3 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 锁定官方仓库 commit、galore-torch 版本与 PyTorch ≥2.1（逐层更新依赖 register_post_accumulate_grad_hook），容器 digest 固定。<span class="ev ev-r">R</span>（README，2026-09-15 核验）</li>
+  <li><span class="ev ev-i">I</span> 从 130M 起步复现表 2 行（r=256、T=200、α=0.25、lr 0.01、C4、seq 256、131K tokens/步、20K 步），核对困惑度 25.36 与显存数量级。</li>
+  <li><span class="ev ev-i">I</span> 表 11 口径做单卡 1B 冒烟：token batch 256，开/关逐层更新各测一次显存与吞吐，对照 5.63G/7.95G 与 1019.63/1109.38。</li>
+  <li><span class="ev ev-i">I</span> 微调路线：RoBERTa-Base GLUE rank=4（α=4、30 epochs），对照表 4 的 85.89；训练前先过 LLaMA/数据许可。</li>
+  <li><span class="ev ev-i">I</span> 再上 7B：预期需要多卡数据并行补吞吐；以 18G（估算）/22.0G（实测）做显存预算，并保留 8-bit Adam 回退路径。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2403.03507" rel="noopener noreferrer">https://arxiv.org/abs/2403.03507</a></td>
+        <td><span class="ev ev-p">P</span> v2（cs.LG，2024-06-02），本地 PDF：<code>15_GaLore_2403.03507.pdf</code>（23 页，已全部逐页核对）；<span class="ev ev-r">R</span> arXiv Comments「ICML 2024 (Oral)」、v1 2024-03-06（2026-09-15 在线核验）</td>
+      </tr>
+      <tr>
+        <th scope="row">正式出版记录（PMLR）</th>
+        <td><a href="https://proceedings.mlr.press/v235/zhao24s.html" rel="noopener noreferrer">https://proceedings.mlr.press/v235/zhao24s.html</a></td>
+        <td><span class="ev ev-r">R</span> 2026-09-15 在线核验：Proceedings of the 41st ICML，PMLR 235:61121-61143，作者与本地 PDF 一致（23 页对应 61121-61143）</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/jiaweizzhao/GaLore" rel="noopener noreferrer">https://github.com/jiaweizzhao/GaLore</a></td>
+        <td><span class="ev ev-r">R</span> 论文第 1 页摘要末句链接明示；2026-09-15 在线核验：许可 Apache-2.0，约 1.7k stars / 166 forks / 22 commits；README：pip 安装 galore-torch（或源码安装），实验脚本测试于 Python 3.8 + PyTorch 2.1，逐层权重更新要求 torch≥2.1（register_post_accumulate_grad_hook）；7B 演示为 galore_adamw8bit_per_layer、bsz=16、22.8G、开激活检查点；动态：ICML 2024 Oral（2024-07-01）、Q-GaLore INT4 投影（2024-07-11）、GaLore 2 研制中（2024-09-01）。注意：README 口径与论文 §5.5 的 22.0G/≤500 tokens/无检查点不同，两者不可混用</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库</th>
+        <td>不提供</td>
+        <td><span class="ev ev-i">I</span> 遵循本站「不猜测仓库」策略：论文正文未明示且未经核验的第三方/镜像仓库一律不链接。论文参考文献提及的 8-bit 优化器（Dettmers et al., 2022）、LOMO/AdaLOMO、ReLoRA 等实现仅作为论文材料呈现。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 明确模型规模是否落在论文验证区间（60M–7B、C4 类语料、≤19.7B tokens），超出部分按未验证处理（P：第 7-8 页）</label></li>
+      <li><label><input type="checkbox"> 确认主要矛盾是显存（OOM）而非吞吐——GaLore 用 17% 吞吐换显存门槛（P：第 9 页；I：判断标准）</label></li>
+      <li><label><input type="checkbox"> 估出 token 预算与期望完成日期，按 §7.2 公式反推所需吞吐与卡数（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 优化器栈为 AdamW / 8-bit Adam / Adafactor 之一（论文验证范围）（P：第 6-7 页）</label></li>
+      <li><label><input type="checkbox"> PyTorch ≥2.1（逐层更新依赖 register_post_accumulate_grad_hook）与 galore-torch 安装路径已验证（R：README 核验 2026-09-15）</label></li>
+      <li><label><input type="checkbox"> 模型许可核查：LLaMA 系产出受 LLaMA community license 约束（P：第 7 页脚注 3；I：合规动作）</label></li>
+      <li><label><input type="checkbox"> 明确「8-bit GaLore」命名含义＝GaLore + 8-bit Adam，避免误读为投影矩阵 8bit 化（P：第 8 页 §5.2）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 130M 复现表 2 行（r=256、T=200、α=0.25、lr 0.01、C4、seq 256、20K 步），困惑度与 25.36 同数量级（P：第 7、20 页；I：验收阈值自定）</label></li>
+      <li><label><input type="checkbox"> 1B 单卡冒烟对照表 11：开/关逐层更新的显存与吞吐四象限（P：第 23 页；I：口径）</label></li>
+      <li><label><input type="checkbox"> 损失尖峰演练：α=0.25 的等效学习率 0.0025 下观察 spike 频率，必要时降 lr（P：第 20 页 C.1；I：处置）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量与拓扑</strong>
+    <ul>
+      <li><label><input type="checkbox"> 显存预算按实测口径：7B 约 22.0G（token batch ≤500）+ 激活余量；开激活检查点可换 batch 至 4096（P：第 8 页 §5.5）</label></li>
+      <li><label><input type="checkbox"> 小 batch 效率评估：单卡 batch ≤500 时算力利用率损失，需要多少数据并行补齐目标吞吐（P：batch 数字；I：评估方法）</label></li>
+      <li><label><input type="checkbox"> 「1×大显存」vs「N×24GB + GaLore」同 token 成本比价，含 17% 吞吐系数（P：吞吐口径；I：比价模型）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与验收</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义收敛里程碑：困惑度目标对照表 2/3（如 7B@150K 步 ≈14.6 量级）与图 6 曲线形态（P：第 7、21 页）</label></li>
+      <li><label><input type="checkbox"> 定义吞吐 SLO 与度量口径（表 11 的 tokens/s 条件：1B、batch 256、逐层更新开）（P：第 23 页）</label></li>
+      <li><label><input type="checkbox"> 明确 7B 结论的「单次试验、未调参」限定写入内部评审材料（P：第 8 页 §5.3）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以「当时单价 + 查询日期」估算；不使用本页数字直接报价（I）</label></li>
+      <li><label><input type="checkbox"> 把 65.5%/63.3%/62.5%/30% 各自的条件标注进成本模型，禁止跨口径相乘（P：数字；I：口径纪律）</label></li>
+      <li><label><input type="checkbox"> 评估竞价/抢占实例 + 检查点续跑（检查点频率论文未披露，需自定）（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> 训练语料许可/隐私/版权审查（论文用 C4 等公开集仅为实验口径）（P：第 7 页；I：合规要求）</label></li>
+      <li><label><input type="checkbox"> 检查点桶按项目隔离、静态加密、最小权限 + 审计（E/I）</label></li>
+      <li><label><input type="checkbox"> 镜像 digest 锁定 + CVE 扫描；依赖（PyTorch/8-bit 优化器实现）版本 pin（R：README；I：供应链）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> runbook 纳入：loss spike 排查顺序（lr/α→r→T）、SVD 失败计数、显存水位告警（I）</label></li>
+      <li><label><input type="checkbox"> 回滚预案：切回 8-bit Adam/AdamW 时从权重检查点重启（优化器状态形状不兼容，不可原地切换）（I）</label></li>
+      <li><label><input type="checkbox"> 升级走金丝雀：新版本先小规模收敛对照再全量；评估以 pin 的 commit 实测为准（I；R：仓库动态 2026-09-15 核验）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 迁出面评估：GaLore 检查点仅优化器状态为低秩形态，权重可被任意框架读取；迁移成本主要是重预热（I，机制 P：第 6 页）</label></li>
+      <li><label><input type="checkbox"> 归档超参（r/T/α）、包版本、commit 与容量档案，保证可重建（I）</label></li>
+      <li><label><input type="checkbox"> 预设备选替代：8-bit Adam + 激活检查点、LoRA/ReLoRA、卸载类方案的最小切换面（I）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与在线核验记录见构建文件 <code>sources/galore.evidence.json</code>。核验日期均为 <time datetime="2026-09-15">2026-09-15</time>。</p>
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名/作者/机构/ICML 2024 页脚/arXiv v2 水印；摘要末句代码链接</td><td><span class="ev ev-p">P</span></td><td>第 1 页</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>摘要级结论：优化器状态 −65.5%；8-bit GaLore 优化器内存 −82.5%、总显存 −63.3%（vs BF16 基线）；LLaMA 1B/7B C4 至 19.7B tokens；首次在 24GB 消费级 GPU 容量内预训练 7B</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要（正文定位见 EV-04～07；GLUE 85.89/85.61 见第 2 页 §1 与第 9 页表 4）</td><td>已核验（PDF 原页；82.5% 仅摘要口径，见 EV-07）</td></tr>
+      <tr><td>7B 单 batch 显存解剖：≥58GB＝14 参数 + 42 Adam 状态与梯度 + 2 激活（BF16、seq 2048）</td><td><span class="ev ev-p">P</span></td><td>第 1 页 §1 与脚注 1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>LoRA/ReLoRA 限制：低秩参数搜索、训练动态改变、需全秩热身；相关工作定位（Adafactor/8-bit/LOMO/Flora）</td><td><span class="ev ev-p">P</span></td><td>第 1-3 页 §1-§2、第 13 页附录 A</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>理论：定理 3.2 梯度形式；引理 3.3 梯度训练中变低秩；推论 3.4/3.5；Transformer FFN（JoMA）</td><td><span class="ev ev-p">P</span></td><td>第 3-4 页、第 13-18 页附录 B</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>定义 3.6（式 10）与定理 3.8（固定投影收敛）；GaLore 与 LoRA 轨迹区别</td><td><span class="ev ev-p">P</span></td><td>第 4-5 页 §3.3、第 18-19 页 B.4</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>投影设置：SVD 取前 r 奇异向量（式 12-13）；单侧投影（m≤n 取 P^⊤G 否则 GQ）；算法 2 全步骤与式 15</td><td><span class="ev ev-p">P</span></td><td>第 5-6 页、算法 2</td><td>已核验（PDF 原页；M/V 印刷形状 n×r 照录，见 EV-19）</td></tr>
+      <tr><td>子空间组合（式 14、图 2）：T 过频/过疏均有害；50–1000 差异不大；SVD 开销 &lt;10%</td><td><span class="ev ev-p">P</span></td><td>第 5 页 §4.1、第 9 页图 5</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>内存账：表 1（GaLore mn+mr+2nr vs LoRA mn+3mr+3nr）；§4.2 单侧投影内存逻辑；较 LoRA 至多省 30%（§1）</td><td><span class="ev ev-p">P</span></td><td>第 6 页表 1 与 §4.2、第 2 页 §1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>超参：r/T/α 三者；α 不随 r 缩放；8-bit 优化器与逐层更新组合；「优化器状态成本低于全秩 10%」</td><td><span class="ev ev-p">P</span></td><td>第 6 页 §4.3-§4.4、第 2 页 §1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>实验设置：A100、C4 无重复、BF16、seq 256、131K tokens/步、GaLore 统一超参（lr 0.01/α 0.25/T 200）；7B 单次试验未调参</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页 §5、第 20 页 C.1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>表 2（60M–1B 预训练全量数字）；表 3（7B：14.65 vs 14.61、18G vs 26G、19.7B tokens）；1B r=1024 反超全秩</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页、表 2/表 3</td><td>已核验（PDF 原页；tokens 数表 2 vs 表 5 不一致照录）</td></tr>
+      <tr><td>实测显存/吞吐：图 4（7B 22.0G）；表 11（1B：5.63G/1019.63 tok/s 等 8 行）；17% 开销与 +8.8% 口径</td><td><span class="ev ev-p">P</span></td><td>第 8-9 页 §5.5、第 23 页表 11</td><td>已核验（PDF 原页；17% 与原始数换算 −15.4% 有出入）</td></tr>
+      <tr><td>7B 显存分解：优化器状态 −9.6G（−65.5%）；逐层更新 −13.5G；总量 −37.92G（−63.3%）/−24.5G（−52.3%）；24GB 容量结论</td><td><span class="ev ev-p">P</span></td><td>第 9 页 §5.5、图 1</td><td>已核验（PDF 原页；图 1 为估算口径）</td></tr>
+      <tr><td>GLUE 表 4 全量（85.89/85.61/86.28、rank=8 持平）；SQuAD 表 8；OpenAssistant 表 9；Belle 表 10；微调超参表 7</td><td><span class="ev ev-p">P</span></td><td>第 9 页、第 22-23 页</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>消融：图 5（频率/秩-步数）；训练进程图 6；内存估算表 5/6（超参与分项）</td><td><span class="ev ev-p">P</span></td><td>第 9、20-21 页</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>官方仓库可达性、Apache-2.0、galore-torch 安装、PyTorch 2.1/3.8 测试口径、逐层更新 torch≥2.1、7B 演示（bsz=16、22.8G、开激活检查点）、ICML Oral/Q-GaLore/GaLore 2 动态</td><td><span class="ev ev-r">R</span></td><td>论文第 1 页链接 + arXiv Comments + PMLR 记录；2026-09-15 在线核验</td><td>已核验（2026-09-15）</td></tr>
+      <tr><td>云实例/编排/监控映射示例（24GB 级实例、A100 多机 RDMA、镜像 pin、弹性伸缩）</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>成本公式、口径换算（−15.4% 注、≈59.9G 反推注）、控制面/数据面划分、安全与回滚建议、复现步骤</td><td><span class="ev ev-i">I</span></td><td>本报告 §4-§10、§12</td><td>编辑标注完成；不含伪精确数字</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="14-torchtitan.html" rel="prev">上一篇：14 TorchTitan（训练系统）</a>
+  <a href="16-deepseek-v3.html" rel="next">下一篇：16 DeepSeek-V3（文件可能尚未发布）</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页全部论文事实基于本地 <code>15_GaLore_2403.03507.pdf</code>（arXiv:2403.03507v2，ICML 2024，PMLR 235:61121-61143，全部 23 页逐页核对）及论文明确引用的材料；官方仓库与 arXiv/PMLR 记录经 2026-09-15 在线核验；云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；官方仓库代码许可为 Apache-2.0（2026-09-15 核验，以仓库当时声明为准）；LLaMA 相关材料受 LLaMA community license 约束（论文第 7 页脚注 3）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面；共享样式 assets/css/site.css 与渐进增强 assets/js/site.js 均为本地资源，禁用 JavaScript 时完整可读，可离线打开；最后核验日期 2026-09-15；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

@@ -6,6 +6,86 @@
 <title>GPU 大模型系统论文解读站：16 篇云架构视角的中文精读（2024–2025）</title>
 <meta name="description" content="面向云计算架构师、AI 基础设施与推理/训练平台负责人的中文 GPU 大模型系统论文解读站：16 篇论文按推理服务、解码加速与量化、训练与 Kernel 三条路径组织，含筛选、选型矩阵、指标词典与 P/R/E/I 证据说明。">
 <link rel="stylesheet" href="assets/css/site.css">
+<!-- 说明：本页已引用共享骨架 assets/css/site.css；下方内联样式为 DESIGN.md v1
+     对齐层（Wave 1e）：仅覆盖令牌取值与组件视觉规格（Card/Tag/Table/Alert）。
+     主题策略：跟随系统明暗（prefers-color-scheme），暗色块用 :root:not([data-theme="light"])
+     与 site.css 同权重且后置胜出；不改变任何 DOM 结构、链接与卡片顺序。 -->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --fg: rgba(0, 0, 0, .88);
+    --muted: rgba(0, 0, 0, .65);
+    --line: #f0f0f0;
+    --surface: #ffffff;
+    --surface-2: #f5f5f5;
+    --code-bg: #f5f5f5;
+    --primary: #1677ff;
+    --primary-weak: #e6f4ff;
+    --cyan: #237804;
+    --cyan-weak: #f6ffed;
+    --accent: #237804;
+    --accent-weak: #f6ffed;
+    --purple: #722ed1;
+    --purple-weak: #f9f0ff;
+    --orange: #d4380d;
+    --orange-weak: #fff2e8;
+    --amber: #874d00;
+    --amber-weak: #fffbe6;
+    --red: #ff4d4f;
+    --red-weak: #fff1f0;
+    --focus: #d4380d;
+    --radius: 6px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #141414;
+      --fg: rgba(255, 255, 255, .85);
+      --muted: rgba(255, 255, 255, .65);
+      --line: #262626;
+      --surface: #141414;
+      --surface-2: #1f1f1f;
+      --code-bg: #1f1f1f;
+      --primary: #69b1ff;
+      --primary-weak: #111a2c;
+      --cyan: #73d13d;
+      --cyan-weak: #162312;
+      --accent: #73d13d;
+      --accent-weak: #162312;
+      --purple: #b37feb;
+      --purple-weak: #241a3d;
+      --orange: #ff9c6e;
+      --orange-weak: #3a2113;
+      --amber: #ffc53d;
+      --amber-weak: #2b2111;
+      --red: #ff7875;
+      --red-weak: #2a1215;
+      --focus: #ff9c6e;
+    }
+  }
+  /* 排版阶梯：正文 14/1.5715，标题 30/20/16，SM 文本 12 */
+  body { font-size: 14px; line-height: 1.5715; }
+  h1 { font-size: 30px; }
+  h2 { font-size: 20px; }
+  h3 { font-size: 16px; }
+  .subsection-title { font-size: 16px; }
+  .lede { font-size: 16px; }
+  .site-footer, .filter-note, .filter-status, .paper-card-meta, .path-order { font-size: 12px; }
+  /* Card（bordered）：1px --line、圆角 6（--radius）、内边距 24；
+     论文/奠基卡片悬停主色边框；标题行次级色、悬停主色 */
+  .paper-card, .foundation-card, .path-card { padding: 24px; }
+  .paper-card:hover, .foundation-card:hover { border-color: var(--primary); }
+  .paper-card h3 a, .foundation-card h3 a { color: var(--muted); }
+  .paper-card h3 a:hover, .foundation-card h3 a:hover { color: var(--primary); text-decoration: underline; }
+  /* Tag：1px 边框、圆角 4、12px（语义色沿用令牌） */
+  .chip { border-radius: 4px; font-size: 12px; }
+  /* Table：表头 code-bg + --fg，行悬停高亮 */
+  thead th { background: var(--code-bg); color: var(--fg); }
+  tbody tr:hover td, tbody tr:hover th { background: var(--code-bg); }
+  /* Alert：左条 4px */
+  .callout { border-left-width: 4px; }
+</style>
 </head>
 <body>
 <a class="skip-link" href="#main">跳至正文</a>

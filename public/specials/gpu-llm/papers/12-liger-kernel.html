@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liger Kernel：面向 LLM 训练的融合 Triton 算子库（论文 12 解读）</title>
+<meta name="description" content="基于本地论文 PDF（12_Liger-Kernel_2410.10989.pdf，arXiv:2410.10989v3）的中文架构解读：Liger Kernel 以融合 Triton 算子（RMSNorm、LayerNorm、RoPE、SwiGLU、GeGLU、CrossEntropy、FusedLinearCrossEntropy）与分块 logit 消费降低 LLM 训练显存与耗时，含 HBM/SRAM 数据路径、训练框架接入、算子覆盖、回退运维、成本与决策清单。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="prev" href="11-flashattention-3.html">
+<link rel="next" href="13-megascale.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">训练、并行与 GPU Kernel</a></li>
+    <li aria-current="page">Liger Kernel</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>Liger Kernel：用融合 Triton 算子压低 LLM 训练的显存峰值与耗时</h1>
+<p class="lede">本页为第 12 篇（训练、并行与 GPU Kernel 类），全部定量内容取自本地论文 PDF <code>12_Liger-Kernel_2410.10989.pdf</code>（arXiv:2410.10989v3，cs.LG，水印 2025-01-24），并逐条标注 PDF 页码与章节；17 页中第 1–15 页已逐页目检，第 16–17 页（参考文献）经文本交叉核对。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：训练（微调/训练算子层）</li>
+    <li>形态：GPU kernel 库，单机/多机均可；与 FSDP、DeepSpeed ZeRO/ZeRO++ 叠加</li>
+    <li>目标硬件：论文实验口径为 NVIDIA A100 80GB（单卡/4 卡/8 卡）；仓库 CI 另覆盖 AMD/Intel（<span class="ev ev-r">R</span>+<span class="ev ev-p">P</span>，但论文性能数字仅 A100）</li>
+    <li>核心资源：HBM 显存 · 片上 SRAM · 算力</li>
+    <li>证据状态：P + R（正文含 E/I 标签）</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-15">2026-09-15</time>（PDF 第 1–15 页逐页目检；官方仓库已在线核验）。</p>
+  <p><strong>证据完整度：</strong>关键定量结论均带 PDF 页码/图号与完整测试条件，未获取的字段一律写明「论文未明确披露」；仓库经在线核验（<span class="ev ev-r">R</span>）；云上产品映射为示例（<span class="ev ev-e">E</span>，未逐一核验规格与价格）；成本公式、回退与运维建议为参数化推断（<span class="ev ev-i">I</span>）。本页不设任何评分。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文明确链接且经核验的官方仓库">R＝官方仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，用于云上映射与迁移后官方链接接续">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="11-flashattention-3.html" rel="prev">上一篇：11 FlashAttention-3（文件可能尚未发布）</a>
+  <a href="13-megascale.html" rel="next">下一篇：13 MegaScale（文件可能尚未发布）</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（第 1 页）</caption>
+    <tbody>
+      <tr><th scope="row">标题</th><td>Liger Kernel: Efficient Triton Kernels for LLM Training（编辑译名：面向 LLM 训练的高效 Triton 算子库）</td></tr>
+      <tr><th scope="row">作者与机构</th><td>Pin-Lun Hsu、Yun Dai、Vignesh Kothapalli、Qingquan Song、Shao Tang、Siyu Zhu、Steven Shimizu、Shivam Sahni、Haowen Ning、Yanning Chen；LinkedIn Inc <span class="ev ev-p">P</span>（第 1 页；分工详见第 15 页 §6.1）</td></tr>
+      <tr><th scope="row">arXiv / 版本</th><td>arXiv:2410.10989v3（cs.LG），PDF 水印 2025-01-24；未标注会议录用信息，第 14 页 Note 自述「本技术报告仅关注性能基准」 <span class="ev ev-p">P</span>（第 1、14 页）</td></tr>
+      <tr><th scope="row">代码</th><td>摘要末句明示 <code>https://github.com/linkedin/Liger-Kernel</code>（permissive license），经在线核验为 BSD-2-Clause <span class="ev ev-r">R</span>（2026-09-15，见 <a href="#links">#links</a>）</td></tr>
+      <tr><th scope="row">基准版本</th><td>论文全部数值实验基于 <strong>Liger-Kernel v0.2.1</strong> <span class="ev ev-p">P</span>（第 9 页 §4 与脚注 17）；<span class="ev ev-r">R</span> 该 tag 已在线确认存在</td></tr>
+      <tr><th scope="row">评估范围</th><td>kernel 级：CrossEntropy、GeGLU、SwiGLU、RMSNorm、LayerNorm、RoPE（单卡 A100）；端到端微调：LLaMA 3-8B、Qwen2、Gemma、Mistral、Phi3（4×A100）；Medusa 多头训练（8×A100） <span class="ev ev-p">P</span>（第 9-14 页 §4）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> Liger Kernel 的价值主张是「最后一英里」的算子层优化：把 HuggingFace 模型代码中显存/耗时热点算子（RMSNorm、LayerNorm、RoPE、SwiGLU、GeGLU、CrossEntropy/FLCE）替换为融合 Triton kernel，并用分块化 logit 消费消除大词表场景的显存尖峰——<strong>不改训练框架、不改并行策略、不改模型权重语义</strong>，平均 +20% 吞吐、−60% 显存（摘要口径）。对云平台团队，它是低接入成本、可开关回退的加固项，而不是一套新训练系统；决定其收益的是「词表/序列/批量造成的显存尖峰」在你负载中的占比。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>问题：</strong>PyTorch eager 逐步执行带来调用栈、dispatch、kernel 启动时延，且为反向物化全部中间激活；HBM 与片上 SRAM 之间的频繁拷贝是核心瓶颈；大词表模型的 logits 张量物化成为训练显存的主要尖峰 <span class="ev ev-p">P</span>（第 1-2 页 §2、第 6 页 §3.2）。</li>
+  <li><strong>方案：</strong>一套面向 LLM 训练的融合 Triton kernel 库（最小依赖 PyTorch + Triton），三层 API（自动补丁 / 模型专用补丁 / 单算子拼装），配合 FusedLinearCrossEntropy 的分块 logit 消费；与 FSDP、DeepSpeed ZeRO/ZeRO++ 正交叠加 <span class="ev ev-p">P</span>（第 1、3-7 页）。</li>
+  <li><strong>论文声称的主要结果：</strong>相对 HuggingFace 实现，平均吞吐 +20%、GPU 显存 −60%（摘要）；端到端逐模型为 LLaMA 3-8B +42.8%/−54.8%（batch 64）、Qwen2 +25.5%/−56.8%（batch 48）、Gemma +11.9%/−51.8%（batch 48）、Mistral +27%/−21%（batch 128）、Phi3 +17%/−13%（batch 128） <span class="ev ev-p">P</span>（第 1 页摘要、第 10 页 §4.2；条件见 <a href="#experiments">#experiments</a>）。</li>
+  <li><strong>质量护栏：</strong>论文把 exactness 视为不可妥协项：正确性容差测试（fp32/bf16 两档）、性能基准、小规模收敛测试、连续性检查四类实践内建，且摘要称集成测试内建（built-in） <span class="ev ev-p">P</span>（第 1 页摘要、第 7-8 页 §3.3）。</li>
+  <li><strong>主要限制：</strong>全部数字来自 A100 80GB + bfloat16 + v0.2.1；端到端序列长固定 512、20 步采样；基线只有 HuggingFace eager（未对比 torch.compile 等）；结果仅以图呈现、无数据表；Medusa 场景只有定性结论 <span class="ev ev-p">P</span>（第 9-14 页）+ <span class="ev ev-i">I</span>（公平性归纳）。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>执行开销与显存开销同源：</strong>论文把 LLM 训练的低效归结到两点——eager 模式逐步执行带来的函数调用栈、dispatching 与 CUDA kernel 启动时延，以及「为反向而物化每一个中间激活」的显存占用 <span class="ev ev-p">P</span>（第 1-2 页 §2）。<span class="ev ev-i">I</span> 对架构师而言，这意味着微调作业的「OOM 上限」往往不是权重，而是激活与 logits 的临时峰值。</p>
+
+<p><strong>硬件层瓶颈：</strong>自定义算子融合的主要目标是缓解 HBM（大而慢）与片上 SRAM（快而小）之间频繁内存拷贝的瓶颈：SM 需要快速取数才能让多线程并行，等 HBM 送数时计算核心空闲；该问题在Transformer类大矩阵、多算子场景更严重 <span class="ev ev-p">P</span>（第 2 页 §2.2，引 Wen-Mei et al. 2022）。</p>
+
+<p><strong>既有三条路线与 Liger 的站位：</strong><span class="ev ev-p">P</span>（第 2-3 页 §2.1-§2.3）</p>
+<ol>
+  <li><strong>模型编译器：</strong>torch.compile（PyTorch 2.0 JIT 捕图 → Triton/C++ 代码生成）、Apache TVM、XLA、nvFuser——泛化的图级优化，覆盖面广但对特定计算模式的针对性弱于手写融合。</li>
+  <li><strong>算法视角的融合：</strong>以 FlashAttention/FlashAttention-2 为代表，把注意力分块放进 SRAM、免整张注意力矩阵物化，显存复杂度从二次方降到线性——针对性精确、收益更大。</li>
+  <li><strong>手写 Triton 融合生态：</strong>xFormers（Meta）、FlashAttention 仓库（除 CUDA attention 外还含 layer norm、linear+squared ReLU 融合等 Triton/torch.script 组件）、Unsloth（重写流行 LLM 与 LoRA 层）、EfficientCrossEntropy（线性投影与 CE 融合、分块算损失以免物化整张 logits）；Liger 明言「借鉴并复用上述项目的代码」。</li>
+</ol>
+
+<p><strong>目标工作负载与约束：</strong>LLM 训练（论文实验以微调为主）；要求最小依赖（仅 PyTorch + Triton）；兼容 PyTorch FSDP、DeepSpeed ZeRO、ZeRO++ 等分布式框架 <span class="ev ev-p">P</span>（第 1 页 §1）。<strong>基线口径：</strong>性能对比基线为 HuggingFace 实现（eager 模型代码） <span class="ev ev-p">P</span>（第 1 页摘要、第 9 页图 2/图 3 图例）。<span class="ev ev-i">I</span> 论文未对比 torch.compile 或其他融合路线，属于其评测边界（见 <a href="#experiments">#experiments</a> 公平性说明）。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 三层级 API：对现有代码扰动最小</h3>
+<ol>
+  <li><strong>自动补丁：</strong><code>AutoLigerKernelForCausalLM.from_pretrained(...)</code>——模型类型受支持即自动改写 modeling 代码，无需模型专用导入 <span class="ev ev-p">P</span>（第 3 页 §3.1）。</li>
+  <li><strong>模型专用补丁：</strong>如 <code>apply_liger_kernel_to_llama()</code>，加载模型前细粒度替换；适用于 causal LM 之外的形态（如序列分类） <span class="ev ev-p">P</span>（第 3 页 §3.1）。</li>
+  <li><strong>单算子拼装：</strong>高级用户直接使用 <code>LigerLayerNorm</code>、<code>LigerCrossEntropyLoss</code> 等组件自组模型 <span class="ev ev-p">P</span>（第 3 页 §3.1）。</li>
+</ol>
+<p><span class="ev ev-i">I</span> 三层 API 的运维含义：接入强度与回退粒度一一对应——自动补丁最容易整体开关，单算子拼装则支持「只替换风险最低的算子」的灰度策略（见 <a href="#security-ops">#security-ops</a>）。</p>
+
+<h3>3.2 kernel 通用骨架</h3>
+<ul>
+  <li>所有 kernel 把输入/输出整形为 <strong>(B×T, H)</strong> 二维矩阵（B=batch、T=序列长、H=隐维度），kernel 内由 Triton 按输入行并行；warp 数按 block size 计算（复用 Unsloth 的 <code>calculate_settings</code>） <span class="ev ev-p">P</span>（第 4 页 §3.2 与脚注 6）。</li>
+  <li>反向推导以「单行输入 x → 输出 y → ∇<sub>y</sub>L」为单位展开，共享参数（γ/β）的梯度再按 batch 累加 <span class="ev ev-p">P</span>（第 4 页 §3.2）。</li>
+</ul>
+
+<h3>3.3 算子覆盖：论文实现与评估的 7 个 kernel</h3>
+<div class="table-scroll">
+  <table>
+    <caption>Liger kernel 一览（机制均为论文事实 <span class="ev ev-p">P</span>；「运维要点」列为编辑整理 <span class="ev ev-i">I</span>）</caption>
+    <thead>
+      <tr><th scope="col">kernel</th><th scope="col">融合内容与数据策略</th><th scope="col">反向/数值口径</th><th scope="col">页码</th><th scope="col">运维要点（I）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">RMSNorm</th>
+        <td>归一化 + 缩放融合为单个 Triton kernel（式 1）；实现参考 Unsloth rms_layernorm.py 与 Triton layer-norm 教程（脚注 7）</td>
+        <td>缓存 RMS 供反向复用（式 2）；同 batch 共享 γ，γ 梯度按 batch 累加</td>
+        <td><span class="ev ev-p">P</span> 第 4 页</td>
+        <td>基准：约 7× 提速、约 3× 省显存（hidden 16384）</td>
+      </tr>
+      <tr>
+        <th scope="row">LayerNorm</th>
+        <td>中心化 + 归一化 + 缩放融合（式 3）；缓存 inverse RMS</td>
+        <td>γ/β 梯度累加（式 4）；聚合比较过 PyTorch 朴素 / flash-attention 两阶段 / Triton atomic 三种变体，采用两阶段（脚注 8）</td>
+        <td><span class="ev ev-p">P</span> 第 4-5 页</td>
+        <td>基准：执行时间约降 30%，显存开销极小</td>
+      </tr>
+      <tr>
+        <th scope="row">RoPE</th>
+        <td>query/key 旋转位置编码融合为单 kernel（式 5）；旋转矩阵按 <strong>HuggingFace 实现形式</strong>（脚注 9：transformers v4.44.2 modeling_llama.py#L253），实现上利用稀疏性采用 Su et al. (2023) 高效计算</td>
+        <td>反向 ∇<sub>x</sub>L = R<sup>⊤</sup>∇<sub>y</sub>L（式 6）；<strong>要求输入连续</strong>（曾因 SDPA 导数非连续致 loss 发散）</td>
+        <td><span class="ev ev-p">P</span> 第 5 页、第 8 页 §3.3.4</td>
+        <td>基准：约 8× 提速、约 3× 省显存（hidden 16384）；版本耦合点</td>
+      </tr>
+      <tr>
+        <th scope="row">SwiGLU</th>
+        <td>逐元素门控融合：y = SiLU(Wx+b) ⊙ (Vx+c)；仅考虑 β=1（Swish 退化为 SiLU，与受支持 HF LLM 一致）（式 7-8）</td>
+        <td>反向重算 SiLU 输出省显存（式 9）</td>
+        <td><span class="ev ev-p">P</span> 第 5 页</td>
+        <td>基准：速度与基线持平、峰值显存约降 1.6×（seq 16384）</td>
+      </tr>
+      <tr>
+        <th scope="row">GeGLU</th>
+        <td>同 SwiGLU 结构，用 tanh 近似 GELU（式 10-12）</td>
+        <td>反向重算 GELU 输出（式 13-14）</td>
+        <td><span class="ev ev-p">P</span> 第 6 页</td>
+        <td>同上：速度持平、显存约降 1.6×（seq 16384）</td>
+      </tr>
+      <tr>
+        <th scope="row">CrossEntropy（非融合 CE）</th>
+        <td>梯度计算前移到 forward，logits 张量与梯度<strong>就地（in-place）替换</strong>，避免两份大张量共存；在线 softmax 流式计算；safe log 防数值失稳（式 15-16）</td>
+        <td>∇<sub>x</sub>L = y − t 就地写回 logits 存储区</td>
+        <td><span class="ev ev-p">P</span> 第 6 页</td>
+        <td>单张 logits 仍需整体驻留显存 → 引出 FLCE；基准：约 3× 提速、约 5× 省显存（vocab 163840）</td>
+      </tr>
+      <tr>
+        <th scope="row">FusedLinearCrossEntropy（FLCE）</th>
+        <td>把线性投影头与 CE 融合：隐状态折叠为 (B×T, H) 后<strong>分块</strong>投影，块 logits 交给非融合 CE kernel 算部分损失并就地产出块梯度（第 7 页图 1）</td>
+        <td>∇<sub>h</sub>L = W∇<sub>x</sub>L、∇<sub>W</sub>L = Σ h(∇<sub>x</sub>L)<sup>⊤</sup> 逐块累加（式 17）；mean reduction 下按 chunk_size/(B×T) 补缩放（Remark）</td>
+        <td><span class="ev ev-p">P</span> 第 6-7 页</td>
+        <td>大词表场景的首选；Medusa 多头训练的关键依赖</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p><strong>FLCE 的分块尺寸（提取文本在此处错序，已按原页更正）：</strong><span class="ev ev-p">P</span>（第 7 页）</p>
+<div class="formula">
+chunk_size = 2^⌈ log₂ ⌈ BT / ⌈V/H⌉ ⌉ ⌉　（V＝词表大小；直觉：让块尺寸贴近隐维度 H，在显存分配与处理速度间折中）
+</div>
+<p><span class="ev ev-p">P</span> 由于所有 chunk 共用投影权重 W，最终梯度需按块累加；mean reduction 的 CE 逐块计算不天然归一到全序列，Remark 以 chunk_size/(B×T) 比例补缩放修正该近似（第 7 页）。<span class="ev ev-i">I</span> 该「缩放校正」说明 FLCE 在数值上是对整批 CE 的受控近似，升级或复现时应保留论文的校正口径并跑收敛对照。</p>
+
+<h3>3.4 质量护栏：四类测试实践</h3>
+<ul>
+  <li><strong>正确性：</strong>对照纯 PyTorch/HuggingFace 实现，覆盖规则（2 的幂）与不规则形状、多种 dtype；容差 fp32 atol=1e-7 / rtol=1e-5，bf16 atol=1e-3 / rtol=1e-2；实践中容差可能需再放宽 1-2 个数量级（即使对 exact kernel），此时以收敛测试兜底（脚注 12） <span class="ev ev-p">P</span>（第 8 页 §3.3.1）。</li>
+  <li><strong>int32 溢出陷阱：</strong>program id 默认 int32，<code>program_id × Y_stride &gt; 2,147,483,647</code> 时变负导致非法内存访问；大维度须显式转 int64 <span class="ev ev-p">P</span>（第 8 页 §3.3.1）。</li>
+  <li><strong>性能：</strong>以速度与显存两维证明「重写为 Triton」是值得的；测试形状取自真实训练（如 batch 4、hidden 2048、可变序列长） <span class="ev ev-p">P</span>（第 8 页 §3.3.2）。</li>
+  <li><strong>收敛与连续性：</strong>小规模模拟真实训练中 contiguity/shape/dtype 差异，校验训练结束时 logits、权重、loss 的 exactness；Triton 直接操作物理内存，非连续张量可致非法访问或错误输出——生产 RoPE 曾因 <code>scaled_dot_product_attention</code> 导数非连续而显著 loss 发散 <span class="ev ev-p">P</span>（第 8 页 §3.3.3-§3.3.4）。</li>
+</ul>
+
+<h3>3.5 训练框架接入</h3>
+<ul>
+  <li><strong>论文 §3.4 列出的集成：</strong>HuggingFace transformers <code>Trainer</code>、HuggingFace TRL <code>SFTTrainer</code>、Axolotl、LLaMA-Factory；通常一个标志即可，例如 TRL 的 <code>SFTConfig(..., use_liger=True)</code> 会经 <code>AutoLigerKernelForCausalLM</code> 加载模型（示例模型 <code>meta-llama/Meta-Llama-3-8B</code>） <span class="ev ev-p">P</span>（第 8 页 §3.4 与脚注 13-16）。</li>
+  <li><strong>边界提示：</strong>PyTorch Lightning 集成仅出现在第 15 页 §6.1 贡献者分工中，§3.4 未列入——引用时不应把它与上述四个集成等同 <span class="ev ev-p">P</span>（第 15 页）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>分布式兼容：</strong>kernel 级替换与并行策略正交，支持 FSDP、DeepSpeed ZeRO、ZeRO++ <span class="ev ev-p">P</span>（第 1 页 §1）。</li>
+</ul>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝三层 API 的补丁动作、use_liger 等框架标志、测试闸门（correctness/perf/convergence/contiguity）；<strong>数据面</strong>＝kernel 内的 (B×T,H) 整形、SRAM 内单次读写的算子计算、FLCE 分块流水与就地梯度、共享参数梯度累加。该划分仅影响叙述，不改变论文事实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/liger-kernel-data-path.svg"
+       alt="Liger Kernel 数据路径示意图：训练框架（HuggingFace Trainer、TRL SFTTrainer、Axolotl、LLaMA-Factory）经自动补丁或模型专用补丁 API 替换模型代码中的 RMSNorm、LayerNorm、RoPE、SwiGLU、GeGLU、CrossEntropy 算子；每个融合 Triton kernel 把张量整形为按行处理的 (B×T,H) 二维矩阵，一次载入片上 SRAM 完成正反向计算并缓存反向所需中间量，避免对 HBM 的重复搬运；大词表场景由 FusedLinearCrossEntropy 把隐状态折叠为二维后分块送入线性投影头，逐块生成 logits 并交给带在线 softmax 的非融合 CE kernel 就地写出梯度，回传块梯度并累积投影头梯度，避免整张 logits 张量落显存；kernel 层替换与 FSDP、DeepSpeed ZeRO/ZeRO++ 等分布式框架兼容；底部为正确性、性能、收敛与连续性测试闸门。" width="980" height="820">
+  <figcaption>图 1：Liger Kernel 训练数据路径。实线＝训练数据流，虚线＝HBM/SRAM 说明与测试闸门；图中编号 ①–⑤ 为图内分层序号，对应下方文字序列 ①–⑥ 中的：图①＝文①、图②＝文②–③、图③＝文④、图④＝文⑤、图⑤＝文⑥。依据论文第 1–10、13 页 §1–§4 绘制 <span class="ev ev-p">P</span>；分层、配色与编号为编辑标注（论文本身无此图）<span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（①–⑥；与图中分层 ①–⑤ 的对应关系见图注）</h3>
+<ol>
+  <li><strong>① 接入层（控制面）：</strong>训练作业以三层 API 之一启动——<code>AutoLigerKernelForCausalLM</code> 自动补丁、模型专用补丁（如 <code>apply_liger_kernel_to_llama()</code>）或单算子拼装；框架形态下由 <code>use_liger=True</code> 等标志触发 <span class="ev ev-p">P</span>（第 3 页 §3.1、第 8 页 §3.4）。</li>
+  <li><strong>② 张量整形：</strong>被替换算子的输入/输出统一整形为 (B×T, H) 二维矩阵，kernel 按行并行、warp 数由 block size 推导 <span class="ev ev-p">P</span>（第 4 页 §3.2）。</li>
+  <li><strong>③ 融合执行（数据面核心）：</strong>每个融合 kernel 把一行数据一次载入片上 SRAM，完成「归一化+缩放」「旋转」「门控激活」等原本多个算子的正反向计算，缓存反向所需中间量（RMS、inverse RMS），把对 HBM 的多次往返压缩为最少读写 <span class="ev ev-p">P</span>（第 2 页 §2.2、第 4-6 页 §3.2）；SwiGLU/GeGLU 反向以重算换显存 <span class="ev ev-p">P</span>（第 5-6、9 页）。</li>
+  <li><strong>④ 大词表损失路径（FLCE）：</strong>已对齐标签的隐状态折叠为 (B×T, H) → 逐块过线性投影头得块 logits（chunk_size = 2^⌈log₂⌈BT/⌈V/H⌉⌉⌉）→ 非融合 CE kernel（在线 softmax）逐块算部分损失并就地把块 logits 替换为块 logits 梯度 → 回传得块隐状态梯度、累加投影头梯度 ∇<sub>W</sub>L = Σ h(∇<sub>x</sub>L)<sup>⊤</sup>，并按 chunk_size/(B×T) 补缩放 <span class="ev ev-p">P</span>（第 6-7 页 §3.2、图 1、Remark）。</li>
+  <li><strong>⑤ 梯度归约交还框架：</strong>Liger 只替换算子内部执行；参数梯度写出后，all-gather/reduce-scatter/allreduce 等分布式归约仍由 FSDP、DeepSpeed ZeRO/ZeRO++ 完成 <span class="ev ev-p">P</span>（第 1 页 §1）+ <span class="ev ev-i">I</span>（职责边界解读）。</li>
+  <li><strong>⑥ 测试闸门（旁路）：</strong>接入前后跑正确性（容差制）、性能、收敛、连续性四类检查；摘要称基准与集成测试内建（built-in） <span class="ev ev-p">P</span>（第 1 页摘要、第 7-8 页 §3.3）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键数字与容量事实（口径非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>logits 尖峰示例：batch 8 × 序列 4096 × 词表 256k × bfloat16 ⇒ 仅 logits 即 <strong>16.8 GB</strong>（单卡训练、Gemma 例）</td><td>FLCE 动机；显存峰值常出现在 forward 结束、激活未释放前（脚注 10）</td><td><span class="ev ev-p">P</span> 第 6 页</td></tr>
+      <tr><td>chunk_size = 2^⌈log₂⌈BT/⌈V/H⌉⌉⌉；mean reduction 按 chunk_size/(B×T) 补缩放</td><td>FLCE 分块与数值校正</td><td><span class="ev ev-p">P</span> 第 7 页</td></tr>
+      <tr><td>非融合 CE：logits 与梯度就地互换，避免双份大张量，但单张 logits 仍需整体驻留</td><td>CE 与 FLCE 的分界</td><td><span class="ev ev-p">P</span> 第 6 页</td></tr>
+      <tr><td>program_id × Y_stride &gt; 2,147,483,647 时 int32 变负 → 非法内存访问；大维度转 int64</td><td>大词表/大维度 kernel 的地址安全</td><td><span class="ev ev-p">P</span> 第 8 页 §3.3.1</td></tr>
+      <tr><td>容差：fp32 atol=1e-7/rtol=1e-5；bf16 atol=1e-3/rtol=1e-2（实践中可能再放宽 1-2 个数量级，脚注 12）</td><td>正确性闸门口径</td><td><span class="ev ev-p">P</span> 第 8 页 §3.3.1</td></tr>
+      <tr><td>非连续张量可致非法访问/错误输出；RoPE 曾因 SDPA 导数非连续致 loss 发散</td><td>连续性不变量</td><td><span class="ev ev-p">P</span> 第 8 页 §3.3.4</td></tr>
+      <tr><td>RoPE 旋转矩阵假设 HuggingFace 实现形式（transformers v4.44.2 modeling_llama.py#L253，脚注 9）</td><td>对 HF 模型代码的版本耦合点</td><td><span class="ev ev-p">P</span> 第 5 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong><span class="ev ev-p">P</span> 口径提醒：</strong>「省显存」的三个机制层次不同——CE 是<strong>就地替换</strong>（单张 logits 仍在），SwiGLU/GeGLU 是<strong>反向重算</strong>（峰值降但计算量不减），FLCE 是<strong>分块化</strong>（整张 logits 从不物化）。引用任何数字时必须连带其机制与条件，不能把 5× 省显存（CE，vocab 163840）外推到 FLCE 或端到端场景。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>显存 ↔ 重算</h3>
+    <p><span class="ev ev-p">P</span> SwiGLU/GeGLU 反向重算 SiLU/GELU 输出，峰值显存约降 1.6×，但速度只与基线持平（第 9 页 §4.1）。<span class="ev ev-i">I</span> 属「以算力换显存」：算力富余、显存吃紧的场景收益最大；算力已打满的作业收益有限。</p>
+  </li>
+  <li>
+    <h3>速度与显存双降 ↔ 场景依赖</h3>
+    <p><span class="ev ev-p">P</span> CE（vocab 163840）约 3× 提速 + 5× 省显存、RMSNorm 约 7×/3×、RoPE 约 8×/3×，但均在特定词表/隐维度下测得（第 9-10 页）。<span class="ev ev-i">I</span> 词表或隐维度越小，倍数越低（论文图 2/3 的曲线随维度收窄）；不能以最大维度倍数外推小模型。</p>
+  </li>
+  <li>
+    <h3>CE 就地替换 ↔ FLCE 分块</h3>
+    <p><span class="ev ev-p">P</span> CE 就地替换免双份大张量但单张 logits 仍驻留；FLCE 让整张 logits 不物化，代价是多趟分块 GEMM 与 chunk_size/(B×T) 缩放校正（第 6-7 页）。<span class="ev ev-i">I</span> 论文以「投影层计算密集、分块 GEMM 开销可被压缩」论证近乎无损（第 7 页），但未给出两者直接对比数据。</p>
+  </li>
+  <li>
+    <h3>接入低扰动 ↔ 模型代码版本耦合</h3>
+    <p><span class="ev ev-p">P</span> 补丁式接入「对现有代码库扰动最小」（第 3 页），但 RoPE 假设 HF 形式的旋转矩阵（脚注 9 指向 v4.44.2 源码行）、SwiGLU 仅支持 β=1 等 HF 惯例（第 5 页）。<span class="ev ev-i">I</span> patch 本质是对 modeling 代码的运行时改写，transformers 大版本升级是主要回归风险源，需联动测试。</p>
+  </li>
+  <li>
+    <h3>连续性不变量 ↔ 通用性</h3>
+    <p><span class="ev ev-p">P</span> Triton 直接操作物理内存，非连续张量可致非法访问或错误输出；生产 RoPE 曾因 SDPA 导数非连续而 loss 发散（第 8 页 §3.3.4）。<span class="ev ev-i">I</span> 任何自定义模型/非常规并行组合（如改变梯度布局的并行策略）接入前都要做连续性审计与收敛冒烟。</p>
+  </li>
+  <li>
+    <h3>Triton 轻依赖可移植 ↔ JIT 与调优深度</h3>
+    <p><span class="ev ev-p">P</span> Triton 的 Python 语法与 JIT 编译让库更轻量、可移植（第 2 页 §2.3）。<span class="ev ev-i">I</span> 代价方向：首次运行/新形状触发 JIT 编译等待；手写 Triton kernel 的调优深度通常以「已测形状族」为界，超出论文测试分布的形状收益需自测（论文未披露其他形状的结果）。</p>
+  </li>
+  <li>
+    <h3>exactness 目标 ↔ 容差现实</h3>
+    <p><span class="ev ev-p">P</span> 论文宣称 exactness 不可妥协，但正确性以容差制验收（bf16 atol=1e-3/rtol=1e-2），且实践中可能再放宽 1-2 个数量级，以收敛测试兜底（第 8 页 §3.3.1 与脚注 12）。<span class="ev ev-i">I</span> 对「与 HF 实现逐位一致」有硬性要求的场景（如确定性回归测试）需另行评估。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>Liger Kernel 相关需求 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求/机制</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">算力：A100 80GB 单卡（kernel 基准）、4 卡（微调用例）、8 卡（Medusa 用例）</th>
+        <td><span class="ev ev-e">E</span> 4×/8×A100-80GB GPU 算力实例或同档代 GPU 机型；微调容器/Notebook/托管微调服务</td>
+        <td>实验硬件为论文事实 <span class="ev ev-p">P</span>（第 9-14 页）；机型命名为云目录示例 <span class="ev ev-e">E</span>；论文未测 H100 等更新硬件 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">软件栈：PyTorch + Triton + transformers（patch 目标），pip 安装 liger-kernel</th>
+        <td><span class="ev ev-e">E</span> 深度学习训练镜像（预装 torch/triton/transformers 固定版本）；镜像仓库 + digest 锁定</td>
+        <td>最小依赖为论文事实 <span class="ev ev-p">P</span>（第 1 页 §1）；版本组合需自行 pin <span class="ev ev-r">R</span>（README，2026-09-15 核验）+ <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">训练框架：HF Trainer / TRL SFTTrainer / Axolotl / LLaMA-Factory，一个标志接入</th>
+        <td><span class="ev ev-e">E</span> 托管微调平台的框架选项或自建训练容器；微调作业模板内置 use_liger 类开关</td>
+        <td>集成清单为论文事实 <span class="ev ev-p">P</span>（第 8 页 §3.4）；平台化封装为云实践示例 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">显存余量：−60% 级显存释放（摘要口径）→ 更小 GPU / 更大 batch / 更长序列</th>
+        <td><span class="ev ev-e">E</span> 实例降配（如 80GB → 40GB 档）或同卡加倍 batch 的容量规划参数</td>
+        <td>「更小 GPU/更大 batch/更长序列」为论文原话 <span class="ev ev-p">P</span>（第 10 页 §4.2）；具体换型收益须按负载实测 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">分布式：与 FSDP、DeepSpeed ZeRO/ZeRO++ 叠加</th>
+        <td><span class="ev ev-e">E</span> 多机训练作业（torchrun/DeepSpeed launcher）+ GPU 拓扑感知调度</td>
+        <td>兼容性为论文事实 <span class="ev ev-p">P</span>（第 1 页 §1）；编排器为云实践示例 <span class="ev ev-e">E</span>（论文未涉及编排）</td>
+      </tr>
+      <tr>
+        <th scope="row">可观测：吞吐、GPU 峰值显存、loss 曲线</th>
+        <td><span class="ev ev-e">E</span> 训练指标接入集中监控（步时延/吞吐/显存水位/loss 突变告警）</td>
+        <td>指标类型为论文采集口径 <span class="ev ev-p">P</span>（第 10 页 §4.2：吞吐与 GPU 显存、20 步后采样）；告警设计为 <span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">弹性与回退：补丁为运行时改写、标志可开关</th>
+        <td><span class="ev ev-e">E</span> 作业级灰度：单作业开 Liger → 对照 → 全量；异常时关标志回退 HF 实现</td>
+        <td>「标志即可补丁」为论文机制 <span class="ev ev-p">P</span>（第 8 页 §3.4）；灰度/回退流程为 <span class="ev ev-i">I</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>放置与选型要点（编辑推断）：</strong><span class="ev ev-i">I</span> Liger 的收益随「logits/激活显存尖峰占比」放大，与节点间网络无关——因此它不改变放置拓扑（对比 TP/PP 那类约束），可以把「单机 4-8 卡 + 大词表模型微调」作为第一批试点；跨机型换卡（80GB→40GB 档）是显存释放最直接的降本路径，但需重新验证吞吐与收敛。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 微调场景的「SLO」口径</h3>
+<p>论文采集的指标是<strong>训练吞吐</strong>与 <strong>GPU 显存占用</strong>（20 步后采样、5 次重复取标准误差） <span class="ev ev-p">P</span>（第 10 页 §4.2）。<span class="ev ev-i">I</span> 平台侧通常转化为：①tokens/s 或 step 时间目标；②峰值显存上限（决定 batch/序列上限与选卡）；③loss 收敛里程碑（判废标准）；④OOM 率。第③④项论文未直接给平台化指标，需自建。</p>
+
+<h3>7.2 成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+微调 GPU 时（小时）≈ 总 token 数 ÷ (单作业吞吐 tokens/s × 3600)<br>
+算力成本 ≈ GPU 时 × 当时单价（记录查询日期）<br>
+换算杠杆：开启 Liger 后吞吐 ×(1+Δt)、显存 ×(1−Δm) → 同卡可加大 batch/序列，或降档选卡<br>
+有效成本/token ≈ 算力成本 ÷ 总 token 数（batch/序列放大后分母增大）
+</div>
+<p><span class="ev ev-i">I</span> 公式中由论文支撑的只有 Δt/Δm 的实验取值区间（带完整条件，见 <a href="#experiments">#experiments</a>）；单价、数据管道与存储成本论文未披露，本页不给伪精确数字。</p>
+
+<h3>7.3 敏感项排序（论文口径，条件互不可比）</h3>
+<p><span class="ev ev-p">P</span> 显存敏感项首位是大词表 logits（Gemma 例：256k 词表、batch 8、seq 4096、bf16 下仅 logits 16.8 GB，第 6 页）；端到端显存降幅随模型从 −13%（Phi3）到 −56.8%（Qwen2）不等（第 10 页）。<span class="ev ev-i">I</span> 成本含义：词表越大、批量越大，Liger 的显存杠杆越值钱；显存本来就小的模型（如 Phi3 在该负载下）收益有限。</p>
+
+<h3>7.4 数据缺口</h3>
+<ul>
+  <li>端到端 TCO、云价格、能耗：<span class="ev ev-i">I</span> 论文未披露，需部署时自测。</li>
+  <li>FLCE 与非融合 CE 的直接对比数据、不同 GPU 架构（H100/AMD）数据：<span class="ev ev-p">P</span> 论文未明确披露（实验仅 A100 80GB）。</li>
+  <li>长序列端到端收益：E2E 实验固定 seq 512（第 10 页）；kernel 级虽测到 seq 16384（第 9 页），但两者口径不同、不能拼接出「长序列端到端收益 X%」。</li>
+  <li>Qwen2、Phi3 的模型规格：<span class="ev ev-p">P</span> 论文未明确披露（Gemma 7b、Mistral 7b 仅见图注，第 12 页）。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>供应链与许可：</strong><span class="ev ev-r">R</span> 官方仓库 linkedin/Liger-Kernel，BSD-2-Clause（2026-09-15 核验）；二次分发需保留许可声明。<span class="ev ev-i">I</span> 依赖链为 liger-kernel + triton + torch + transformers，建议版本/commit 三重 pin + CVE 扫描；Triton JIT 编译产物缓存目录应纳入镜像层管理并限制写权限。</li>
+  <li><strong>论文时点 vs 仓库演进：</strong><span class="ev ev-p">P</span> 论文口径是 v0.2.1（第 9 页脚注 17）；<span class="ev ev-r">R</span> 仓库 README 当前能力（更多模型 patch、DPO/ORPO/CPO/SimPO/KTO 损失 kernel、cuTile/CuTe DSL 后端等）已超出论文（2026-09-15 核验）。<span class="ev ev-i">I</span> 评估、审计与安全扫描都应以「实际 pin 的那个版本」为对象，不得按论文或 README 文案外推。</li>
+  <li><strong>训练数据合规：</strong>论文实验用 Alpaca 指令数据集（E2E）与 tiny shakespeare（收敛测试设计参考） <span class="ev ev-p">P</span>（第 10、15 页）。<span class="ev ev-i">I</span> 生产替换为自有语料前需完成许可/隐私/版权审查；Liger 本身不接触数据面内容，不新增数据合规面。</li>
+  <li><strong>租户隔离：</strong><span class="ev ev-i">I</span> Liger 是进程内算子库，无网络服务、无共享状态，不引入跨租户数据残留面；隔离责任仍在训练平台（作业沙箱、存储桶权限）。</li>
+</ul>
+
+<h3>8.2 可运维性</h3>
+<ul>
+  <li><strong>接入即灰度、回退即开关：</strong><span class="ev ev-p">P</span> 补丁式设计与框架标志（use_liger）意味着「关闭标志即回到 HF 实现」（第 3、8 页）。<span class="ev ev-i">I</span> 建议作业模板把 Liger 开关做成一等配置：新模型族先单作业灰度，通过正确性/收敛对照再全量；回退预案＝关开关 + 记录版本组合。</li>
+  <li><strong>上线前四闸门：</strong><span class="ev ev-p">P</span> 正确性（容差）、性能（速度+显存）、收敛（小规模端到端校验 logits/权重/loss）、连续性（张量连续审计）是论文自述实践（第 7-8 页 §3.3）；摘要称基准与集成测试内建 <span class="ev ev-p">P</span>（第 1 页）。<span class="ev ev-i">I</span> 平台应把它们固化为接入新模型/新版本时的强制检查单，尤其连续性——论文记录过 RoPE 因 SDPA 导数非连续而 loss 发散的生产事故。</li>
+  <li><strong>版本联动升级：</strong><span class="ev ev-p">P</span> RoPE 假设 HF 旋转矩阵形式（脚注 9）、SwiGLU 按 HF 惯例仅 β=1（第 5 页）。<span class="ev ev-i">I</span> transformers 大版本升级应与 liger-kernel 升级联动演练，回归项包含收敛对照；「旧版本写出的检查点 → 新版本读取」在算子层透明（权重语义不变），但仍建议纳入常规升级演练。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 建议告警：loss 突变/发散（对应连续性与数值风险）、step 时间相对基线漂移（kernel 未生效或退化）、峰值显存与 OOM 率（验证容量收益）、JIT 编译等待（首步时延尖峰）。论文未提供平台化监控方案，以上为工程建议。</li>
+  <li><strong>已知陷阱速查：</strong><span class="ev ev-p">P</span> int32 program id 溢出（&gt;2,147,483,647，第 8 页）；容差需按 dtype 分档并允许放宽（第 8 页脚注 12）；Medusa 等多头场景无 Liger 时极易 OOM（第 13 页）。<span class="ev ev-i">I</span> 建议写入平台 runbook。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>大词表 LLM（128k–256k 级）微调且显存被 logits/激活顶爆。</strong>触发：OOM 发生在 loss 计算附近、或 forward 末端显存尖峰。理由：FLCE 免整张 logits 物化，论文给出 16.8 GB logits 例与约 5× 省显存（CE，vocab 163840）<span class="ev ev-p">P</span>（第 6、9 页）。</li>
+  <li><strong>已在用 HF Trainer / TRL SFTTrainer / Axolotl / LLaMA-Factory 的微调管线。</strong>触发：希望零代码或一个标志接入。理由：论文明确列出四处集成并给出 use_liger 示例 <span class="ev ev-p">P</span>（第 8 页 §3.4）。</li>
+  <li><strong>显存受限要换小卡，或同卡想加大 batch / 加长序列。</strong>触发：容量规划需要显存余量。理由：论文把「更小 GPU、更大 batch、更长序列」列为显存释放的直接用途 <span class="ev ev-p">P</span>（第 10 页 §4.2）。</li>
+  <li><strong>Medusa 类多解码头/多 token 预测训练。</strong>触发：逐头 logits 物化导致 OOM。理由：FLCE 免逐头 logits 物化，LLaMA-3 128k 词表下 stage-1/stage-2 均降显存升吞吐，无 Liger 极易 OOM <span class="ev ev-p">P</span>（第 13 页）。</li>
+  <li><strong>FSDP / DeepSpeed ZeRO / ZeRO++ 用户想叠加算子层优化。</strong>触发：并行策略已定、不想改动分布式配置。理由：kernel 替换与分布式框架正交 <span class="ev ev-p">P</span>（第 1 页 §1）。</li>
+  <li><strong>对训练质量敏感、需要可验证性的团队。</strong>触发：要求接入有 correctness/convergence 证据链。理由：四类测试实践与内建基准/集成测试 <span class="ev ev-p">P</span>（第 1 页摘要、第 7-8 页 §3.3）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>期望推理加速的开箱收益。</strong>触发：拿训练 kernel 库直接优化 serving。理由：论文范畴是训练，仅结尾一句称技术可延伸到推理、无任何推理实验 <span class="ev ev-p">P</span>（第 14-15 页 §5）+ <span class="ev ev-i">I</span>。</li>
+  <li><strong>把论文数字外推到未测硬件/精度/规模。</strong>触发：H100/AMD/FP8、或大于 8 卡的场景直接引用本文百分比。理由：全部实验仅 A100 80GB、bfloat16、v0.2.1 <span class="ev ev-p">P</span>（第 9-14 页）；<span class="ev ev-i">I</span> 仓库虽列出更多硬件方向，但论文数字不适用。</li>
+  <li><strong>要求与 HF 实现逐位一致（bit-exact）的流程。</strong>触发：确定性回归测试或审计要求逐位复现。理由：正确性为容差制（bf16 atol=1e-3/rtol=1e-2）且允许放宽 1-2 个数量级 <span class="ev ev-p">P</span>（第 8 页 §3.3.1 与脚注 12）。</li>
+  <li><strong>无法保证张量连续性的自定义管线。</strong>触发：自定义模型/并行组合产生非连续中间量且不可改造。理由：Triton 直接操作物理内存，非连续可致非法访问或错误输出，论文有 RoPE loss 发散的生产案例 <span class="ev ev-p">P</span>（第 8 页 §3.3.4）。</li>
+  <li><strong>模型族不在 patch 支持范围且不愿自行拼装 kernel。</strong>触发：非主流架构、或 HF modeling 实现与 Liger 假设不一致。理由：自动补丁的前提是「模型类型受支持」（论文未给清单）<span class="ev ev-p">P</span>（第 3 页 §3.1）；<span class="ev ev-r">R</span> 支持清单需查仓库当前版本（2026-09-15 核验）。</li>
+  <li><strong>把 Liger 当作集群级训练系统。</strong>触发：期望它解决通信、容错、调度问题。理由：它是算子层库，不含集群控制面 <span class="ev ev-p">P</span>（第 1、3 页）；<span class="ev ev-i">I</span> 集群级需求见站内 MegaScale/TorchTitan 类系统论文。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 三套互不可混用的实验口径 <span class="ev ev-p">P</span>（第 9-14 页 §4）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>实验设置与指标口径（论文事实；版本均为 Liger-Kernel v0.2.1，脚注 17）</caption>
+    <tbody>
+      <tr><th scope="row">kernel 级基准</th><td>单张 NVIDIA A100 80GB；CE 词表 {40960, 81920, 122880, 163840}；GeGLU/SwiGLU 扫序列长、RMSNorm/LayerNorm/RoPE 扫隐维度（取值 {4096, 8192, 12288, 16384}）；每组重复 10 次取中位数、[0.2, 0.8] 分位数为界；基线＝HuggingFace 实现；结果仅见图 2（执行时间）与图 3（峰值分配显存），论文未提供数据表（第 9 页 §4.1）</td></tr>
+      <tr><th scope="row">端到端微调</th><td>4× NVIDIA A100 80GB；LLaMA 3-8B、Qwen2、Gemma、Mistral、Phi3；Alpaca 数据集；batch 可变；bfloat16；AdamW + cosine 学习率调度；序列长 512 tokens；吞吐与 GPU 显存于 20 步后采集，标准误差来自 5 次重复；基准脚本在仓库 examples/huggingface（脚注 18）（第 10 页 §4.2）</td></tr>
+      <tr><th scope="row">Medusa 多头训练</th><td>8× NVIDIA A100 80GB；LLaMA 3-8B；可变序列长（图中轴为 1024/2048/4096，读图）；batch 4；bfloat16；AdamW；stage-1（冻干部件外训头）与 stage-2（骨干+头同训）× 3/5 个头；重复实验标准误差通常 &lt;1%；报告仅做性能基准、头质量不在范围内（第 13-14 页与 Note）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 kernel 级结果（正文倍数转录，条件逐条完整）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>kernel 基准结果（均为 <span class="ev ev-p">P</span>，第 9-10 页 §4.1；基线＝HuggingFace；单卡 A100 80GB）</caption>
+    <thead>
+      <tr><th scope="col">kernel</th><th scope="col">执行时间</th><th scope="col">峰值分配显存</th><th scope="col">条件</th><th scope="col">机制来源</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">CrossEntropy</th><td class="num">约 3× 提速（图 2a）</td><td class="num">约 5× 降低（图 3a）</td><td>词表 163840（扫描集 {40960…163840}）</td><td>在线 softmax + logits/梯度就地替换</td></tr>
+      <tr><th scope="row">GeGLU</th><td class="num">与基线持平（图 2b）</td><td class="num">约 1.6× 降低（图 3b）</td><td>序列长 16384（扫描集 {4096…16384}）</td><td>反向重算 GELU 输出</td></tr>
+      <tr><th scope="row">SwiGLU</th><td class="num">与基线持平（图 2c）</td><td class="num">约 1.6× 降低（图 3c）</td><td>序列长 16384</td><td>反向重算 SiLU 输出</td></tr>
+      <tr><th scope="row">RMSNorm</th><td class="num">约 7× 降低（图 2d）</td><td class="num">约 3× 降低（图 3d）</td><td>隐维度 16384</td><td>融合归一化+缩放；缓存 RMS 供反向</td></tr>
+      <tr><th scope="row">LayerNorm</th><td class="num">约 30% 降低（图 2e）</td><td class="num">开销极小（图 3e）</td><td>隐维度扫描（16384 为文中示例维度）</td><td>缓存 inverse RMS；两阶段梯度聚合</td></tr>
+      <tr><th scope="row">RoPE</th><td class="num">约 8× 提速（图 2f）</td><td class="num">约 3× 降低（图 3f）</td><td>隐维度 16384</td><td>扁平 1D 旋转矩阵 + 稀疏重复块</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-i">I</span> 注意：以上为论文正文给出的约数（approximately）；图 2/3 为折线图、无数据表，逐点数值不可转录。精度字段：kernel 基准的精度论文未明确披露（仅端到端实验注明 bfloat16）。</p>
+
+<h3>10.3 端到端微调结果（正文百分比转录）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>端到端结果（均为 <span class="ev ev-p">P</span>，第 10 页 §4.2；基线＝HuggingFace；4×A100 80GB；bfloat16；Alpaca；seq 512；AdamW+cosine；20 步后采样、5 次重复取标准误差）</caption>
+    <thead>
+      <tr><th scope="col">模型</th><th scope="col">模型规模</th><th scope="col" class="num">batch</th><th scope="col" class="num">吞吐变化</th><th scope="col" class="num">GPU 显存变化</th><th scope="col">图号（页码）</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">LLaMA 3-8B</th><td>8B <span class="ev ev-p">P</span></td><td class="num">64</td><td class="num">+42.8%</td><td class="num">−54.8%</td><td>图 4（第 11 页）</td></tr>
+      <tr><th scope="row">Qwen2</th><td>论文未明确披露</td><td class="num">48</td><td class="num">+25.5%</td><td class="num">−56.8%</td><td>图 5（第 11 页）</td></tr>
+      <tr><th scope="row">Gemma</th><td>7b（图注）</td><td class="num">48</td><td class="num">+11.9%</td><td class="num">−51.8%</td><td>图 6（第 12 页；图文张力见下）</td></tr>
+      <tr><th scope="row">Mistral</th><td>7b（图注）</td><td class="num">128</td><td class="num">+27%</td><td class="num">−21%</td><td>图 7（第 12 页）</td></tr>
+      <tr><th scope="row">Phi3</th><td>论文未明确披露</td><td class="num">128</td><td class="num">+17%</td><td class="num">−13%</td><td>图 8（第 12 页）</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="callout callout-warning">
+  <strong>Gemma 图文张力（照录不调和）：</strong><span class="ev ev-p">P</span> 正文（第 10 页）引用 batch 48 的对比数字；<span class="ev ev-i">I</span> 但图 6（第 12 页）中 Hugging Face 柱仅出现在 batch 32，batch 48/64 处标 OOM（200dpi 局部放大确认）。论文未解释两者关系，引用 Gemma 数字时应注明该张力。其余模型图文一致：Qwen2 的 HF 在 batch 64 标 OOM、Mistral/Phi3 的 HF 在 batch 192 标 OOM、LLaMA 3-8B 无 OOM 标记（读图，<span class="ev ev-i">I</span>）。
+</div>
+
+<h3>10.4 Medusa 多头训练结果</h3>
+<p><span class="ev ev-p">P</span> 论文正文只给定性结论：Medusa 训练分两种情形（stage-1 只训新增头、stage-2 骨干与头同训），论文称两种情形均已基准化、Liger「降低显存、提升吞吐」；无 Liger 时实验极易 OOM；图 9-12 重复实验标准误差通常 &lt;1%（第 13 页）。<span class="ev ev-i">I</span> 读图观察（近似值，非论文文字）：有对比柱的组合中 Liger 显存柱均更低；但吞吐并非处处更高——seq 1024 处 HuggingFace 吞吐与 Liger 持平或更高（图 9 约 47k vs 41k、图 10 约 36.5k vs 31k、图 12 约 18.2k vs 17.8k tokens/s，图 11 该点两者接近），Liger 的吞吐优势出现在 seq 2048 及 HF 因 OOM 无柱的组合。OOM 组合（读图）：图 9/11（3 头）HF 在 seq 4096 OOM；图 10/12（5 头）HF 在 seq 2048 与 4096 OOM；Liger 完成全部组合（第 13-14 页）。论文未给出 Medusa 场景的百分比数字——任何「Medusa 提速 X%」都不是论文结论。</p>
+
+<h3>10.5 公平性限制（引用前必读）</h3>
+<div class="callout callout-warning">
+  <ol>
+    <li><span class="ev ev-p">P</span> 硬件/版本单一：全部数字来自 A100 80GB + bfloat16 + v0.2.1（第 9-14 页）；无其他 GPU 架构、无第三方复现。</li>
+    <li><span class="ev ev-p">P</span> 端到端口径窄：seq 固定 512、20 步后采样（第 10 页），与 kernel 级扫描（seq/hidden 至 16384）口径不同，不可拼接。</li>
+    <li><span class="ev ev-i">I</span> 基线单一：仅对比 HuggingFace eager 实现，未对比 torch.compile 或其他融合路线（第 9 页图例与正文未见），「对最优基线的增益」不成立。</li>
+    <li><span class="ev ev-p">P</span> 结果以图呈现、无数据表（图 2-12），正文仅给约数/百分比；逐点值不可转录。</li>
+    <li><span class="ev ev-p">P</span> Gemma 存在正文 bs 48 与图 6 OOM 标记的张力（第 10 vs 12 页）。</li>
+    <li><span class="ev ev-i">I</span> 各百分比属不同模型/batch/机制组合，禁止跨行相加、平均或与其他论文数字直接比较。</li>
+  </ol>
+</div>
+
+<h3>10.6 建议复现步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 环境 pin：liger-kernel v0.2.1（或选定 commit）+ 对应 torch/triton/transformers 版本，容器 digest 固化；4×A100 80GB。</li>
+  <li><span class="ev ev-i">I</span> 用仓库 <code>examples/huggingface</code> 基准脚本（论文脚注 18 给出路径）按 §4.2 口径跑：Alpaca、bf16、AdamW+cosine、seq 512、目标 batch（如 64/48/128），20 步后采样吞吐与显存，重复 5 次记标准误差，与图 4-8 数量级对照 <span class="ev ev-p">P</span>（第 10 页）。</li>
+  <li><span class="ev ev-i">I</span> 开/关 Liger 各跑一次小规模收敛对照（校验 logits/权重/loss），对齐论文收敛测试实践 <span class="ev ev-p">P</span>（第 8 页 §3.3.3）。</li>
+  <li><span class="ev ev-i">I</span> 用真实业务模型/序列/词表复测：先 kernel 级（正确性容差 + 速度/显存），再端到端灰度；记录连续性审计结论。</li>
+  <li><span class="ev ev-i">I</span> 把「开关、版本组合、吞吐/显存/收敛证据」写入作业模板与平台容量档案，形成可回退配置。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS 并带 rel="noopener noreferrer"；只链接论文印明的 URL，不猜测任何仓库地址；唯一例外为 Axolotl 脚注链接站点迁移后明确标注的现行官方文档接续链接，见下）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2410.10989" rel="noopener noreferrer">https://arxiv.org/abs/2410.10989</a></td>
+        <td><span class="ev ev-p">P</span> v3（cs.LG），PDF 水印 2025-01-24；本地 PDF：<code>12_Liger-Kernel_2410.10989.pdf</code>（17 页，第 1–15 页逐页目检）</td>
+      </tr>
+      <tr>
+        <th scope="row">官方代码仓库</th>
+        <td><a href="https://github.com/linkedin/Liger-Kernel" rel="noopener noreferrer">https://github.com/linkedin/Liger-Kernel</a></td>
+        <td><span class="ev ev-r">R</span> 论文摘要末句明示；2026-09-15 在线核验：LinkedIn 组织、BSD-2-Clause、活跃（main HEAD <code>f2ac965f619a</code>，提交 2026-09-14）；README 自述与论文一致（+20% 吞吐/−60% 显存口径），但能力清单已超出论文时点（更多模型 patch、DPO/ORPO/CPO/SimPO/KTO 损失 kernel、cuTile/CuTe DSL 后端等）——不得把 README 新能力记到论文头上</td>
+      </tr>
+      <tr>
+        <th scope="row">论文基准版本 tag</th>
+        <td><a href="https://github.com/linkedin/Liger-Kernel/releases/tag/v0.2.1" rel="noopener noreferrer">https://github.com/linkedin/Liger-Kernel/releases/tag/v0.2.1</a></td>
+        <td><span class="ev ev-p">P</span> 第 9 页脚注 17；<span class="ev ev-r">R</span> 2026-09-15 在线确认 tag 存在（commit e5d6ad79f65d）</td>
+      </tr>
+      <tr>
+        <th scope="row">端到端基准脚本</th>
+        <td><a href="https://github.com/linkedin/Liger-Kernel/tree/main/examples/huggingface" rel="noopener noreferrer">https://github.com/linkedin/Liger-Kernel/tree/main/examples/huggingface</a></td>
+        <td><span class="ev ev-p">P</span> 第 10 页脚注 18（论文口径为 main 分支时点路径；<span class="ev ev-i">I</span> 具体目录以所用 tag 为准）</td>
+      </tr>
+      <tr>
+        <th scope="row">集成框架（论文脚注 13-16）</th>
+        <td><a href="https://huggingface.co/docs/transformers/en/main_classes/trainer" rel="noopener noreferrer">HF transformers Trainer</a> · <a href="https://huggingface.co/docs/trl/main/en/sft_trainer" rel="noopener noreferrer">HF TRL SFTTrainer</a> · Axolotl：论文脚注 15 原文链接 <code>https://axolotl-ai-cloud.github.io/axolotl/#liger-kernel</code>（已迁移，存档展示）→ 现行官方文档接续：<a href="https://docs.axolotl.ai/docs/custom_integrations.html#liger-kernels" rel="noopener noreferrer">docs.axolotl.ai Custom Integrations 之 Liger 章节</a> · <a href="https://github.com/hiyouga/LLaMA-Factory" rel="noopener noreferrer">LLaMA-Factory</a></td>
+        <td><span class="ev ev-p">P</span> 集成事实见第 8 页 §3.4；脚注 13/14/16 原文链接即上方 HF/TRL/LLaMA-Factory 链接（2026-09-15 核验均可达：HF/TRL 直连 HTTPS 200；LLaMA-Factory 因仓库改名 301 跳转至 hiyouga/LlamaFactory；文档内容未逐一核验）。Axolotl 脚注 15 原文链接 2026-09-15 核验：已 301 迁移且跳转目标为明文 http 首页（非 HTTPS）、原 <code>#liger-kernel</code> 锚点在迁移后站点不存在，故不再作为活动链接，仅按原文存档展示；<span class="ev ev-e">E</span> 上方现行官方文档链接为外部接续（非论文印明 URL），2026-09-15 在线核验 HTTPS 200、Liger 章节锚点存在，未逐一核验其余文档内容</td>
+      </tr>
+      <tr>
+        <th scope="row">论文借鉴/参考项目（论文脚注 2/3/4/11）</th>
+        <td><a href="https://github.com/dao-ailab/flash-attention" rel="noopener noreferrer">flash-attention</a> · <a href="https://github.com/unslothai/unsloth" rel="noopener noreferrer">unsloth</a> · <a href="https://github.com/mgmalek/efficient_cross_entropy" rel="noopener noreferrer">efficient_cross_entropy</a></td>
+        <td><span class="ev ev-p">P</span> 论文正文/脚注引用（第 2-3、6 页）；归属按论文表述转录，未逐一在线核验</td>
+      </tr>
+      <tr>
+        <th scope="row">其他仓库</th>
+        <td>不提供</td>
+        <td><span class="ev ev-i">I</span> 遵循本站「不猜测仓库」策略：论文未印明的第三方镜像/封装一律不链接。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认痛点是显存峰值（logits/激活）而非网络或调度——Liger 只解算子层（P：第 1-2、6 页）</label></li>
+      <li><label><input type="checkbox"> 明确目标模型词表规模与 batch/序列计划；词表 ≥128k 时 FLCE 收益预期最高（P：第 6 页；I：外推判断）</label></li>
+      <li><label><input type="checkbox"> 确认目标是训练/微调；推理加速需求另行选型（P：第 14-15 页 §5）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 模型族在 Liger 支持范围内（查当前仓库清单）；否则评估单算子拼装路径（P：第 3 页 §3.1；R：README 2026-09-15）</label></li>
+      <li><label><input type="checkbox"> transformers/torch/triton 版本组合可 pin；RoPE 旋转矩阵形式与新版 modeling 实现一致（P：第 5 页脚注 9；I：版本策略）</label></li>
+      <li><label><input type="checkbox"> 分布式策略（FSDP/ZeRO/ZeRO++）与 kernel 替换正交性在本集群验证（P：第 1 页 §1）</label></li>
+      <li><label><input type="checkbox"> 自定义模型的中间张量连续性可保证或可加 .contiguous()（P：第 8 页 §3.3.4）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §10.6 用 examples/huggingface 脚本复现一批端到端数字，与论文同数量级（P：第 10 页脚注 18；I：验收阈值自定）</label></li>
+      <li><label><input type="checkbox"> 开/关 Liger 各跑一次收敛对照（logits/权重/loss 校验）（P：第 8 页 §3.3.3；I：方法）</label></li>
+      <li><label><input type="checkbox"> 跑一遍 correctness/perf/convergence/contiguity 四闸门并留档（P：第 7-8 页 §3.3）</label></li>
+      <li><label><input type="checkbox"> 大词表模型单独验证 FLCE 路径与显存峰值曲线（P：第 6-7 页；I：验证设计）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量与选型</strong>
+    <ul>
+      <li><label><input type="checkbox"> 用实测峰值显存重算 batch/序列上限，评估「同卡加大 batch」与「降档换卡」两条路径的性价比（P：第 10 页；I：容量模型）</label></li>
+      <li><label><input type="checkbox"> 不用论文百分比直接做容量承诺；按自有负载实测（I）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与质量</strong>
+    <ul>
+      <li><label><input type="checkbox"> 定义吞吐/步时延 SLO 与采样口径（对齐「20 步后采样、5 次重复」式的方法学，P：第 10 页）</label></li>
+      <li><label><input type="checkbox"> 定义 loss 收敛里程碑与判废标准（含 Gemma 式图文张力的复核意识，P：第 10/12 页；I：口径治理）</label></li>
+      <li><label><input type="checkbox"> 明确容差预期（bf16 atol=1e-3/rtol=1e-2 量级），对逐位一致需求提前声明（P：第 8 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以当时单价估算，记录查询日期；不用本页数字报价（I）</label></li>
+      <li><label><input type="checkbox"> 把「显存释放 → 降档换卡/加大 batch」写入成本敏感项，标注条件（P：第 10 页；I：解读）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> liger-kernel/triton/torch/transformers 版本 pin + CVE 扫描；BSD-2-Clause 合规分发（R：2026-09-15；I：供应链流程）</label></li>
+      <li><label><input type="checkbox"> 训练语料合规审查（论文用 Alpaca 仅为实验口径）（P：第 10 页；I：合规要求）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> Liger 开关纳入作业模板一等配置；灰度 → 全量 → 可秒级回退（P：标志机制第 8 页；I：流程）</label></li>
+      <li><label><input type="checkbox"> 监控：loss 突变、step 时延漂移、峰值显存/OOM 率、首步 JIT 编译等待（I）</label></li>
+      <li><label><input type="checkbox"> 升级演练：transformers/liger 联动升级 + 收敛对照 + 检查点读取回归（I；机制 P：第 5 页脚注 9）</label></li>
+      <li><label><input type="checkbox"> 已知陷阱写入 runbook：int32 溢出、连续性、容差分档（P：第 8 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 回退面评估：关闭标志即恢复 HF 算子，权重语义不变、检查点通用（P：第 3、8 页；I：迁移成本结论）</label></li>
+      <li><label><input type="checkbox"> 归档版本组合、开关状态、对照实验证据，保证可重建可审计（I）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与在线核验记录见构建文件 <code>sources/liger-kernel.evidence.json</code>。核验日期均为 <time datetime="2026-09-15">2026-09-15</time>。</p>
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态</caption>
+    <thead>
+      <tr><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>题名/作者/机构（LinkedIn Inc）/arXiv v3（cs.LG，2025-01-24）；仓库 URL 印于摘要末句</td><td><span class="ev ev-p">P</span></td><td>第 1 页</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>摘要级结论：平均 +20% 吞吐、−60% 显存（vs HuggingFace）；融合 + 输入分块；基准与集成测试内建</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要（条件见 EV-21/23）</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>动机：eager 执行开销与激活物化；HBM↔SRAM 瓶颈；编译器 vs 算法融合 vs 手写 Triton 三路线</td><td><span class="ev ev-p">P</span></td><td>第 1-3 页 §2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>三层 API（自动补丁/模型专用补丁/单算子）与「扰动最小」原则</td><td><span class="ev ev-p">P</span></td><td>第 3 页 §3.1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>kernel 骨架 (B×T,H) 按行并行；RMSNorm/LayerNorm 融合与缓存；γ/β 梯度累加；聚合三变体取两阶段</td><td><span class="ev ev-p">P</span></td><td>第 4-5 页 §3.2 与脚注 6-8</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>RoPE 融合 q/k、HF 旋转矩阵形式（脚注 9：transformers v4.44.2）、稀疏高效计算；SwiGLU 仅 β=1；GeGLU tanh 近似</td><td><span class="ev ev-p">P</span></td><td>第 5-6 页 §3.2 与脚注 9</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>CE 就地替换 + 在线 softmax + safe log；FLCE 分块机制、16.8 GB logits 例、chunk 公式与 Remark 缩放（提取错序已按原页更正）</td><td><span class="ev ev-p">P</span></td><td>第 6-7 页 §3.2、图 1、脚注 10-11</td><td>已核验（PDF 原页 + 300dpi 放大读式）</td></tr>
+      <tr><td>四类测试实践：容差（fp32/bf16）、int32 溢出阈值、性能形状、收敛与连续性（RoPE 生产事故）</td><td><span class="ev ev-p">P</span></td><td>第 8 页 §3.3.1-§3.3.4 与脚注 12</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>集成：HF Trainer、TRL SFTTrainer、Axolotl、LLaMA-Factory（use_liger 示例）；PyTorch Lightning 仅见贡献者条目</td><td><span class="ev ev-p">P</span></td><td>第 8 页 §3.4 与脚注 13-16；第 15 页 §6.1</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>kernel 基准设置：单卡 A100 80GB、词表/序列/隐维度扫描集、10 次取中位、[0.2,0.8] 分位、v0.2.1</td><td><span class="ev ev-p">P</span></td><td>第 9 页 §4/§4.1 与脚注 17</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>kernel 结果：CE 3×/5×（vocab 163840）、GeGLU/SwiGLU 持平+1.6×、RMSNorm 7×/3×、LayerNorm 30%、RoPE 8×/3×</td><td><span class="ev ev-p">P</span></td><td>第 9-10 页 §4.1；图 2/图 3</td><td>已核验（PDF 原页；无数据表，不转录逐点值）</td></tr>
+      <tr><td>端到端设置：4×A100 80GB、5 模型、Alpaca、bf16、AdamW+cosine、seq 512、20 步采样、5 次重复</td><td><span class="ev ev-p">P</span></td><td>第 10 页 §4.2 与脚注 18</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>端到端结果：LLaMA 3-8B +42.8%/−54.8%、Qwen2 +25.5%/−56.8%、Gemma +11.9%/−51.8%、Mistral +27%/−21%、Phi3 +17%/−13%（各含 batch 条件）</td><td><span class="ev ev-p">P</span></td><td>第 10 页 §4.2；图 4-8（第 11-12 页）</td><td>已核验（PDF 原页；Gemma 图文张力照录，EV-25）</td></tr>
+      <tr><td>Medusa：FLCE 免逐头 logits；论文称 stage-1/2 两情形均降显存升吞吐（读图：seq 1024 处吞吐持平或 HF 更高，见 §10.4 与 EV-27）；无 Liger 易 OOM；SE&lt;1%；仅性能基准、8×A100、batch 4</td><td><span class="ev ev-p">P</span></td><td>第 13-14 页与 Note</td><td>已核验（PDF 原页；OOM 与短序列吞吐读图均为 I）</td></tr>
+      <tr><td>结论边界：四项承诺；技术可延伸推理但无推理实验；AMD/Intel/Modal CI 出资（多硬件 CI 线索）</td><td><span class="ev ev-p">P</span></td><td>第 14-15 页 §5、§6.2</td><td>已核验（PDF 原页）</td></tr>
+      <tr><td>官方仓库可达性、归属（linkedin）、BSD-2-Clause、活跃度（HEAD f2ac965f619a，2026-09-14 提交）、tag v0.2.1 存在（e5d6ad79f65d）、README 能力已超论文</td><td><span class="ev ev-r">R</span></td><td>论文第 1 页摘要给出的 URL</td><td>已核验（2026-09-15 在线核验）</td></tr>
+      <tr><td>云实例/框架平台/监控/灰度回退映射示例</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开目录与容器/训练服务文档</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>成本公式、SLO 框架、复现步骤、回退与运维建议、控制面/数据面划分、Gemma 图文张力与 OOM 读图观察</td><td><span class="ev ev-i">I</span></td><td>本报告 §4-§10、§12；EV-25/26</td><td>编辑标注完成；不含伪精确数字</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="11-flashattention-3.html" rel="prev">上一篇：11 FlashAttention-3（文件可能尚未发布）</a>
+  <a href="13-megascale.html" rel="next">下一篇：13 MegaScale（文件可能尚未发布）</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页全部论文事实基于本地 <code>12_Liger-Kernel_2410.10989.pdf</code>（arXiv:2410.10989v3，第 1–15 页逐页核对、第 16–17 页文本交叉核对）及论文明确引用的材料；云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有；官方仓库代码许可为 BSD-2-Clause（2026-09-15 核验，以仓库当时声明为准）。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-15；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

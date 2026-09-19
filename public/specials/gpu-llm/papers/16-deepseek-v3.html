@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek-V3：671B/37B MoE、FP8 训练与 DualPipe 的算法—基础设施协同设计（论文 16 解读）</title>
+<meta name="description" content="基于本地论文 PDF（16_DeepSeek-V3_2412.19437.pdf，arXiv:2412.19437v2，2025-02-18，53 页）的中文架构解读：DeepSeek-V3 以 MLA＋DeepSeekMoE 为基座，叠加 auxiliary-loss-free 负载均衡、MTP 多 token 预测、DualPipe 计算-通信重叠流水线、跨节点 all-to-all 定制内核（NVLink 160 GB/s ≈ 3.2× IB 50 GB/s、每 token 限 4 节点、20 SM 打满带宽）与 FP8 细粒度量化训练（1×128/128×128 分组缩放、N_C=128 累加提升、全张量 E4M3、在线量化），在 2048 卡 H800 集群以 2.788M GPU 小时（表 1 估计 $5.576M，$2/GPU 小时假设）完成 14.8T token 全量训练。含训练数据路径图、全部评测表条件与消融、云上部署映射、成本/SLO、安全运维与决策清单，全部数字带 PDF 页码与完整实验条件。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="prev" href="15-galore.html">
+<link rel="next" href="../index.html">
+<style>
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1080px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+h4{font-size:1em; margin-top:1.3em}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--cyan); color:var(--cyan); background:var(--cyan-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+p.num{text-align:left; white-space:normal}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+  </nav>
+</header>
+
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html">训练、并行与 GPU Kernel</a></li>
+    <li aria-current="page">DeepSeek-V3</li>
+  </ol>
+</nav>
+
+<main id="main">
+
+<h1>DeepSeek-V3：671B/37B MoE、FP8 训练与 DualPipe 的算法—基础设施协同设计</h1>
+<p class="lede">本页为第 16 篇（训练、并行与 GPU Kernel 类，核心合集末篇）。定量内容取自本地论文 PDF <code>16_DeepSeek-V3_2412.19437.pdf</code>（arXiv:2412.19437<strong>v2</strong>，水印逐字核验「arXiv:2412.19437v2 [cs.CL] 18 Feb 2025」，DeepSeek-AI 署名，共 53 页）并逐条标注 PDF 页码；全部 53 页经渲染原页逐页目检，表 1-9 逐格核对、公式 (1)-(28) 逐项核对（表 2 气泡公式与激活内存增幅以 300dpi 放大复核），详见 <a href="#evidence">#evidence</a> 与 <code>sources/deepseek-v3.evidence.json</code>（54 条）。</p>
+
+<div class="fact-card">
+  <h3>快速标签与阅读说明</h3>
+  <ul class="tag-row">
+    <li>生命周期：预训练 + 长上下文扩展 + SFT/RL 后训练 + 推理部署（端到端模型报告）</li>
+    <li>形态：模型架构（MLA/DeepSeekMoE/MTP）× 训练基础设施（DualPipe/通信内核/FP8）协同设计</li>
+    <li>目标硬件：2048×NVIDIA H800 集群（节点内 NVLink+NVSwitch、跨节点 InfiniBand）</li>
+    <li>核心资源：跨节点网络（IB/NVLink all-to-all）· 显存（激活/优化器状态）· 算力（FP8 GEMM 累加精度）</li>
+    <li>证据状态：P（论文，页码级核验）+ R（摘要印明仓库，已在线核验）+ E/I</li>
+  </ul>
+  <p><strong>最后核验日期：</strong><time datetime="2026-09-15">2026-09-15</time>。<strong>证据完整度：</strong>论文核心数字（摘要、表 1-9 全量、图 1/4/5/8 柱顶与面板标注、式 (1)-(28)、§2-§6 与附录 A/B/C）已回 PDF 原页逐项核验并标注页码与实验条件；文档内两处编号/口径现象照录不调和（两处 Figure 10 重复编号；表 4 用 540B、表 5 用 578B 两个不同的大规模消融 token 量）；训练 checkpoint 机制、每 GPU tokens/s、MFU、集群成本明细、推理时延数字论文未披露，页面写「论文未明确披露」；$5.576M 仅在论文自述的 $2/GPU 小时租价假设与「不含前期研究/消融」口径内引用。</p>
+  <p><strong>证据标签图例：</strong>
+    <span class="ev ev-p" title="论文正文、附录、图表">P＝论文</span>
+    <span class="ev ev-r" title="论文印明并经在线核验的官方仓库/项目页">R＝仓库</span>
+    <span class="ev ev-e" title="云厂商或项目文档，仅用于云上映射">E＝外部资料</span>
+    <span class="ev ev-i" title="编辑推断/工程建议，不含伪精确数字">I＝编辑推断</span></p>
+</div>
+
+<nav class="pager" aria-label="上一篇与下一篇">
+  <a href="15-galore.html" rel="prev">上一篇：15 GaLore</a>
+  <a href="../index.html" rel="next">本篇为核心 16 篇末篇：返回首页论文目录</a>
+</nav>
+
+<nav class="toc" aria-label="页内目录">
+  <details open>
+    <summary>页内目录（13 节）</summary>
+    <ol>
+      <li><a href="#overview">摘要与一句话判断</a></li>
+      <li><a href="#background">问题背景</a></li>
+      <li><a href="#mechanism">核心机制</a></li>
+      <li><a href="#data-path">GPU/系统数据路径</a></li>
+      <li><a href="#tradeoffs">架构权衡</a></li>
+      <li><a href="#cloud-mapping">云上部署映射</a></li>
+      <li><a href="#cost-slo">成本 / 性能 / SLO</a></li>
+      <li><a href="#security-ops">安全与可运维性</a></li>
+      <li><a href="#fit">适用 / 不适用场景</a></li>
+      <li><a href="#experiments">实验与指标</a></li>
+      <li><a href="#links">论文 / 代码 / 延伸链接</a></li>
+      <li><a href="#decision-checklist">给架构师的决策清单</a></li>
+      <li><a href="#evidence">证据台账</a></li>
+    </ol>
+  </details>
+</nav>
+
+<section id="overview" aria-labelledby="overview-title">
+<h2 id="overview-title">1. 摘要与一句话判断</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>论文元数据 <span class="ev ev-p">P</span>（逐字核验自 PDF 第 1、45-47 页；仓库另经在线核验 <span class="ev ev-r">R</span>）</caption>
+    <tbody>
+      <tr><th scope="row">题名</th><td>DeepSeek-V3 Technical Report（编辑译名：DeepSeek-V3 技术报告）</td></tr>
+      <tr><th scope="row">署名 / 机构</th><td>DeepSeek-AI（联系邮箱 research@deepseek.com，第 1 页）。第 1 页无个人作者列表；附录 A（第 45-47 页）按 Research &amp; Engineering / Data Annotation / Business &amp; Compliance 三角色列成员，注明组内按 first name 字母序排列、带 * 为已离团队成员 <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">版本</th><td>arXiv:2412.19437<strong>v2</strong>（PDF 左侧水印逐字核验「arXiv:2412.19437v2 [cs.CL] 18 Feb 2025」）；本地 PDF <code>16_DeepSeek-V3_2412.19437.pdf</code>（53 页，pdfTeX-1.40.25，创建 2025-02-19）。PDF 内未标注会议/期刊录用信息，本页不作会议归属推断 <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">代码 / 权重</th><td>论文摘要印明「模型检查点」发布于 <code>github.com/deepseek-ai/DeepSeek-V3</code>（第 1 页摘要末句，逐字核验）<span class="ev ev-p">P</span>；已在线核验（2026-09-15：deepseek-ai 组织、main 分支、未归档、代码 MIT + 模型另行许可、HEAD 9b4e978（2025-08-28）、tag v1.0.0；仓库含权重下载与 <code>inference/</code> 推理参考实现；论文所述 HAI-LLM 训练框架不在该仓库，详见 <a href="#links">#links</a>）<span class="ev ev-r">R</span></td></tr>
+      <tr><th scope="row">训练框架</th><td>HAI-LLM：作者自研的高效轻量训练框架（第 12 页 §3.2「crafted by our engineers from the ground up」）；论文未给出其开源地址，页面不作开源推断 <span class="ev ev-p">P</span></td></tr>
+      <tr><th scope="row">规模与成本口径</th><td>671B 总参数 / 每 token 激活 37B；14.8T token 预训练；全量训练 2.788M H800 GPU 小时（表 1：预训练 2664K + 长上下文扩展 119K + 后训练 5K），按 $2/GPU 小时租价估 $5.576M；成本不含此前研究与消融 <span class="ev ev-p">P</span>（第 1、5 页）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong>一句话判断（编辑推断）：</strong><span class="ev ev-i">I</span> DeepSeek-V3 的论点不是单一算法突破，而是「算法 × 框架 × 硬件」的联合设计：用 MLA 压 KV cache、用细粒度 MoE 压 FLOPs，再把 MoE 的跨节点通信问题当作一等公民来解——DualPipe 把 all-to-all 藏进计算影子、定制内核用 20 个 SM 打满 IB+NVLink、节点受限路由把通信量钉在常数上；同时用 FP8 细粒度量化（1×128/128×128 分组缩放 + CUDA core 累加提升）把 H800 的算力真正换成吞吐。论文口径的结果：14.8T token、2.788M H800 GPU 小时（估 $5.576M）、全程无不可恢复 loss spike。<strong>边界必须同时说：</strong>成本口径不含研究/消融、且绑定 H800 集群拓扑与租价假设；评测全部出自作者内部框架；推荐推理部署单元大（解码 320 GPU 起），对小团队是论文自己承认的负担。
+</div>
+
+<h3>3 分钟速读</h3>
+<ol>
+  <li><strong>模型：</strong><span class="ev ev-p">P</span> Transformer 框架内，MLA（推理只缓存压缩潜向量 c_KV 与解耦 RoPE 键 k_R，KV cache 大幅缩小）+ DeepSeekMoE（61 层中除前 3 层外每层 1 共享 + 256 路由专家、每 token 激活 8 个；亲和度用 sigmoid 并对选中项归一化），新增 auxiliary-loss-free 负载均衡（偏置项只参与 top-K 路由、门控仍用原始亲和度，步末按过载/欠载 ±γ 更新）与 MTP（D=1 的顺序多 token 预测，共享 embedding/输出头，保持完整因果链）（第 6-11 页；第 22 页 §4.2）。</li>
+  <li><strong>训练基础设施：</strong><span class="ev ev-p">P</span> 2048 卡 H800 集群（8 卡/节点 NVLink+NVSwitch、跨节点 IB）上跑 16 路 PP × 64 路 EP（8 节点）× ZeRO-1 DP，不用 TP（第 11-12 页）；DualPipe 在一对 forward/backward chunk 内重叠 attention/dispatch/MLP/combine 与 PP 通信，双向流水减少气泡（表 2：气泡 (PP/2−1)(F&amp;B+B−3W)，激活内存仅多 PP+1，代价是两份模型参数）（第 12-13 页）；跨节点 all-to-all 内核按「先 IB 后 NVLink」两跳转发、每 token 限 4 节点，20 个 SM 即打满带宽（NVLink 160 GB/s ≈ 3.2× IB 50 GB/s）（第 13-14 页）。</li>
+  <li><strong>FP8 训练：</strong><span class="ev ev-p">P</span> Linear 的 Fprop/Dgrad/Wgrad 三个 GEMM 用 FP8（理论速度较 BF16 翻倍），embedding/输出头/MoE gating/归一化/attention 保原精度，master weights 与梯度保 FP32；激活按 1×128 tile、权重按 128×128 块分组缩放，按 N_C=128 元素间隔把累加提升到 CUDA core 的 FP32（对抗 H800 约 14 位的 Tensor Core 累加精度），全张量 E4M3、在线量化；激活缓存与 MoE dispatch 也走低精度（BF16 矩、E5M6 特例、combine 保 BF16）（第 14-18 页）。</li>
+  <li><strong>训练过程与后训练：</strong><span class="ev ev-p">P</span> 14.8T token、最大序列 4K、AdamW（β2=0.95）、学习率 2.2×10⁻⁴ 峰值带分段衰减、batch 3072→15360；YaRN 两阶段扩到 128K 上下文；SFT 1.5M 实例（推理数据来自内部 DeepSeek-R1 专家模型 + 拒绝采样）+ GRPO 强化学习（规则 RM + 模型 RM），并从 R1 蒸馏推理能力（第 21-23、28-30 页）。</li>
+  <li><strong>结果与边界：</strong><span class="ev ev-p">P</span> 基础模型评测全面优于 V2-Base/Qwen2.5-72B，多数基准超 LLaMA-3.1-405B（表 3）；聊天模型为最佳开源、可比 GPT-4o/Claude-3.5-Sonnet（表 6：MMLU 88.5、MATH-500 90.2、Codeforces 百分位 51.6），SimpleQA/SWE-bench 等仍落后部分闭源（第 31-32 页）；MTP 投机解码接受率 85%-90%、解码 1.8× TPS（第 35 页）。<span class="ev ev-i">I</span> 引用任何数字必须携带「作者内部评测框架、H800 集群、$2/GPU 小时假设」等条件，不能与其它论文横向比较。</li>
+</ol>
+</section>
+
+<section id="background" aria-labelledby="background-title">
+<h2 id="background-title">2. 问题背景</h2>
+
+<p><strong>规模与成本的根本张力：</strong><span class="ev ev-p">P</span>（第 4 页 §1）开源阵营要追平闭源旗舰，靠稠密堆参数代价高；V3 选择 MoE 路线（671B 总参、37B 激活），并延续 V2 已验证的 MLA + DeepSeekMoE，把「强性能」与「低成本」作为同一设计目标的两面。论文的目标工作负载是超大规模预训练与其后的高吞吐推理服务，效率指标贯穿 KV cache（推理）、激活/优化器显存（训练）与跨节点带宽（MoE 训练）三类资源。</p>
+
+<p><strong>三个具体瓶颈：</strong><span class="ev ev-p">P</span>
+① <em>跨节点 MoE 通信</em>——细粒度专家若跨节点布放，通信开销与计算几乎 1:1（第 12 页 §3.2.1），传统做法要么放弃跨节点专家要么接受低 MFU；
+② <em>FP8 的离群与累加精度</em>——激活/权重/梯度中的离群值与 H800 Tensor Core 仅约 14 位的累加精度，使低精度训练在此规模前少有成功先例（第 14-17 页 §3.3）；
+③ <em>推理 KV cache 与部署单元</em>——MHA 的 KV cache 随上下文线性膨胀，而 671B 模型的服务本身要求大部署单元（第 7 页 §2.1.1；第 35 页 §6）。</p>
+
+<p><strong>基线与延续性：</strong><span class="ev ev-p">P</span>（第 6 页 §2）架构基线是 DeepSeek-V2（未说明的次要细节直接沿用其设置）；负载均衡基线是传统辅助损失方法（Fedus/Lepikhin 等）及 Wang et al. 2024a 的 aux-loss-free 策略（V3 将其首次用于超大规模）；FP8 基线是 TransformerEngine 类框架的 tensor-wise 做法（NVIDIA 2024b）与混合 E4M3/E5M2 格式（第 17 页）；流水线基线是 1F1B、ZB1P 与 Chimera（表 2，第 13 页）。<span class="ev ev-i">I</span> 论文自我定位是「首次在极大规模模型上验证 FP8 混合精度训练框架」（第 4-5 页贡献列表），其数字回答的是「这套协同设计在 2024-2025 年的 H800 集群上做到了什么」，不代表对其他硬件或其他框架的领先幅度。</p>
+</section>
+
+<section id="mechanism" aria-labelledby="mechanism-title">
+<h2 id="mechanism-title">3. 核心机制</h2>
+
+<h3>3.1 MLA：把 KV cache 压成两个潜向量（§2.1.1）</h3>
+<p><span class="ev ev-p">P</span>（第 7-8 页，式 (1)-(11)）对输入 h_t 先做降维 c_KV = W_DKV·h_t（d_c ≪ d_h·n_h），key/value 上投影都从 c_KV 出发；RoPE 所需的位置信息由解耦通道单独携带：k_R = RoPE(W_KR·h_t)，与 c_KV 拼接后参与注意力。推理时<strong>只需缓存 c_KV 与 k_R 两个向量</strong>（图 2 中仅二者标「Cached During Inference」），KV cache 显著缩小且性能与 MHA 相当。查询侧同样低秩压缩（c_Q），动机不同：降低<strong>训练期激活内存</strong>。注意力打分的缩放分母为 √(d_h + d_r^h)，即内容维度与 RoPE 维度之和。具体维度见 <a href="#experiments">#experiments</a> 超参表（d_c=512、d_c′=1536、d_r^h=64）。</p>
+
+<h3>3.2 DeepSeekMoE + auxiliary-loss-free 负载均衡（§2.1.2）</h3>
+<p><span class="ev ev-p">P</span>（第 8-9 页，式 (12)-(15)）FFN 输出 = 共享专家（恒激活）+ top-K_r 路由专家的加权和；与 V2 的两点差异：亲和度改用 <strong>sigmoid</strong>（s_i,t = Sigmoid(u_t·e_i)），并对选中的亲和度做<strong>归一化</strong>后作门控值。</p>
+<p><span class="ev ev-p">P</span>（第 9 页，式 (16)）<strong>auxiliary-loss-free</strong>：给每个专家一个偏置 b_i 加到亲和度上仅用于 top-K 选择；门控值仍来自原始亲和度 s_i,t，因此梯度不受偏置污染。训练中逐步监控整批专家负载，步末对过载专家 b_i − γ、欠载专家 b_i + γ。配合一条极小系数（α=0.0001）的<strong>序列级互补辅助损失</strong>（式 (17)-(20)）防单序列内极端失衡（第 9、23 页）。</p>
+<p><span class="ev ev-p">P</span>（第 10 页）<strong>节点受限路由</strong>：每个 token 至多送到 M=4 个节点（按各节点专家最高亲和度之和选节点），在该约束下训练框架可近乎完全实现计算-通信重叠。<strong>不丢 token</strong>：训练与推理都不丢（第 10 页）。</p>
+
+<h3>3.3 MTP：顺序多 token 预测目标（§2.2）</h3>
+<p><span class="ev ev-p">P</span>（第 10-11 页，图 3，式 (21)-(25)）D 个顺序模块（V3 取 D=1）：第 k 个模块 = 共享 embedding + 共享输出头 + 独立 Transformer 块 TRM_k + 投影 M_k ∈ R^{d×2d}；把上一深度表示 h^(k−1) 与下一位置 token 的 embedding 各做 RMSNorm 后拼接投影，经 TRM_k 用共享输出头预测第 k 个额外 token。<strong>每个深度保持完整因果链</strong>——区别于 Gloeckle et al. 的独立多头并行预测；因果链思想与 EAGLE 相似，但 EAGLE 目标是投机解码、本文用 MTP 改进训练。各深度交叉熵取均值、乘权重 λ 计入总损失（λ=0.3→0.1，见超参表）。推理时可直接丢弃 MTP 模块，也可将其改造用于投机解码（第 11 页）。</p>
+
+<h3>3.4 DualPipe：在一对 chunk 内重叠计算与通信（§3.2.1）</h3>
+<p><span class="ev ev-p">P</span>（第 12-13 页，图 4/图 5）跨节点 EP 使计算-通信比约 1:1。DualPipe 把每个 forward/backward chunk 切成 attention、all-to-all dispatch、MLP、all-to-all combine 四段；backward 的 attention/MLP 再按 ZeroBubble 思路拆成 backward-for-input 与 backward-for-weights；再加一段 PP 通信。对这些段重排序并<strong>手动调整通信用 SM 占比</strong>，使 all-to-all 与 PP 通信都被计算完全遮盖。整体调度为双向流水：micro-batch 从流水线两端同时喂入（图 5 示例 8 个 PP rank、20 个 micro-batch）。表 2 给出一般情形下的账：DualPipe 气泡 (PP/2−1)(F&amp;B+B−3W) 显著小于 1F1B/ZB1P，代价是<strong>两份模型参数</strong>与峰值激活内存 +1/PP；作者论证大 EP 下参数双份不构成显著负担，且只要求流水级与 micro-batch 能被 2 整除。</p>
+
+<h3>3.5 跨节点 all-to-all 内核：先 IB 后 NVLink 的两跳路径（§3.2.2）</h3>
+<p><span class="ev ev-p">P</span>（第 13-14 页）节点内 NVLink 160 GB/s ≈ 3.2× 跨节点 IB 50 GB/s。据此每 token 限发 ≤4 节点：先经 IB 送达目标节点上<strong>同 in-node 编号</strong>的 GPU，再经 NVLink 即时转发到目标专家所在 GPU（不被后续 token 阻塞）；IB 与 NVLink 传输完全重叠，每 token 平均每节点可选 3.2 个专家——同等通信成本下最多可支持 13 个路由专家（4 节点×3.2）。实现上用 warp specialization 把 <strong>20 个 SM 分成 10 个通信通道</strong>：dispatch 的 IB 发送 / IB→NVLink 转发 / NVLink 接收、combine 的 NVLink 发送 / NVLink→IB 转发累加 / IB 接收累加各由独立 warp 承担、warp 数按全局负载动态调整；定制 PTX 指令 + 自动调优通信 chunk 大小，降低 L2 占用与对计算 SM 的干扰。</p>
+
+<h3>3.6 FP8 混合精度训练：精度边界画在哪里（§3.3）</h3>
+<p><span class="ev ev-p">P</span>（第 14-15 页，图 6）混合精度框架：Linear 的 <strong>Fprop/Dgrad/Wgrad 三个 GEMM 全部 FP8</strong>（理论速度较 BF16 翻倍；FP8 Wgrad 还让激活可以 FP8 缓存），GEMM 输出 BF16/FP32；以下组件<strong>保留原精度（BF16/FP32）</strong>：embedding、输出头、MoE gating、归一化算子、attention 算子；master weights、weight gradients、optimizer states 保高精度（其显存代价经 DP 分摊）。</p>
+<p><span class="ev ev-p">P</span>（第 15-16 页，图 7a）<strong>细粒度量化</strong>：激活按 1×128 tile（每 token 每 128 通道）、权重按 128×128 块（每 128 输入通道 × 128 输出通道）分组缩放，缩放因子沿 GEMM 内维 K 逐组引入——标准 FP8 GEMM 不支持，但与下述累加策略配合即可实现。附录 B.2 的反例：把激活梯度也改成 128×128 块级量化会让约 16B MoE 模型（约 300B token）发散，作者归因于 token 相关离群。</p>
+<p><span class="ev ev-p">P</span>（第 16-17 页，图 7b）<strong>累加精度提升</strong>：H800 上 FP8 GEMM 的 Tensor Core 累加只保留约 14 位；K=4096 双随机矩阵初测最大相对误差近 2%。对策：每累积 N_C=128 个元素（等效 4 个 WGMMA）就把部分和提升到 CUDA core 的 FP32 寄存器做全精度累加，缩放因子顺势在 CUDA core 上相乘完成反量化；单 warpgroup 的 WGMMA 发射率下降，但 H800 上两个 WGMMA 典型并存、一升一算互相重叠。</p>
+<p><span class="ev ev-p">P</span>（第 17-18 页）<strong>格式与调度</strong>：全张量用 E4M3（先前工作 Fprop E4M3 + Dgrad/Wgrad E5M2），可行性来自小组内共享指数位；<strong>在线量化</strong>——每个 tile/块在线取最大绝对值、即时算缩放因子，不做跨迭代的历史记录。验证：类 V2-Lite 与 V2 两个规模、约 1T token，FP8 相对 BF16 的 loss 相对误差持续 &lt;0.25%（第 15 页；附录 B.1 第 47 页）。</p>
+<p><span class="ev ev-p">P</span>（第 18 页，§3.3.3）<strong>低精度存储与通信</strong>：AdamW 一二阶矩用 BF16（master weights 与梯度保 FP32）；两个特殊激活——attention 后 Linear 的输入用定制 <strong>E5M6</strong> 格式（反向时 1×128 tile 转 128×1，缩放因子取 2 的整数次幂以免二次量化误差）、MoE SwiGLU 输入缓存 FP8 且反向重算其输出；MoE 上投影前激活量化 FP8 后再 dispatch（缩放因子同为 2 的幂）、下投影前梯度同理；<strong>forward/backward combine 保 BF16</strong>。</p>
+
+<h3>3.7 内存与推理部署要点（§3.2.3、§3.4）</h3>
+<p><span class="ev ev-p">P</span>（第 14 页）内存三板斧：反向重算 RMSNorm 与 MLA 上投影；EMA 参数放 CPU 内存、每步后异步更新（用于学习率衰减后的性能早期估计）；借 DualPipe 把最浅层（含 embedding）与最深层（含输出头）放在同一 PP rank，让 MTP 与主模型的共享 embedding/输出头<strong>物理共享</strong>参数与梯度。</p>
+<p><span class="ev ev-p">P</span>（第 19-20 页）推理部署 prefill/decode 分离：prefilling 最小单元 4 节点 32 GPU（attention TP4+SP × DP8、MoE EP32、浅层 dense MLP 用 TP1），用冗余专家（在线统计每约 10 分钟调整、32 个冗余专家、每 GPU 多挂 1 个）平衡负载，并双 micro-batch 交叠；decoding 最小单元 40 节点 320 GPU（TP4+SP × DP80、EP320、每 GPU 一个专家、共享专家视为必选路由专家故每 token 选 9 个），all-to-all 走 IB 直连点对点 + IBGDA，每 expert batch 通常 &lt;256 token、访存受限，可给通信只留少量 SM。硬件建议（§3.5）：把通信从 SM 卸载到协处理器、统一 IB/NVLink 抽象、提高 FP8 累加精度、原生支持分组缩放 MMA / 在线量化 / 转置 GEMM。</p>
+
+<div class="callout callout-inference">
+  <strong>控制面 / 数据面职责划分（编辑推断）：</strong><span class="ev ev-i">I</span> 论文未使用「控制面/数据面」术语。本页划分：<strong>控制面</strong>＝HAI-LLM 框架与并行编排（16PP×64EP×ZeRO-1 DP）、DualPipe 调度与 SM 配比、路由器配置（top-8、≤4 节点、b_i 偏置步末更新）、冗余专家周期调整（在线统计、约 10 分钟粒度）、训练超参与 loss 权重调度；<strong>数据面</strong>＝token 流（BPE 128K → 打包/FIM）、MLA/专家计算中的张量与精度变换（FP8/E5M6/BF16 边界）、all-to-all 的 IB/NVLink 两跳转发、梯度与优化器状态流、EMA 到 CPU 的旁路。该划分只影响叙述，不改变论文事实。
+</div>
+
+<div class="callout callout-warning">
+  <strong>防止张冠李戴（编辑核对结论）：</strong><span class="ev ev-i">I</span> 社会上流传的「42.5% vs 20% 通信占比」「IB 10→20 Gbps 升级」等说法<strong>未出现在本报告 PDF 中</strong>（全文检索无命中）；本报告可核验的通信口径只有三条——跨节点 EP 导致约 1:1 的计算-通信比（第 12 页）、NVLink 160 GB/s ≈ 3.2× IB 50 GB/s（第 13 页）、20/132 个 SM 用于通信（第 20 页）。引用任何其他版本数字前先回到对应来源核实。
+</div>
+</section>
+
+<section id="data-path" aria-labelledby="data-path-title">
+<h2 id="data-path-title">4. GPU/系统数据路径</h2>
+
+<figure class="architecture-diagram">
+  <img src="../assets/diagrams/deepseek-v3-data-path.svg"
+       alt="DeepSeek-V3 训练数据路径图：14.8T 语料经 Byte-level BPE 128K 分词与文档打包/FIM 进入 micro-batch；控制面由 HAI-LLM 框架编排 16 路流水线并行、64 路专家并行（8 节点）与 ZeRO-1 数据并行，DualPipe 从两端双向喂入 micro-batch 并把 all-to-all 与 PP 通信藏进计算。主循环每层依次为 RMSNorm、MLA（推理仅缓存 c_KV 与 k_R；attention 算子保 BF16/FP32 原精度）、MoE 路由（sigmoid 亲和度加偏置 b 选 top-8、限 4 节点；MoE gating 保原精度），激活按 1×128 tile 量化为 FP8 后经 dispatch 先 IB 后 NVLink 两跳送达 256 个路由专家（每 GPU 4 个（64 GPU）；每专家 128×128 块量化、N_C=128 间隔提升到 CUDA core 的 FP32 累加）加 1 个共享专家，combine 以 BF16 合并；MTP 模块（D=1）与主模型共享 embedding 与输出头。反向路径 Dgrad/Wgrad 走 FP8，attention 后 Linear 输入以 E5M6 缓存，RMSNorm 与 MLA 上投影反向重算；优化器 AdamW 一二阶矩 BF16、master weights 与梯度 FP32，EMA 旁路异步写入 CPU 内存。右侧琥珀色面板列出 H800 的 14 位累加精度限制、激活梯度块级量化发散反例、约 1:1 计算-通信比与解码 320 GPU 部署单元四个风险边界。" width="980" height="920">
+  <figcaption>图 1：DeepSeek-V3 预训练端到端数据路径（训练态为主，附 MTP 与 EMA 旁路；推理部署要点见 <a href="#mechanism">#mechanism</a> 3.7）。实线＝运行时数据流，虚线＝控制面/调度与监控旁路；青＝GPU 计算，橙＝IB/NVLink 网络通信，紫＝显存/存储与优化器状态，蓝虚线框＝控制面，琥珀＝论文指出的风险/精度边界；编号 ①-⑧ 对应下方文字序列。本图为编辑合成（论文本身无此整图），依据论文图 2/3/4/6/7 与 §2-§4（arXiv:2412.19437v2）绘制 <span class="ev ev-p">P</span>；面板编排与编号为本页编辑标注 <span class="ev ev-i">I</span>。</figcaption>
+</figure>
+
+<h3>端到端文字序列（与图中编号一致）</h3>
+<ol>
+  <li><strong>① 数据接入：</strong>预训练语料 14.8T token（提高数学/编程占比、扩展中英以外多语言）；文档打包不做跨样本 attention masking；以 0.1 比例做文档级 FIM（PSM 框架）；Byte-level BPE 分词（词表 128K），「标点+换行」合并 token 随机拆分以缓解 token boundary bias<span class="ev ev-p">P</span>（第 21-22 页）。</li>
+  <li><strong>② 控制面编排：</strong>HAI-LLM 框架按 16 路 PP × 64 路 EP（专家均匀铺在 8 节点 64 GPU）× ZeRO-1 DP 放置模型（无 TP）；DualPipe 双向流水从两端喂 micro-batch（batch 3072→15360 调度），并手动调配通信用 SM 占比<span class="ev ev-p">P</span>（第 12-13、23 页）。</li>
+  <li><strong>③ 每层主循环（×61，前 3 层 dense FFN）：</strong>RMSNorm → MLA（内容压缩 c_KV/d_c=512 与解耦 RoPE 键 k_R；attention 算子保原精度）→ RMSNorm → MoE：Router 以 sigmoid 亲和度 + 偏置 b_i 选 top-8、限 4 节点（MoE gating 保原精度；b_i 步末按负载 ±γ 更新），1 共享专家恒激活<span class="ev ev-p">P</span>（第 7-10、22 页）。</li>
+  <li><strong>④ FP8 专家计算与 all-to-all：</strong>上投影前激活按 1×128 tile 在线量化 FP8（缩放因子 2 的幂）后 dispatch——先经 IB（50 GB/s）到目标节点同编号 GPU，再经 NVLink（160 GB/s）即时转发到专家 GPU，通信内核用 20 SM/10 通道 warp 专化实现；256 个路由专家的 GEMM 用 128×128 块量化权重 + N_C=128 间隔的 CUDA core FP32 累加；combine 以 BF16 合并返回<span class="ev ev-p">P</span>（第 13-18 页）。</li>
+  <li><strong>⑤ MTP 旁路与损失：</strong>主模型顶层表示与下一 token embedding 各做 RMSNorm、拼接投影（M_1∈R^{d×2d}）后过 TRM_1，经共享输出头预测第 2 个 token；总损失 = 主 LM 损失 + λ·MTP 损失（λ=0.3→0.1 分段）<span class="ev ev-p">P</span>（第 10-11、23 页）。</li>
+  <li><strong>⑥ 反向与激活管理：</strong>Dgrad/Wgrad 走 FP8；attention 后 Linear 的输入以 E5M6 缓存（反向 1×128→128×1 转换、2 的幂缩放因子）；SwiGLU 输入缓存 FP8、输出反向重算；RMSNorm 与 MLA 上投影反向重算以省激活内存<span class="ev ev-p">P</span>（第 14、18 页）。</li>
+  <li><strong>⑦ 优化器与精度底线：</strong>AdamW（β1=0.9、β2=0.95、wd=0.1），一二阶矩 BF16、master weights 与梯度 FP32；梯度裁剪 1.0；EMA 参数异步维护在 CPU 内存<span class="ev ev-p">P</span>（第 14、18、22 页）。</li>
+  <li><strong>⑧ 推理态差异（对照）：</strong>MLA 只缓存 c_KV 与 k_R；prefilling 4 节点/32 GPU 起（EP32+冗余专家 32 个、每 GPU +1），decoding 40 节点/320 GPU 起（EP320、每 GPU 1 专家、每 token 选 9 个、IB 点对点 + IBGDA）；MTP 模块可丢弃或用于投机解码（接受率 85%-90%、1.8× TPS）<span class="ev ev-p">P</span>（第 11、19-20、35 页）。</li>
+</ol>
+
+<div class="table-scroll">
+  <table>
+    <caption>路径上的关键配置与事实（机制口径，非性能结论；性能结论见 <a href="#experiments">#experiments</a>）</caption>
+    <thead>
+      <tr><th scope="col">事实/数值</th><th scope="col">对象与条件</th><th scope="col">论文定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>并行编排 16PP × 64EP（8 节点）× ZeRO-1 DP；无 TP</td><td>2048 卡 H800 集群训练（8 卡/节点，NVLink+NVSwitch 节点内、IB 跨节点）</td><td><span class="ev ev-p">P</span> 第 11-12 页 §3.1/§3.2</td></tr>
+      <tr><td>DualPipe：chunk 内四段重排 + 双向流水；气泡 (PP/2−1)(F&amp;B+B−3W)、参数 2×、激活 PP+1</td><td>对 1F1B/ZB1P 的一般比较（表 2）</td><td><span class="ev ev-p">P</span> 第 13 页表 2</td></tr>
+      <tr><td>all-to-all 两跳路径（先 IB 后 NVLink）；每 token ≤4 节点；20 SM/10 通道；平均 3.2 专家/节点、上限 13 专家</td><td>跨节点 EP 通信内核（NVLink 160 GB/s ≈ 3.2× IB 50 GB/s）</td><td><span class="ev ev-p">P</span> 第 13-14 页 §3.2.2</td></tr>
+      <tr><td>FP8 范围：Linear 三 GEMM；原精度范围：embedding/输出头/MoE gating/归一化/attention；master weights 与梯度 FP32、AdamW 矩 BF16</td><td>混合精度框架（图 6）</td><td><span class="ev ev-p">P</span> 第 14-15、18 页 §3.3/§3.3.1/§3.3.3</td></tr>
+      <tr><td>激活 1×128 tile、权重 128×128 块分组缩放；N_C=128（4 WGMMA）提升 CUDA core FP32 累加；全张量 E4M3；在线量化</td><td>FP8 GEMM 精度对策（H800 累加约 14 位）</td><td><span class="ev ev-p">P</span> 第 15-18 页 §3.3.2、图 7</td></tr>
+      <tr><td>激活缓存：Wgrad FP8 通用 + E5M6 特例（attention 后 Linear 输入）+ SwiGLU 输入 FP8/输出重算；dispatch FP8（2 的幂缩放）、combine BF16</td><td>低精度存储与通信（§3.3.3）</td><td><span class="ev ev-p">P</span> 第 18 页</td></tr>
+      <tr><td>重算 RMSNorm 与 MLA 上投影；EMA 在 CPU；MTP 共享 embedding/输出头与主模型同 PP rank 物理共享</td><td>内存节省三板斧（§3.2.3）</td><td><span class="ev ev-p">P</span> 第 14 页</td></tr>
+      <tr><td>训练作业的 checkpoint 机制、存储介质与故障恢复流程：论文未明确披露（仅有「无不可恢复 loss spike、未回滚」的结果性表述）</td><td>与集群存储/容错层的边界（页面不补写）</td><td><span class="ev ev-p">P</span> 第 1 页摘要；<span class="ev ev-i">I</span> 缺口标注</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout">
+  <strong><span class="ev ev-p">P</span> 口径提醒（读数方式）：</strong>本页全部训练机制数字的完整条件是：2048×H800（NVLink+NVSwitch 节点内 / IB 跨节点）、HAI-LLM 框架、16PP×64EP×ZeRO-1 DP、14.8T token、最大序列 4K（第 11-12、22 页）<span class="ev ev-p">P</span>。FP8 精度结论的验证规模是类 V2-Lite/V2 两个模型、约 1T token（第 15 页），不是 671B 本身的消融<span class="ev ev-p">P</span>；引用时不得把附录 B 的小规模稳定性证据说成 671B 上的消融。
+</div>
+</section>
+
+<section id="tradeoffs" aria-labelledby="tradeoffs-title">
+<h2 id="tradeoffs-title">5. 架构权衡</h2>
+
+<ul class="tradeoff-grid">
+  <li>
+    <h3>负载均衡收益 ↔ 性能退化风险（aux-loss-free）</h3>
+    <p><span class="ev ev-p">P</span> 传统辅助损失越大越伤模型性能；V3 用只影响路由不影响梯度的偏置项换均衡，消融显示多数基准更优（表 5：大规模 HumanEval 40.2→46.3、GSM8K 70.7→74.5），但并非全面胜出（大规模 MMLU 68.3→67.2），且仍需极小序列级辅助损失兜底（α=0.0001）（第 9、23、27 页）。<span class="ev ev-i">I</span> 均衡质量依赖在线负载监控与 γ 调度（γ=0.001→0.0），意味着训练运维需要一个可观测的负载反馈回路。</p>
+  </li>
+  <li>
+    <h3>FP8 吞吐 ↔ 精度工程复杂度</h3>
+    <p><span class="ev ev-p">P</span> FP8 让三个 GEMM 理论翻速并压缩激活缓存，但要把精度边界画得极细：原精度保五类算子、master weights/梯度保 FP32、逐 tile/块缩放、CUDA core 累加提升、E5M6 特例、2 的幂缩放因子、combine 保 BF16（第 14-18 页）。<span class="ev ev-i">I</span> 每一条都是为实现复杂度换训练稳定性：复现者要同时实现通信内核与量化栈，工程门槛远高于「把 dtype 改成 FP8」。</p>
+  </li>
+  <li>
+    <h3>气泡消除 ↔ 双份参数与调度约束</h3>
+    <p><span class="ev ev-p">P</span> DualPipe 把气泡压到 (PP/2−1)(F&amp;B+B−3W)、通信全遮盖，代价是保留两份模型参数、峰值激活 +1/PP，且要求流水级与 micro-batch 均可被 2 整除（表 2 及正文，第 13 页）。作者以「大 EP 使参数双份不显著」自洽（第 13 页）。<span class="ev ev-i">I</span> 这笔账在 EP 规模小的部署上不成立——DualPipe 的收益前提就是大 EP 与重通信负载。</p>
+  </li>
+  <li>
+    <h3>通信量上限 ↔ 路由自由度（节点受限路由）</h3>
+    <p><span class="ev ev-p">P</span> 每 token ≤4 节点换来 IB 流量可控与计算-通信近乎完全重叠，且两跳内核让「等效 13 专家」与「实际 8 专家」同通信成本（第 10、13-14 页）。<span class="ev ev-i">I</span> 代价是路由空间被拓扑约束截断：若最优专家分布在 &gt;4 节点，模型只能放弃；这一约束对质量的影响论文未单独消融，属于「被工程吸收、未被定量隔离」的设计。</p>
+  </li>
+  <li>
+    <h3>不用 TP ↔ 单卡显存与内核自给率</h3>
+    <p><span class="ev ev-p">P</span> 内存三板斧（重算、CPU EMA、MTP 参数物理共享）使 V3 免除「costly」的 TP（第 12、14 页）。<span class="ev ev-i">I</span> 免 TP 的隐含前提是自研 all-to-all/量化内核把 SM 与带宽用在刀刃上；换框架或换硬件时这套账要重算，不能假设「不用 TP」本身可迁移。</p>
+  </li>
+  <li>
+    <h3>MTP 训练收益 ↔ 推理路径分叉</h3>
+    <p><span class="ev ev-p">P</span> MTP 在多数消融基准提升（表 4：大规模 HumanEval 44.5→53.7），推理可整个丢弃（成本不变）或改造为投机解码（接受率 85%-90%、1.8× TPS）（第 11、26、35 页）。个别基准下降（大规模 MMLU 67.5→66.6）<span class="ev ev-p">P</span>。<span class="ev ev-i">I</span> 服务方要维护「纯主模型」与「MTP 投机」两条推理路径的回归基线，收益取决于接受率在自有流量分布上的复现。</p>
+  </li>
+  <li>
+    <h3>训练成本口径 ↔ 复现/迁移成本</h3>
+    <p><span class="ev ev-p">P</span> 2.788M H800 GPU 小时 / $5.576M 只含官方训练，排除此前研究与消融；且绑定 $2/GPU 小时租价与自有集群（第 5 页表 1）。<span class="ev ev-i">I</span> 把 $5.576M 当「复现一个 V3 的价格」是最常见的误读：数据、消融、试错与推理服务成本都不在其中；云上按实例价折算还要乘上互联拓扑（IB 组网）可达性。</p>
+  </li>
+</ul>
+</section>
+
+<section id="cloud-mapping" aria-labelledby="cloud-mapping-title">
+<h2 id="cloud-mapping-title">6. 云上部署映射</h2>
+
+<p>以下映射为厂商中立示例；具体产品命名/规格仅作说明并标 <span class="ev ev-e">E</span>，以厂商当时目录为准，未逐一在线核验。论文事实单独标注 <span class="ev ev-p">P</span>，仓库现状标注 <span class="ev ev-r">R</span>。<span class="ev ev-i">I</span> H800 为受出口管制的中国特供型号，公有云可用代际/互联与论文假设不一定对齐——映射时先确认「节点内高带宽 + 跨节点 RDMA」两层拓扑是否可得，再谈机制复用。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>DeepSeek-V3 组件 → 云上资源映射</caption>
+    <thead>
+      <tr><th scope="col">论文需求</th><th scope="col">云上映射（示例）</th><th scope="col">证据与说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">训练算力：2048×H800，8 GPU/节点 NVLink+NVSwitch，跨节点 IB（第 11 页）</th>
+        <td><span class="ev ev-e">E</span> 选型按「GPU 代际支持 FP8 GEMM + 节点内 NVLink 级互联 + 跨节点 RDMA 网络」三条件筛实例；训练编排把「8 卡亲和」作为调度单元</td>
+        <td>硬件前提 <span class="ev ev-p">P</span>（第 11 页）；实例与拓扑映射为云实践 <span class="ev ev-e">E</span>；<span class="ev ev-i">I</span> 无 RDMA 层时 all-to-all 两跳路径退化为纯节点内 EP，训练效率账需重算</td>
+      </tr>
+      <tr>
+        <th scope="row">并行布局：16PP×64EP×ZeRO-1 DP，专家均匀铺 8 节点 64 GPU（第 12、23 页）</th>
+        <td><span class="ev ev-e">E</span> 作业编排以「PP 组 × EP 组」声明拓扑亲和；弹性伸缩冻结在训练阶段边界（14.8T 主体 / YaRN 两阶段 / SFT/RL）而非步级</td>
+        <td>并行布局 <span class="ev ev-p">P</span>；阶段划分 <span class="ev ev-p">P</span>（第 21-23、28 页）；编排建议 <span class="ev ev-e">E</span>/<span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">网络：IB 50 GB/s + NVLink 160 GB/s 两跳 all-to-all；20 SM 通信内核；IBGDA（推理）（第 13-14、19 页）</th>
+        <td><span class="ev ev-e">E</span> 网络规格（单卡 RDMA 带宽、P2P 时延、GPUDirect/RDMA 能力）写入实例验收项；通信内核编译目标与驱动/CUDA 版本锁定</td>
+        <td>论文网络口径 <span class="ev ev-p">P</span>；IBGDA 为论文引用的 NVIDIA 技术 <span class="ev ev-p">P</span>（第 19 页）；云网络验收 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">推理部署单元：prefill ≥4 节点 32 GPU、decode ≥40 节点 320 GPU；prefill/decode 分离（第 19-20 页）</th>
+        <td><span class="ev ev-e">E</span> prefill 池与 decode 池分实例组部署、独立扩缩；请求在两池间经队列/路由层衔接；decode 池最小规模直接决定准入门槛</td>
+        <td>部署单元与分离策略 <span class="ev ev-p">P</span>（第 18-20 页）；池化与路由为云实践 <span class="ev ev-e">E</span>；<span class="ev ev-i">I</span> 320 GPU 起步的 decode 池对多数团队不可行（论文 §6 自己列出的局限）</td>
+      </tr>
+      <tr>
+        <th scope="row">负载运维：冗余专家按在线统计周期调整（约 10 分钟）；专家负载监控驱动 b_i 更新（训练）（第 9、19 页）</th>
+        <td><span class="ev ev-e">E</span> 专家负载/GPU token 分布作为推理服务监控指标；周期任务调整冗余专家配置；训练侧把每步专家负载直方图纳入可观测面板</td>
+        <td>机制 <span class="ev ev-p">P</span>（第 9、19 页）；监控设计 <span class="ev ev-e">E</span>/<span class="ev ev-i">I</span></td>
+      </tr>
+      <tr>
+        <th scope="row">权重分发：模型检查点经官方仓库/Hugging Face 分发；仓库含 inference/ 参考（2026-09-15 核验）</th>
+        <td><span class="ev ev-e">E</span> 权重放对象存储/模型仓库，节点本地盘缓存；镜像内置锁定版本的推理框架与驱动</td>
+        <td>仓库定位（权重 + 推理参考，非训练框架）<span class="ev ev-r">R</span>（2026-09-15 GitHub API）；分发拓扑 <span class="ev ev-e">E</span></td>
+      </tr>
+      <tr>
+        <th scope="row">训练存储/checkpoint 与故障恢复：论文未披露实现细节（仅有稳定性结果表述）</th>
+        <td><span class="ev ev-e">E</span> 高吞吐并行文件系统/对象存储承载 checkpoint，按框架能力配置；<span class="ev ev-i">I</span> 本页不把任何 checkpoint 机制归于论文</td>
+        <td>缺口 <span class="ev ev-p">P</span>（论文未明确披露）+ <span class="ev ev-i">I</span>；存储方案 <span class="ev ev-e">E</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-inference">
+  <strong>放置要点（编辑推断）：</strong><span class="ev ev-i">I</span> ①V3 的效率结论是「拓扑敏感」的：IB/NVLink 带宽比（3.2×）与每 token 4 节点限制共同成立；云上若节点数不足或 RDMA 受限，应先降 EP 规模重算效率，而非照抄 64EP。②prefill/decode 分离的收益来自两阶段不同的瓶颈（compute-bound vs memory-bound），云上落地最小可行单元也可从论文口径向下收缩，但要同步收缩冗余专家与 batch 假设。③训练侧的大杀器（FP8 + DualPipe）绑定 HAI-LLM 内部实现；采用开源框架（如已集成 V3 架构的训练/推理栈）时，论文数字只作上限参考。
+</div>
+</section>
+
+<section id="cost-slo" aria-labelledby="cost-slo-title">
+<h2 id="cost-slo-title">7. 成本 / 性能 / SLO</h2>
+
+<h3>7.1 训练成本（论文口径）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 1 转录：训练成本（<span class="ev ev-p">P</span>，PDF 第 5 页；假设 H800 租价 $2/GPU 小时）</caption>
+    <thead>
+      <tr><th scope="col">口径</th><th class="num" scope="col">Pre-Training</th><th class="num" scope="col">Context Extension</th><th class="num" scope="col">Post-Training</th><th class="num" scope="col">Total</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">H800 GPU 小时</th><td class="num">2664K</td><td class="num">119K</td><td class="num">5K</td><td class="num">2788K</td></tr>
+      <tr><th scope="row">USD</th><td class="num">$5.328M</td><td class="num">$0.238M</td><td class="num">$0.01M</td><td class="num">$5.576M</td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 5 页）补充口径：每万亿 token 180K H800 GPU 小时（2048 卡集群 3.7 天）；预训练不足两个月；后训练等后续阶段合计约 0.1M GPU 小时。<strong>成本边界：</strong>只含官方训练，排除此前研究与架构/算法/数据消融；美元值是租价假设下的换算，不是云账单。<span class="ev ev-i">I</span> 引用该数字时的最小诚实写法是「2.788M H800 GPU 小时（论文按 $2/GPU 小时估 $5.576M，不含前期研究与消融）」。</p>
+
+<h3>7.2 容量与成本公式（参数化，编辑推断）</h3>
+<div class="formula">
+训练成本 ≈ 训练 token 数(T) × 每 token GPU 小时 × 租价 p<br>
+　（论文锚点：T=14.8T 时 ≈ 2664K GPU 小时 → ≈ 0.18M GPU 小时/万亿 token；预训练段 p=$2/GPU 小时 → $5.328M）<br>
+扩展成本 ≈ YaRN 两阶段（119K GPU 小时）+ 后训练（5K GPU 小时），与数据管线强相关、不可按 token 线性外推<br>
+云上换算 ≈ Σ(阶段 GPU 小时) × 当时实例单价 ÷ 卡时折扣率；单价按查询当时厂商目录记录日期<br>
+推理成本 ≈ prefill 池 GPU 时 + decode 池 GPU 时；decode 池最小 320 GPU（论文部署单元）是固定门槛项
+</div>
+<p><span class="ev ev-i">I</span> 论文可支撑的量只有 2664K/119K/5K GPU 小时与 $2/GPU 小时假设（第 5 页）；实例单价、折扣、可利用率、推理流量画像需按部署实测填写，本页不给出伪精确总价。<span class="ev ev-e">E</span> 云单价随时段/区域/折扣变化，核算时以查询当时厂商目录为准并记录日期。</p>
+
+<h3>7.3 性能/SLO 相关的论文事实与缺口</h3>
+<ul>
+  <li><span class="ev ev-p">P</span> 推理侧既定目标：同时保证在线服务 SLO 与高吞吐，策略是 prefill/decode 分离（第 18 页）；MTP 投机解码带来 1.8× TPS（第 35 页）。</li>
+  <li><span class="ev ev-p">P</span> decode 特征：每 expert batch 通常 &lt;256 token、访存受限（第 20 页）——容量规划时 decode 吞吐由显存带宽主导而非算力。<span class="ev ev-i">I</span> 由此推论 SLO 敏感项是 KV cache 容量与批调度，而非 FLOPs。</li>
+  <li><span class="ev ev-p">P</span> 数据缺口（论文未明确披露）：TTFT/TPOT 数值、每 GPU tokens/s、MFU、服务并发、集群网络利用率、训练吞吐（tokens/s/GPU）、checkpoint 频率、以及训练/推理的能耗与成本明细。</li>
+  <li><span class="ev ev-i">I</span> 引用「2.788M GPU 小时」论证云上预算时，还应叠加：数据管线与试错成本（未披露）、推理服务的持续性 GPU 消耗（与流量相关）、以及故障恢复与冗余带来的有效利用率折扣。</li>
+</ul>
+</section>
+
+<section id="security-ops" aria-labelledby="security-ops-title">
+<h2 id="security-ops-title">8. 安全与可运维性</h2>
+
+<h3>8.1 安全</h3>
+<ul>
+  <li><strong>模型与代码许可：</strong><span class="ev ev-r">R</span> 官方仓库（论文摘要印明）2026-09-15 核验为代码 MIT（LICENSE-CODE）+ 模型另行许可（LICENSE-MODEL，README 徽章 Model Agreement）。<span class="ev ev-i">I</span> 商用部署前按仓库许可原文核对模型许可条款——MIT 只覆盖代码，不自动覆盖权重使用。</li>
+  <li><strong>供应链：</strong><span class="ev ev-r">R</span> 权重应从官方仓库核验后的 tag/commit 获取（main HEAD 9b4e978，2025-08-28；tag v1.0.0）。<span class="ev ev-i">I</span> 训练/推理镜像的 CUDA/驱动/通信内核版本配对锁定；论文的自研通信内核（定制 PTX）不在公开仓库，第三方实现的 PTX/内核代码按供应链变更评审。</li>
+  <li><strong>数据驻留与多租户：</strong><span class="ev ev-i">I</span> 论文不涉及多租户；推理部署中请求在 prefill/decode 两池间流转，租户隔离与数据驻留由上层服务网格决定；MLA 的 KV cache 压缩减少驻留足迹，但不改变隔离模型。</li>
+  <li><strong>评测与披露完整性：</strong><span class="ev ev-p">P</span> 论文自己在未来方向中提出要防止「针对固定基准集优化造成误导性印象」（第 36 页）。<span class="ev ev-i">I</span> 采纳其评测结论时注意：全部数字出自作者内部框架（HAI-LLM 集成），关键基准（如 LiveCodeBench）限定了时间窗（2024-08~11），跨框架对比需自行复测。</li>
+</ul>
+
+<h3>8.2 可运维性（含恢复与回滚）</h3>
+<ul>
+  <li><strong>训练稳定性与故障语义：</strong><span class="ev ev-p">P</span> 论文声明全程「未遇到不可恢复 loss spike、未执行回滚」（第 1、4 页）。<span class="ev ev-i">I</span> 这是结果性表述而非机制披露：checkpoint/恢复/回滚的实现（频率、存储、恢复流程）论文未明确披露，运维方案须自建并以自身演练为准，不能引用论文推断其故障恢复能力。</li>
+  <li><strong>训练期可观测与自愈：</strong><span class="ev ev-p">P</span> 论文内建两个反馈回路——逐步专家负载监控驱动 b_i ±γ 更新（第 9 页）、EMA 参数在 CPU 异步维护用于学习率衰减后的早期性能估计（第 14 页）。<span class="ev ev-i">I</span> 这两条天然是监控面：把「专家负载直方图」「EMA-loss 与在线 loss 偏差」做成告警项，可在 loss 质量问题变成事故前暴露。</li>
+  <li><strong>推理期运维：</strong><span class="ev ev-p">P</span> 冗余专家按在线负载统计每约 10 分钟级别周期调整（prefill 每节点内重排、decode 免重排）（第 19 页）；IBGDA 降低通信时延（第 19 页）。<span class="ev ev-i">I</span> 冗余专家配置变更是推理服务的例行变更项，需要灰度与回退配置（保留上一版专家布局文件即可回滚）。</li>
+  <li><strong>升级与回滚：</strong><span class="ev ev-i">I</span> 建议：推理框架/内核升级以「主模型 + MTP 投机」双路径回归（吞吐与接受率两条基线）；训练侧 FP8 数值行为依赖 CUDA/内核版本（论文的 CUDA core 累加提升与 PTX 定制都是版本敏感实现），升级先在小规模模型上复跑附录 B 类稳定性对照（FP8 vs BF16 loss 曲线）。</li>
+  <li><strong>监控告警：</strong><span class="ev ev-i">I</span> 最小集：①训练 loss 与 EMA 参照的偏离；②每层专家负载 max/mean 比（失衡前兆）；③dispatch/combine 通信时长占比（重叠失效信号）；④decode 池每 expert batch 与 256 token 经验值的偏离；⑤MTP 接受率（跌破 85% 下沿时投机路径收益消失）。</li>
+</ul>
+</section>
+
+<section id="fit" aria-labelledby="fit-title">
+<h2 id="fit-title">9. 适用 / 不适用场景</h2>
+
+<h3>适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>有 RDMA 高速互联的大规模 MoE 预训练。</strong>触发：集群具备「节点内 NVLink 级 + 跨节点 IB 级」两层拓扑、数百卡以上。理由：V3 的 1:1 计算-通信比问题、DualPipe 重叠与两跳 all-to-all 内核正是为此设计；每万亿 token 180K H800 GPU 小时的效率以此为前提<span class="ev ev-p">P</span>（第 5、11-14 页）。</li>
+  <li><strong>想在 Hopper 类硬件上做 FP8 大规模训练的团队。</strong>触发：需要压缩训练显存/算力成本，且能投入实现细粒度量化栈。理由：论文首次在极大规模验证 FP8 框架，给出了完整的精度边界清单（1×128/128×128 分组缩放、N_C=128 累加提升、E4M3、在线量化、E5M6 特例）与 16B/230B 级稳定性证据（&lt;0.25% 相对 loss 误差）<span class="ev ev-p">P</span>（第 14-18、47 页）。</li>
+  <li><strong>长上下文（至 128K）+ KV cache 敏感的自建推理服务。</strong>触发：服务需 32K-128K 上下文且显存预算紧张。理由：MLA 只缓存 c_KV 与 k_R，YaRN 两阶段扩展到 128K 且 NIAH 全程表现良好<span class="ev ev-p">P</span>（第 7、23 页）。</li>
+  <li><strong>以推理吞吐为目标、可维护大 decode 池的私有化部署。</strong>触发：流量稳定、能承担 320 GPU 起的 decode 池与 prefill/decode 分离运维。理由：论文部署策略（冗余专家 + IBGDA + 双 micro-batch 交叠）实现「较 V2 端到端生成速度快两倍以上」，MTP 投机再加 1.8× TPS<span class="ev ev-p">P</span>（第 19-20、35-36 页）。</li>
+</ol>
+
+<h3>不适用（触发条件 + 理由）</h3>
+<ol class="fit-list">
+  <li><strong>小团队 / 小规模部署单元。</strong>触发：可用 GPU 池远小于论文推荐部署单元。理由：论文自述「推荐部署单元相对较大，可能对小团队构成负担」（decode 最小 40 节点 320 GPU）<span class="ev ev-p">P</span>（第 19、35 页）。<span class="ev ev-i">I</span> 此类场景应评估量化压缩后的单机/少卡方案，而非照搬论文部署拓扑。</li>
+  <li><strong>缺少跨节点 RDMA 或节点内高带宽互联的环境。</strong>触发：单卡无 RDMA、多机以太网、或节点内无 NVLink 级互联。理由：all-to-all 两跳路径、节点受限路由与 20 SM 通信内核全部以 IB+NVLink 带宽比（160 vs 50 GB/s）为设计输入<span class="ev ev-p">P</span>（第 13-14 页）；<span class="ev ev-i">I</span> 拓扑退化后论文的通信结论不成立。</li>
+  <li><strong>把 $5.576M 当作复现总预算的项目。</strong>触发：以表 1 直接立项。理由：论文明确排除此前研究与架构/算法/数据消融成本，且美元值绑定 $2/GPU 小时租价假设<span class="ev ev-p">P</span>（第 5 页）；<span class="ev ev-i">I</span> 复现还需数据、试错与推理成本，均不在口径内。</li>
+  <li><strong>无法承载双份流水线参数或小 EP 的训练作业。</strong>触发：EP 规模小、显存余量紧。理由：DualPipe 保留两份模型参数、激活 +1/PP，其收益论证建立在「大 EP」上（表 2 及正文）<span class="ev ev-p">P</span>（第 13 页）。</li>
+  <li><strong>依赖论文未披露能力的需求。</strong>触发：需要 checkpoint 机制细节、多语言能力清单、RL 基础设施实现等。理由：论文未明确披露这些内容（详见 <a href="#evidence">#evidence</a> 缺口清单）<span class="ev ev-p">P</span>+<span class="ev ev-i">I</span>；不得把论文之后的 DeepSeek 版本能力（如后续模型的架构或功能）记到本文头上。</li>
+</ol>
+</section>
+
+<section id="experiments" aria-labelledby="experiments-title">
+<h2 id="experiments-title">10. 实验与指标</h2>
+
+<h3>10.1 训练与对齐配置 <span class="ev ev-p">P</span>（第 21-23、28-30 页）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>设置与口径（页码均已核验）</caption>
+    <tbody>
+      <tr><th scope="row">模型</th><td>61 层、隐维 7168、init std 0.006；MLA n_h=128 / d_h=128 / d_c=512 / d_c′=1536 / d_r^h=64；前 3 层 dense FFN，其余每层 1 共享 + 256 路由专家（中间维 2048）、激活 8、限 4 节点；MTP D=1；671B 总参 / 37B 激活 <span class="ev ev-p">P</span>（第 22 页 §4.2）</td></tr>
+      <tr><th scope="row">优化器 / 调度</th><td>AdamW β1=0.9、β2=0.95、wd=0.1；梯度裁剪 1.0；序列长 4K、14.8T token；学习率 0→2.2×10⁻⁴（2K 步 warmup）→恒定至 10T→余弦至 2.2×10⁻⁵（4.3T 内）→末 500B：333B@2.2×10⁻⁵ + 167B@7.3×10⁻⁶；batch 3072→15360（前 469B）；γ=0.001（前 14.3T）→0.0；α=0.0001；λ=0.3（前 10T）→0.1 <span class="ev ev-p">P</span>（第 22-23 页）</td></tr>
+      <tr><th scope="row">长上下文</th><td>YaRN 两阶段各 1000 步：4K→32K（batch 1920）→128K（batch 480）；仅作用于解耦共享键 k_R；s=40、α=1、β=32、缩放 √(0.1·ln s+1)；学习率 7.3×10⁻⁶ <span class="ev ev-p">P</span>（第 23 页 §4.3、图 8）</td></tr>
+      <tr><th scope="row">SFT / RL</th><td>SFT 1.5M 实例、2 epochs、余弦 5×10⁻⁶→1×10⁻⁶、样本打包+masking；推理数据源自内部 R1 专家模型（SFT+RL 流水线 + 拒绝采样）；RL 用 GRPO（组相对基线、KL 正则），规则 RM + 自 SFT 检查点训练的模型 RM <span class="ev ev-p">P</span>（第 28-30 页）</td></tr>
+      <tr><th scope="row">FP8 验证规模</th><td>类 V2-Lite（约 16B 总参、1.33T token）与类 V2（约 230B、约 0.9T token）对照 BF16；相对 loss 误差 &lt;0.25%；块级量化激活梯度在 16B/约 300B token 上发散（附录 B.1/B.2）<span class="ev ev-p">P</span>（第 15、47-48 页）</td></tr>
+      <tr><th scope="row">评测框架</th><td>基础模型：内部评测框架（集成于 HAI-LLM）、同设置对比 V2-Base/Qwen2.5-72B/LLaMA-3.1-405B；困惑度类用 perplexity、生成类用生成式、Pile-test 用 BPB；聊天模型：输出上限 8192 token、AIME/CNMO 温度 0.7×16 次平均、MATH-500 贪心、闭源经 API <span class="ev ev-p">P</span>（第 24、30-31 页）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>10.2 基础模型评测（表 3 选列，全表 32 行已逐格核验）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 3 转录（选列）：DeepSeek-V3-Base vs 开源基线（<span class="ev ev-p">P</span>，PDF 第 25 页；内部框架同一设置；差距 ≤0.3 视为同级）</caption>
+    <thead>
+      <tr><th scope="col">基准（指标）</th><th scope="col">shots</th><th class="num" scope="col">V2-Base (21B/236B)</th><th class="num" scope="col">Qwen2.5-72B</th><th class="num" scope="col">LLaMA3.1-405B</th><th class="num" scope="col">V3-Base (37B/671B)</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Pile-test (BPB)</th><td>–</td><td class="num">0.606</td><td class="num">0.638</td><td class="num"><strong>0.542</strong></td><td class="num">0.548</td></tr>
+      <tr><th scope="row">BBH (EM)</th><td>3-shot</td><td class="num">78.8</td><td class="num">79.8</td><td class="num">82.9</td><td class="num"><strong>87.5</strong></td></tr>
+      <tr><th scope="row">MMLU (EM)</th><td>5-shot</td><td class="num">78.4</td><td class="num">85.0</td><td class="num">84.4</td><td class="num"><strong>87.1</strong></td></tr>
+      <tr><th scope="row">MMLU-Pro (EM)</th><td>5-shot</td><td class="num">51.4</td><td class="num">58.3</td><td class="num">52.8</td><td class="num"><strong>64.4</strong></td></tr>
+      <tr><th scope="row">DROP (F1)</th><td>3-shot</td><td class="num">80.4</td><td class="num">80.6</td><td class="num">86.0</td><td class="num"><strong>89.0</strong></td></tr>
+      <tr><th scope="row">HumanEval (Pass@1)</th><td>0-shot</td><td class="num">43.3</td><td class="num">53.0</td><td class="num">54.9</td><td class="num"><strong>65.2</strong></td></tr>
+      <tr><th scope="row">LiveCodeBench-Base (Pass@1)</th><td>3-shot</td><td class="num">11.6</td><td class="num">12.9</td><td class="num">15.5</td><td class="num"><strong>19.4</strong></td></tr>
+      <tr><th scope="row">GSM8K (EM)</th><td>8-shot</td><td class="num">81.6</td><td class="num">88.3</td><td class="num">83.5</td><td class="num"><strong>89.3</strong></td></tr>
+      <tr><th scope="row">MATH (EM)</th><td>4-shot</td><td class="num">43.4</td><td class="num">54.4</td><td class="num">49.0</td><td class="num"><strong>61.6</strong></td></tr>
+      <tr><th scope="row">C-Eval (EM)</th><td>5-shot</td><td class="num">81.4</td><td class="num">89.2</td><td class="num">72.5</td><td class="num"><strong>90.1</strong></td></tr>
+      <tr><th scope="row">MMMLU-non-English (EM)</th><td>5-shot</td><td class="num">64.0</td><td class="num">74.8</td><td class="num">73.8</td><td class="num"><strong>79.4</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 25-26 页）论文自己的边界句：V3-Base 全面优于 V2-Base/Qwen2.5-72B、多数基准超 LLaMA-3.1-405B；但 V3-Base 非最佳的行包括 Pile-test（LLaMA 0.542 vs 0.548）、HellaSwag、WinoGrande、RACE-Middle/High、CLUEWSC、CMMLU、CCPM；评测框架数月间的变化使 V2-Base 成绩与此前报告略有出入。</p>
+
+<h3>10.3 消融（表 4/表 5 + 批级对照）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 4 转录（选行）：MTP 消融（<span class="ev ev-p">P</span>，PDF 第 26 页；大规模 228.7B/20.9B、540B token；推理丢弃 MTP，成本相同）</caption>
+    <thead>
+      <tr><th scope="col">基准</th><th class="num" scope="col">Small 基线 (15.7B)</th><th class="num" scope="col">Small w/MTP</th><th class="num" scope="col">Large 基线 (228.7B)</th><th class="num" scope="col">Large w/MTP</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">BBH (EM)</th><td class="num">39.0</td><td class="num"><strong>41.4</strong></td><td class="num">70.0</td><td class="num"><strong>70.7</strong></td></tr>
+      <tr><th scope="row">MMLU (EM)</th><td class="num">50.0</td><td class="num"><strong>53.3</strong></td><td class="num"><strong>67.5</strong></td><td class="num">66.6</td></tr>
+      <tr><th scope="row">HumanEval (Pass@1)</th><td class="num">20.7</td><td class="num"><strong>26.8</strong></td><td class="num">44.5</td><td class="num"><strong>53.7</strong></td></tr>
+      <tr><th scope="row">GSM8K (EM)</th><td class="num">25.4</td><td class="num"><strong>31.4</strong></td><td class="num">72.3</td><td class="num"><strong>74.0</strong></td></tr>
+      <tr><th scope="row">MATH (EM)</th><td class="num">10.7</td><td class="num"><strong>12.6</strong></td><td class="num">38.6</td><td class="num"><strong>39.8</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-i">I</span> 读表提醒：MMLU 大规模行是 MTP 消融中明显的反例（67.5→66.6），论文措辞为「多数基准提升（most）」——引用时不应写成「全面提升」。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>表 5 转录（选行）：aux-loss-free 消融（<span class="ev ev-p">P</span>，PDF 第 27 页；大规模 228.7B、578B token——与表 4 的 540B 是两组不同训练量的实验，照录不调和）</caption>
+    <thead>
+      <tr><th scope="col">基准</th><th class="num" scope="col">Large Aux-Loss-Based</th><th class="num" scope="col">Large Aux-Loss-Free</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Pile-test (BPB)</th><td class="num">0.656</td><td class="num"><strong>0.652</strong></td></tr>
+      <tr><th scope="row">BBH (EM)</th><td class="num">66.7</td><td class="num"><strong>67.9</strong></td></tr>
+      <tr><th scope="row">MMLU (EM)</th><td class="num"><strong>68.3</strong></td><td class="num">67.2</td></tr>
+      <tr><th scope="row">HumanEval (Pass@1)</th><td class="num">40.2</td><td class="num"><strong>46.3</strong></td></tr>
+      <tr><th scope="row">GSM8K (EM)</th><td class="num">70.7</td><td class="num"><strong>74.5</strong></td></tr>
+      <tr><th scope="row">MATH (EM)</th><td class="num">37.2</td><td class="num"><strong>39.6</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 27-28 页）批级 vs 序列级对照：1B MoE 验证损失 2.258（序列级辅助损失）/ 2.253（aux-loss-free）/ 2.253（批级辅助损失）；3B MoE：2.085 / 2.080 / 2.080——达到相近批级均衡时批级辅助损失也能达到相近性能；图 9 显示 aux-loss-free 专家专化模式更强。</p>
+
+<h3>10.4 聊天模型评测（表 6 选行）与开放/奖励评测（表 7/8）</h3>
+<div class="table-scroll">
+  <table>
+    <caption>表 6 转录（选行）：DeepSeek-V3 vs 代表模型（<span class="ev ev-p">P</span>，PDF 第 31 页；输出上限 8K；闭源经 API）</caption>
+    <thead>
+      <tr><th scope="col">基准（指标）</th><th class="num" scope="col">Qwen2.5-72B-Inst</th><th class="num" scope="col">LLaMA3.1-405B-Inst</th><th class="num" scope="col">Claude-3.5-Sonnet-1022</th><th class="num" scope="col">GPT-4o-0513</th><th class="num" scope="col">DeepSeek-V3</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">MMLU (EM)</th><td class="num">85.3</td><td class="num"><strong>88.6</strong></td><td class="num">88.3</td><td class="num">87.2</td><td class="num">88.5</td></tr>
+      <tr><th scope="row">GPQA-Diamond (Pass@1)</th><td class="num">49.0</td><td class="num">51.1</td><td class="num"><strong>65.0</strong></td><td class="num">49.9</td><td class="num">59.1</td></tr>
+      <tr><th scope="row">SimpleQA (Correct)</th><td class="num">9.1</td><td class="num">17.1</td><td class="num">28.4</td><td class="num"><strong>38.2</strong></td><td class="num">24.9</td></tr>
+      <tr><th scope="row">DROP (3-shot F1)</th><td class="num">76.7</td><td class="num">88.7</td><td class="num">88.3</td><td class="num">83.7</td><td class="num"><strong>91.6</strong></td></tr>
+      <tr><th scope="row">LiveCodeBench (Pass@1-CoT)</th><td class="num">31.1</td><td class="num">28.4</td><td class="num">36.3</td><td class="num">33.4</td><td class="num"><strong>40.5</strong></td></tr>
+      <tr><th scope="row">Codeforces (Percentile)</th><td class="num">24.8</td><td class="num">25.3</td><td class="num">20.3</td><td class="num">23.6</td><td class="num"><strong>51.6</strong></td></tr>
+      <tr><th scope="row">SWE Verified (Resolved)</th><td class="num">23.8</td><td class="num">24.5</td><td class="num"><strong>50.8</strong></td><td class="num">38.8</td><td class="num">42.0</td></tr>
+      <tr><th scope="row">AIME 2024 (Pass@1)</th><td class="num">23.3</td><td class="num">23.3</td><td class="num">16.0</td><td class="num">9.3</td><td class="num"><strong>39.2</strong></td></tr>
+      <tr><th scope="row">MATH-500 (EM)</th><td class="num">80.0</td><td class="num">73.8</td><td class="num">78.3</td><td class="num">74.6</td><td class="num"><strong>90.2</strong></td></tr>
+      <tr><th scope="row">C-SimpleQA (Correct)</th><td class="num">48.4</td><td class="num">50.4</td><td class="num">51.3</td><td class="num">59.3</td><td class="num"><strong>64.8</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+<p><span class="ev ev-p">P</span>（第 31-33 页）其余关键结果：Arena-Hard 85.5 / AlpacaEval 2.0（长度控制胜率）70.0（表 7；GPT-4-Turbo-1106 判官；对 GPT-4-0314 基线胜率 &gt;86%；首个 Arena-Hard 破 85% 的开源模型）；RewardBench 平均 87.0、maj@6 89.6（表 8）；R1 蒸馏消融（表 9，基于 V2.5）：LiveCodeBench-CoT 31.1→37.4、MATH-500 74.6→83.2，代价是平均响应长度 718→783 / 769→1510；MTP 投机解码：第二 token 接受率 85%-90%、1.8× TPS（第 35 页）。</p>
+
+<div class="table-scroll">
+  <table>
+    <caption>各结果条件字段完整性（缺项一律显式标注）</caption>
+    <thead>
+      <tr><th scope="col">实验</th><th scope="col">硬件/规模</th><th scope="col">精度</th><th scope="col">负载/配置</th><th scope="col">基线</th><th scope="col">定位</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">预训练（表 1）</th><td>2048×H800（NVLink+IB）</td><td>FP8 混合精度（细粒度量化）</td><td>14.8T token、seq ≤4K、batch 3072→15360</td><td>无外部基线（成本口径）</td><td><span class="ev ev-p">P</span> 第 5、11-23 页</td></tr>
+      <tr><th scope="row">FP8 vs BF16（附录 B）</th><td>约 16B / 约 230B MoE</td><td>FP8 vs BF16</td><td>1.33T / 约 0.9T token；EMA 0.9 平滑曲线</td><td>BF16 同规模训练</td><td><span class="ev ev-p">P</span> 第 47 页</td></tr>
+      <tr><th scope="row">基础模型（表 3）</th><td>21B/72B/405B/37B 激活</td><td>论文未明确披露（评测推理精度）</td><td>per-shot 见表；内部框架统一设置</td><td>V2-Base、Qwen2.5-72B、LLaMA3.1-405B</td><td><span class="ev ev-p">P</span> 第 24-25 页</td></tr>
+      <tr><th scope="row">MTP / 负载消融（表 4/5）</th><td>15.7B、228.7B MoE</td><td>论文未明确披露</td><td>1.33T / 540B / 578B token</td><td>自身消融（数据/架构不变）</td><td><span class="ev ev-p">P</span> 第 26-27 页</td></tr>
+      <tr><th scope="row">聊天评测（表 6）</th><td>37B 激活 / 671B</td><td>论文未明确披露</td><td>输出 ≤8192；AIME/CNMO 0.7 温度×16 次</td><td>5 个开源/闭源对话模型（API）</td><td><span class="ev ev-p">P</span> 第 30-31 页</td></tr>
+      <tr><th scope="row">推理加速（§5.4.3）</th><td>论文未明确披露（部署规模未给）</td><td>论文未明确披露</td><td>MTP 投机解码；各主题</td><td>自身无 MTP 投机路径</td><td><span class="ev ev-p">P</span> 第 35 页</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warning">
+  <strong>公平性限制（引用前必读）：</strong><span class="ev ev-p">P</span> ①全部评测出自作者内部框架（集成于 HAI-LLM），闭源基线经 API 评测，与其他论文/公开榜单数字<strong>不可直接比较</strong>；②LiveCodeBench 限定 2024-08~11 题目窗、LongBench v2 发布仅数周即被评测，时效窗即结论边界；③「最佳开源/可比闭源」是论文的自评定性，逐行数字里 SimpleQA（24.9 vs GPT-4o 38.2）、SWE Verified（42.0 vs Claude 50.8）、Aider（79.7 vs 84.2）等明确落后项应一并引用；④表 4/表 5 两个大规模消融的训练 token 量不同（540B/578B），论文未解释差异；⑤文档内两处 Figure 10 重复编号（loss 曲线与专家负载热图），引用图号时注明页码。
+</div>
+
+<h3>10.5 建议复现/验证步骤（编辑推断）</h3>
+<ol>
+  <li><span class="ev ev-i">I</span> 权重与许可：从官方仓库取 tag v1.0.0 或锁定 commit<span class="ev ev-r">R</span>（2026-09-15 核验），先读 LICENSE-MODEL 确认商用条款（代码 MIT ≠ 权重无条件可用）。</li>
+  <li><span class="ev ev-i">I</span> 架构对齐：61 层/7168 隐维/128 头/MLA(512,1536,64)/256+1 专家/激活 8/限 4 节点/MTP D=1，与开源实现逐项比对<span class="ev ev-p">P</span>（第 22 页）。</li>
+  <li><span class="ev ev-i">I</span> FP8 稳定性预演：按附录 B 协议在 16B 级 MoE 上跑 FP8 vs BF16 对照（预期相对 loss 误差 &lt;0.25%），再验证「激活梯度块级量化会发散」这一负结果以确认实现对齐<span class="ev ev-p">P</span>（第 47-48 页）。</li>
+  <li><span class="ev ev-i">I</span> 通信与调度验证：在自有拓扑上测 all-to-all 占比与 DualPipe 式重叠收益；若 IB/NVLink 带宽比偏离 3.2×，重算每 token 节点上限（论文的 4 节点/13 专家账）<span class="ev ev-p">P</span>+<span class="ev ev-i">I</span>（第 13-14 页）。</li>
+  <li><span class="ev ev-i">I</span> 评测复测：以 simple-evals 提示复测 MMLU/DROP/GPQA/SimpleQA<span class="ev ev-r">R</span>（脚注 4 印明仓库，已核验），再按业务分布自建回归集；LiveCodeBench 结果绑定其时间窗，需注明。</li>
+  <li><span class="ev ev-i">I</span> 推理试点：先以纯主模型路径上线，再灰度 MTP 投机路径，记录接受率（论文口径 85%-90%）与 1.8× TPS 在自有流量下的复现值<span class="ev ev-p">P</span>+<span class="ev ev-i">I</span>（第 35 页）。</li>
+</ol>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+<h2 id="links-title">11. 论文 / 代码 / 延伸链接</h2>
+
+<div class="table-scroll">
+  <table>
+    <caption>链接与来源级别（外链均 HTTPS、target="_blank" 并带 rel="noopener noreferrer"；不猜测任何仓库地址）</caption>
+    <thead>
+      <tr><th scope="col">来源</th><th scope="col">链接 / 文件</th><th scope="col">级别与核验</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">论文（arXiv abstract）</th>
+        <td><a href="https://arxiv.org/abs/2412.19437" target="_blank" rel="noopener noreferrer">https://arxiv.org/abs/2412.19437</a></td>
+        <td><span class="ev ev-p">P</span> 本地 PDF 为 <strong>arXiv v2</strong>（水印逐字核验「arXiv:2412.19437v2 [cs.CL] 18 Feb 2025」，53 页）。本地 PDF：<code>16_DeepSeek-V3_2412.19437.pdf</code>。PDF 内未标注会议/期刊录用信息，不作归属推断。</td>
+      </tr>
+      <tr>
+        <th scope="row">官方模型仓库（权重 + 推理参考）</th>
+        <td><a href="https://github.com/deepseek-ai/DeepSeek-V3" target="_blank" rel="noopener noreferrer">https://github.com/deepseek-ai/DeepSeek-V3</a></td>
+        <td><span class="ev ev-p">P</span> 论文第 1 页摘要末句印明「The model checkpoints are available at https://github.com/deepseek-ai/DeepSeek-V3」（逐字核验）。<span class="ev ev-r">R</span> <strong>在线核验（只读）</strong>：2026-09-15 GitHub API——归属 deepseek-ai 组织、default_branch=main、未归档、代码许可 MIT（LICENSE-CODE）+ 模型另行许可（LICENSE-MODEL）、HEAD 9b4e9788e4a3a731f7567338ed15d3ec549ce03b（2025-08-28）、tag <a href="https://github.com/deepseek-ai/DeepSeek-V3/releases/tag/v1.0.0" target="_blank" rel="noopener noreferrer">v1.0.0</a>=f6e34dd；顶层含 README_WEIGHTS.md 与 <code>inference/</code>。<strong>边界：</strong>该仓库定位是模型检查点分发与推理参考实现；论文所述 HAI-LLM 训练框架未包含其中，训练侧开源实现不作推断。</td>
+      </tr>
+      <tr>
+        <th scope="row">论文脚注印明的评测提示框架</th>
+        <td><a href="https://github.com/openai/simple-evals" target="_blank" rel="noopener noreferrer">https://github.com/openai/simple-evals</a></td>
+        <td><span class="ev ev-p">P</span> 第 30 页脚注 4 印明（MMLU/DROP/GPQA/SimpleQA 评测提示来源）。<span class="ev ev-r">R</span> 2026-09-15 GitHub API 只读核验：openai/simple-evals、MIT、main 分支、未归档。</td>
+      </tr>
+      <tr>
+        <th scope="row">论文脚注印明的其他站点（照录）</th>
+        <td><a href="https://aider.chat" target="_blank" rel="noopener noreferrer">aider.chat</a>（脚注 1）；<a href="https://codeforces.com" target="_blank" rel="noopener noreferrer">codeforces.com</a>（脚注 2）；<a href="https://www.cms.org.cn/Home/comp/comp/cid/12.html" target="_blank" rel="noopener noreferrer">www.cms.org.cn</a>（脚注 3，CNMO 2024）</td>
+        <td><span class="ev ev-p">P</span> URL 按论文脚注照录（评测数据来源）；站点内容未逐项审阅，仅证明「论文引用了这些来源」。</td>
+      </tr>
+      <tr>
+        <th scope="row">不提供链接的项</th>
+        <td>HAI-LLM 训练框架；DeepSeek 后续模型/版本</td>
+        <td><span class="ev ev-p">P</span> HAI-LLM 论文未给出任何公开地址（第 12 页自述内部自研）。<span class="ev ev-i">I</span> 论文之后的 DeepSeek 发布（新模型、新能力）与本报告无关，不链接也不归属；第三方训练/推理实现、微调脚本、聚合下载站一律未经核验，按「不猜测 URL」策略不链接。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="decision-checklist" aria-labelledby="decision-checklist-title">
+<h2 id="decision-checklist-title">12. 给架构师的决策清单</h2>
+
+<p><span class="ev ev-i">I</span> 以下为落地前的勾选项；标注（P）的条目对应论文证据，（R）对应仓库核验项，其余为工程判断。</p>
+
+<ul class="decision-checklist">
+  <li>
+    <strong>需求与规模</strong>
+    <ul>
+      <li><label><input type="checkbox"> 明确目标是训练侧（预训练/继续训练）还是服务侧（私有化部署），二者复用面完全不同：前者要 FP8+通信栈，后者要 MLA KV 优势与部署单元规划（I：论文范围横跨两者但机制不通用）</label></li>
+      <li><label><input type="checkbox"> 服务侧：核对可用 GPU 池能否覆盖 decode 最小部署单元 40 节点/320 GPU，不能覆盖则改用量化/降配方案而非照搬论文拓扑（P：§3.4.2 与 §6 局限，第 19、35 页）</label></li>
+      <li><label><input type="checkbox"> 训练侧：确认模型规模与 14.8T token 预算的匹配度——论文的 180K GPU 小时/万亿 token 是 2048 卡 H800 集群的口径（P：第 5 页）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>兼容性</strong>
+    <ul>
+      <li><label><input type="checkbox"> 确认硬件支持 FP8 GEMM 且能接受「CUDA core 累加提升」类补丁（H800 Tensor Core 累加约 14 位是论文一切 FP8 精度对策的出发点；未来芯片建议部分即为此而写）（P：第 16-17、20-21 页）</label></li>
+      <li><label><input type="checkbox"> 确认网络拓扑：节点内 NVLink 级带宽 + 跨节点 RDMA；测出实际 IB/NVLink 带宽比再决定每 token 节点上限（论文锚点 160 vs 50 GB/s = 3.2×）（P：第 13 页；I：比例变化需重算）</label></li>
+      <li><label><input type="checkbox"> 确认软件栈：训练框架对 MLA/DeepSeekMoE/MTP 的支持方式与论文超参的一致性；推理框架对 MLA 缓存（c_KV+k_R）与 MTP 投机的实现成熟度（P：第 22 页超参；I：框架现状需按当时文档确认 E）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>PoC（1-2 周量级）</strong>
+    <ul>
+      <li><label><input type="checkbox"> 用官方权重跑通推理基线：吞吐/时延/KV 显存占用三项读数（R：仓库含 inference/ 参考，2026-09-15 核验）</label></li>
+      <li><label><input type="checkbox"> 灰度 MTP 投机路径：记录自有流量下第二 token 接受率（论文口径 85%-90%）与实际 TPS 增益（P：第 35 页口径；I：复现值自测）</label></li>
+      <li><label><input type="checkbox"> 若做训练：按附录 B 在 16B 级模型先复跑 FP8 vs BF16 对照，确认量化栈与通信实现对齐后再放大（P：第 47-48 页协议；I：步骤设计）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>容量</strong>
+    <ul>
+      <li><label><input type="checkbox"> 按 §7.2 公式以「GPU 小时 × 当时租价」建模训练成本，区分预训练/长上下文/后训练三段（P：表 1 的 2664K/119K/5K 结构；I：公式与价格不写死）</label></li>
+      <li><label><input type="checkbox"> decode 容量按显存带宽与每 expert batch ≤256 token 的访存受限特征估算，而非按 FLOPs（P：第 20 页；I：估算方法）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>SLO 与恢复</strong>
+    <ul>
+      <li><label><input type="checkbox"> prefill/decode 分离部署时分别定义 SLO（论文只给目标未给数值），请求路由层成为 SLO 关键路径（P：第 18 页目标；I：SLO 数值需自定）</label></li>
+      <li><label><input type="checkbox"> 训练自建 checkpoint/恢复演练——论文只有「无不可恢复 loss spike/未回滚」的结果表述，无机制披露（P：第 1 页；I：不能据此推断恢复能力）</label></li>
+      <li><label><input type="checkbox"> 监控最小集：专家负载直方图、EMA-在线 loss 偏差、dispatch/combine 时长占比、MTP 接受率（I：由论文内建反馈回路导出）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>成本</strong>
+    <ul>
+      <li><label><input type="checkbox"> 引用 2.788M GPU 小时 / $5.576M 时必须携带「$2/GPU 小时假设、不含前期研究与消融」两个限定（P：第 5 页）</label></li>
+      <li><label><input type="checkbox"> 云上立项以「增量收益」对照自有基线（现有框架/内核已实现的 FP8 与重叠），不直接移植论文绝对值（E：平台文档；I：判断）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>安全</strong>
+    <ul>
+      <li><label><input type="checkbox"> 权重供应链：官方仓库 tag/commit 锁定 + 校验和核对；模型许可（LICENSE-MODEL）单独评审（R：2026-09-15 核验；I：流程）</label></li>
+      <li><label><input type="checkbox"> 推理服务数据驻留与租户隔离由服务网格层定义，MLA 压缩不改变隔离模型（I：论文不涉及多租户）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>运维与回滚</strong>
+    <ul>
+      <li><label><input type="checkbox"> 冗余专家配置变更加灰度与回退文件；调整周期对齐论文的约 10 分钟粒度（P：第 19 页；I：运维设计）</label></li>
+      <li><label><input type="checkbox"> 升级 CUDA/驱动/内核前先复跑小规模 FP8 稳定性对照——累加提升与 PTX 定制是版本敏感实现（P：第 16-17、14 页机制；I：治理）</label></li>
+      <li><label><input type="checkbox"> 「纯主模型」与「MTP 投机」双路径保留开关，接受率跌破下沿即回退（I：回退策略）</label></li>
+    </ul>
+  </li>
+  <li>
+    <strong>退出策略</strong>
+    <ul>
+      <li><label><input type="checkbox"> 服务退出：MLA 架构与标准 attention 服务栈不同构——迁移需重估 KV/显存账，预留评测窗口（I：架构锁定风险）</label></li>
+      <li><label><input type="checkbox"> 关注论文之后 DeepSeek 的后续发布与仓库演进，但新能力不回填到本文结论（R：仓库 main HEAD 9b4e978、pushed_at 2025-08-28，2026-09-15 核验；P：论文内容止于本文 53 页）</label></li>
+    </ul>
+  </li>
+</ul>
+</section>
+
+<section id="evidence" aria-labelledby="evidence-title">
+<h2 id="evidence-title">13. 证据台账</h2>
+<p>下表为核心结论的证据映射；逐条引文与核验记录见构建文件 <code>sources/deepseek-v3.evidence.json</code>（54 条，EV-01~EV-54）。核验日期为 <time datetime="2026-09-15">2026-09-15</time>。</p>
+
+<div class="callout">
+  <strong>核验范围声明：</strong>三轮核验。第一轮：sources/deepseek-v3.txt 全文（2614 行）+ pdftotext -layout 逐页切片（53 页）作检索索引，并确认提取文本的两类损伤（第 14-15 页交界乱码行、表 2 分式与公式打散），一律以原页为准。第二轮：pdftoppm 渲染全部 53 页逐页目检（第 1-53 页无一遗漏），覆盖摘要、目录、图 1-10、表 1-9、公式 (1)-(28)、脚注 1-4、参考文献（第 37-44 页）与附录 A/B/C；第 13 页表 2 的气泡公式 (PP/2−1)(F&amp;B+B−3W) 与「峰值激活内存增加 1/PP 倍」以 300dpi 局部放大逐字复核。第三轮（同日，交付前）：对照逐页文本切片逐条复核本台账全部定位与引文；全文检索确认「42.5%」「20Gbps」「10Gbps」不出现在本报告。官方仓库、tag v1.0.0 与 openai/simple-evals 于 2026-09-15 经 GitHub API 只读复核。
+</div>
+
+<div class="table-scroll">
+  <table>
+    <caption>关键结论 → 证据级别 → 定位 → 核验状态（EV 编号对应 sources/deepseek-v3.evidence.json）</caption>
+    <thead>
+      <tr><th scope="col">EV</th><th scope="col">关键结论</th><th scope="col">级别</th><th scope="col">定位（PDF 页码）</th><th scope="col">核验状态</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>EV-01</td><td>题名/署名 DeepSeek-AI/arXiv v2 水印（cs.CL，18 Feb 2025）/53 页/无会议信息/附录 A 角色化名单</td><td><span class="ev ev-p">P</span></td><td>第 1、45-47 页；pdfinfo</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-02</td><td>摘要级结论：671B/37B、MLA+DeepSeekMoE、aux-loss-free、MTP、14.8T、2.788M GPU 小时、无不可恢复 loss spike、检查点仓库地址</td><td><span class="ev ev-p">P</span></td><td>第 1 页摘要</td><td>已核验（逐句）</td></tr>
+      <tr><td>EV-03</td><td>表 1 成本四列数值 + $2/GPU 小时假设 + 180K/万亿 token + 排除前期研究与消融</td><td><span class="ev ev-p">P</span></td><td>第 5 页表 1 与 §1</td><td>已核验（逐格）</td></tr>
+      <tr><td>EV-04</td><td>架构基线：Transformer + MLA + DeepSeekMoE；次要细节沿用 V2</td><td><span class="ev ev-p">P</span></td><td>第 6 页 §2</td><td>已核验</td></tr>
+      <tr><td>EV-05</td><td>MLA：c_KV/k_R 缓存、查询低秩压缩省训练激活、softmax 分母 √(d_h+d_r^h)（式 1-11）</td><td><span class="ev ev-p">P</span></td><td>第 7-8 页、图 2</td><td>已核验（公式逐项）</td></tr>
+      <tr><td>EV-06</td><td>DeepSeekMoE：细粒度+共享专家；sigmoid 亲和度 + 选中归一化（式 12-15，与 V2 的差异点）</td><td><span class="ev ev-p">P</span></td><td>第 8-9 页</td><td>已核验</td></tr>
+      <tr><td>EV-07</td><td>aux-loss-free：b_i 只用于路由、门控用原始亲和度、步末 ±γ 更新（式 16）</td><td><span class="ev ev-p">P</span></td><td>第 9 页</td><td>已核验</td></tr>
+      <tr><td>EV-08</td><td>互补序列级辅助损失（式 17-20；α=0.0001）</td><td><span class="ev ev-p">P</span></td><td>第 9、23 页</td><td>已核验</td></tr>
+      <tr><td>EV-09</td><td>节点受限路由（≤M=4 节点）与近乎完全的计算-通信重叠</td><td><span class="ev ev-p">P</span></td><td>第 10、23 页</td><td>已核验</td></tr>
+      <tr><td>EV-10</td><td>训练与推理都不丢 token</td><td><span class="ev ev-p">P</span></td><td>第 10 页</td><td>已核验</td></tr>
+      <tr><td>EV-11</td><td>MTP：D=1、共享 embedding/输出头、M_k∈R^{d×2d}、完整因果链（式 21-25、图 3；λ 分段）</td><td><span class="ev ev-p">P</span></td><td>第 10-11、23 页</td><td>已核验（公式逐项）</td></tr>
+      <tr><td>EV-12</td><td>MTP 推理：可丢弃；可改造为投机解码</td><td><span class="ev ev-p">P</span></td><td>第 11 页</td><td>已核验</td></tr>
+      <tr><td>EV-13</td><td>集群：2048×H800、8 GPU/节点 NVLink+NVSwitch、跨节点 IB</td><td><span class="ev ev-p">P</span></td><td>第 11 页 §3.1</td><td>已核验</td></tr>
+      <tr><td>EV-14</td><td>HAI-LLM（内部自研）；16PP×64EP（8 节点）×ZeRO-1 DP；无 TP</td><td><span class="ev ev-p">P</span></td><td>第 12 页 §3.2</td><td>已核验</td></tr>
+      <tr><td>EV-15</td><td>DualPipe：四段重排 + backward 拆分（仿 ZeroBubble）+ SM 配比；图 4/图 5（8 rank、20 micro-batch）</td><td><span class="ev ev-p">P</span></td><td>第 12-13 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-16</td><td>表 2：1F1B/ZB1P/DualPipe 气泡公式、参数 2×、激活 PP+1、+1/PP 表述、两份参数与大 EP 论证</td><td><span class="ev ev-p">P</span></td><td>第 13 页表 2 及正文</td><td>已核验（300dpi 放大）</td></tr>
+      <tr><td>EV-17</td><td>all-to-all 内核：NVLink 160≈3.2×IB 50 GB/s、≤4 节点、两跳转发、3.2/13 专家、20 SM/10 通道、PTX 定制</td><td><span class="ev ev-p">P</span></td><td>第 13-14 页 §3.2.2</td><td>已核验</td></tr>
+      <tr><td>EV-18</td><td>内存三板斧：RMSNorm/MLA 上投影重算、CPU EMA、MTP 共享层同 PP rank 物理共享</td><td><span class="ev ev-p">P</span></td><td>第 14 页 §3.2.3</td><td>已核验</td></tr>
+      <tr><td>EV-19</td><td>FP8 框架：三 GEMM FP8、五类算子保原精度、master/梯度/矩的精度分工、&lt;0.25% 相对 loss 误差（类 V2-Lite/V2、约 1T token 验证）</td><td><span class="ev ev-p">P</span></td><td>第 14-15、47 页、图 6</td><td>已核验</td></tr>
+      <tr><td>EV-20</td><td>细粒度量化：1×128/128×128、内维 K 逐组缩放、microscaling 一致性、B.2 激活梯度块级量化发散反例</td><td><span class="ev ev-p">P</span></td><td>第 15-17、47-48 页、图 7a</td><td>已核验</td></tr>
+      <tr><td>EV-21</td><td>累加精度：H800 约 14 位、K=4096 近 2% 误差、N_C=128（4 WGMMA）CUDA core FP32 提升、双 WGMMA 重叠</td><td><span class="ev ev-p">P</span></td><td>第 16-17 页、图 7b</td><td>已核验</td></tr>
+      <tr><td>EV-22</td><td>全张量 E4M3（对比混合 E4M3/E5M2）及其可行性归因</td><td><span class="ev ev-p">P</span></td><td>第 17 页</td><td>已核验</td></tr>
+      <tr><td>EV-23</td><td>在线量化（对 delayed quantization 的替代）</td><td><span class="ev ev-p">P</span></td><td>第 17-18 页</td><td>已核验</td></tr>
+      <tr><td>EV-24</td><td>AdamW 矩 BF16、master weights/梯度 FP32</td><td><span class="ev ev-p">P</span></td><td>第 18 页</td><td>已核验</td></tr>
+      <tr><td>EV-25</td><td>E5M6 特例激活（1×128→128×1、2 的幂缩放）、SwiGLU 输入 FP8 缓存+重算</td><td><span class="ev ev-p">P</span></td><td>第 18 页</td><td>已核验</td></tr>
+      <tr><td>EV-26</td><td>dispatch FP8（2 的幂缩放）、combine 保 BF16</td><td><span class="ev ev-p">P</span></td><td>第 18 页</td><td>已核验</td></tr>
+      <tr><td>EV-27</td><td>Prefilling：4 节点/32 GPU、TP4+SP×DP8、EP32、冗余专家 32 个/每 GPU +1、约 10 分钟周期、双 micro-batch、动态冗余探索</td><td><span class="ev ev-p">P</span></td><td>第 19 页 §3.4.1</td><td>已核验</td></tr>
+      <tr><td>EV-28</td><td>Decoding：40 节点/320 GPU、TP4+SP×DP80、EP320、每 token 9 专家、IB P2P+IBGDA、batch/expert &lt;256、访存受限</td><td><span class="ev ev-p">P</span></td><td>第 19-20 页 §3.4.2</td><td>已核验</td></tr>
+      <tr><td>EV-29</td><td>硬件建议：20/132 SM 通信卸载与 IB/NVLink 统一抽象；14 位累加细节、组缩放 MMA、在线量化/转置 GEMM 支持、近存计算约 50% 片外访存</td><td><span class="ev ev-p">P</span></td><td>第 20-21 页 §3.5</td><td>已核验</td></tr>
+      <tr><td>EV-30</td><td>数据：14.8T、文档打包、FIM 0.1（PSM）、BPE 128K、token boundary bias 缓解</td><td><span class="ev ev-p">P</span></td><td>第 21-22 页 §4.1</td><td>已核验</td></tr>
+      <tr><td>EV-31</td><td>模型超参全表（61 层/7168/128 头/512/1536/64、前 3 层 dense、256+1 专家、激活 8、D=1、671B/37B）</td><td><span class="ev ev-p">P</span></td><td>第 22 页 §4.2</td><td>已核验（逐项）</td></tr>
+      <tr><td>EV-32</td><td>训练超参全表（AdamW/LR 分段/batch 调度/γ/α/λ 切换点/M=4/64 GPU 专家布局）</td><td><span class="ev ev-p">P</span></td><td>第 22-23 页 §4.2</td><td>已核验（逐项）</td></tr>
+      <tr><td>EV-33</td><td>YaRN 两阶段 4K→32K→128K（s=40、α=1、β=32、7.3×10⁻⁶）；图 8 NIAH 至 128K</td><td><span class="ev ev-p">P</span></td><td>第 23 页 §4.3、图 8</td><td>已核验</td></tr>
+      <tr><td>EV-34</td><td>表 3 基础模型评测全量（含 V3-Base 非最佳行与 ≤0.3 同级口径、V2-Base 数字漂移说明）</td><td><span class="ev ev-p">P</span></td><td>第 24-26 页、表 3</td><td>已核验（逐格）</td></tr>
+      <tr><td>EV-35</td><td>表 4 MTP 消融（540B；含 MMLU 67.5→66.6 反例行）</td><td><span class="ev ev-p">P</span></td><td>第 26 页</td><td>已核验（逐格）</td></tr>
+      <tr><td>EV-36</td><td>表 5 aux-loss-free 消融（578B；含 MMLU 68.3→67.2 反例行）</td><td><span class="ev ev-p">P</span></td><td>第 27 页</td><td>已核验（逐格）</td></tr>
+      <tr><td>EV-37</td><td>批级 vs 序列级对照（1B/3B 验证损失三组数值）与图 9 专家专化</td><td><span class="ev ev-p">P</span></td><td>第 27-28 页、图 9</td><td>已核验</td></tr>
+      <tr><td>EV-38</td><td>SFT：1.5M 实例、R1 专家模型 + 拒绝采样、2 epochs、5×10⁻⁶→1×10⁻⁶、sample masking</td><td><span class="ev ev-p">P</span></td><td>第 28-29 页 §5.1</td><td>已核验</td></tr>
+      <tr><td>EV-39</td><td>RM：规则型（box/编译器）+ 模型型（自 SFT 检查点、含 CoT 偏好数据防 reward hacking）</td><td><span class="ev ev-p">P</span></td><td>第 29 页 §5.2.1</td><td>已核验</td></tr>
+      <tr><td>EV-40</td><td>GRPO（式 26-28：组相对优势、clip、KL 估计式；多域提示）</td><td><span class="ev ev-p">P</span></td><td>第 30 页 §5.2.2</td><td>已核验（公式逐项）</td></tr>
+      <tr><td>EV-41</td><td>评测设置：基准清单、6 个基线、simple-evals/Zero-Eval/agentless/diff/温度 0.7×16/输出 8192、脚注 1-4 URL</td><td><span class="ev ev-p">P</span></td><td>第 30-31 页 §5.3.1</td><td>已核验</td></tr>
+      <tr><td>EV-42</td><td>表 6 聊天评测（含 SimpleQA/SWE/Aider 落后项与「约 10%」表述）</td><td><span class="ev ev-p">P</span></td><td>第 31-32 页、表 6</td><td>已核验（逐格）</td></tr>
+      <tr><td>EV-43</td><td>表 7 开放式评测（85.5/70.0；&gt;86% 胜率、首个破 85% 开源）</td><td><span class="ev ev-p">P</span></td><td>第 33 页</td><td>已核验</td></tr>
+      <tr><td>EV-44</td><td>表 8 RewardBench（87.0；maj@6 89.6）</td><td><span class="ev ev-p">P</span></td><td>第 33-34 页</td><td>已核验（逐格）</td></tr>
+      <tr><td>EV-45</td><td>表 9 R1 蒸馏消融（31.1→37.4、74.6→83.2；响应长度 718→783、769→1510 的权衡）</td><td><span class="ev ev-p">P</span></td><td>第 34 页</td><td>已核验（逐格）</td></tr>
+      <tr><td>EV-46</td><td>Self-rewarding（constitutional AI + 自投票反馈）</td><td><span class="ev ev-p">P</span></td><td>第 34-35 页 §5.4.2</td><td>已核验</td></tr>
+      <tr><td>EV-47</td><td>MTP 推理：接受率 85%-90%、1.8× TPS</td><td><span class="ev ev-p">P</span></td><td>第 35 页 §5.4.3</td><td>已核验</td></tr>
+      <tr><td>EV-48</td><td>结论与局限：部署单元大（小团队负担）、端到端 &gt;2× V2、未来方向（含防基准过拟合表述）</td><td><span class="ev ev-p">P</span></td><td>第 35-36 页 §6</td><td>已核验</td></tr>
+      <tr><td>EV-49</td><td>文档内不一致：两处 Figure 10 重复编号（loss 曲线第 47 页 / 专家负载热图第 49-53 页），照录不调和</td><td><span class="ev ev-p">P</span></td><td>第 47-48、53 页</td><td>已核验（原页目检）</td></tr>
+      <tr><td>EV-50</td><td>官方仓库现状：deepseek-ai/DeepSeek-V3、代码 MIT+模型许可、main@9b4e978（2025-08-28）、tag v1.0.0、权重+inference/；HAI-LLM 不在仓库</td><td><span class="ev ev-r">R</span></td><td>论文出处第 1 页摘要；在线核验 2026-09-15（GitHub API 只读）</td><td>已核验（归属/许可/分支/HEAD/tag/目录）</td></tr>
+      <tr><td>EV-51</td><td>评测提示框架仓库 openai/simple-evals（脚注 4；MIT、main、未归档）</td><td><span class="ev ev-r">R</span></td><td>论文出处第 30 页脚注 4；在线核验 2026-09-15</td><td>已核验</td></tr>
+      <tr><td>EV-52</td><td>云上映射示例（实例代际、RDMA、对象存储、编排、可观测）</td><td><span class="ev ev-e">E</span></td><td>各云厂商公开文档（未逐项拉取）</td><td>未逐一在线核验；使用前按当时目录复核</td></tr>
+      <tr><td>EV-53</td><td>编辑推断项：控制面/数据面划分、图 1 面板编排、成本/容量公式、云映射推断、安全运维建议、「42.5%/20Gbps 不出自本文」核对结论、复现步骤</td><td><span class="ev ev-i">I</span></td><td>本报告 §1-§12 与 sources/deepseek-v3.evidence.json</td><td>编辑标注完成；不含伪精确数字</td></tr>
+      <tr><td>EV-54</td><td>图 1 柱状图（MMLU-Pro 75.9、GPQA 59.1、MATH-500 90.2、AIME 39.2、Codeforces 51.6、SWE 42.0，与表 6 一致）</td><td><span class="ev ev-p">P</span></td><td>第 1 页图 1</td><td>已核验（逐柱）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="num"><span class="ev ev-p">P</span> 数据缺口集中声明：训练/推理 checkpoint 机制、存储介质与故障恢复流程、每 GPU tokens/s 与 MFU、TTFT/TPOT、服务并发与 SLO 数值、集群网络设备与成本明细、评测推理精度、能耗——论文未明确披露；<span class="ev ev-i">I</span> 本页所有缺口均未以推断填充。</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="15-galore.html" rel="prev">上一篇：15 GaLore</a>
+  <a href="../index.html" rel="next">本篇为核心 16 篇末篇：返回首页论文目录</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页论文事实基于本地 <code>16_DeepSeek-V3_2412.19437.pdf</code>（arXiv:2412.19437v2，2025-02-18 水印，53 页；页面采用 v2 版本），经文本提取检索并回 PDF 原页三轮核验（53 页全部逐页目检；页码见各处标注与 <a href="#evidence">#evidence</a>）。官方仓库与评测框架仓库经只读在线核验（2026-09-15）。云上产品为示例性外部信息（E）；标注 I 的内容为编辑推断。不与其他论文的性能数字直接横向比较。</p>
+  <p><strong>许可提醒：</strong>论文版权归原作者所有（arXiv:2412.19437v2；PDF 内未标注会议/期刊版权行，页面不作归属推断）；官方仓库代码许可 MIT、模型权重另行许可（LICENSE-CODE/LICENSE-MODEL，2026-09-15 在线核验），使用前以仓库许可原文为准。引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；最后核验日期 2026-09-15；证据标签 P/R/E/I 见页首图例。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

@@ -12,52 +12,54 @@
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f5f7fa;
+      --bg: #ffffff;
       --surface: #ffffff;
-      --surface-2: #f8fafc;
-      --border: #cbd5e1;
-      --text: #1f2937;
-      --text-muted: #475569;
-      --heading: #16213e;
-      --accent: #16213e;
-      --accent-2: #0e7490;
-      --accent-soft: #e0f2fe;
-      --mem: #6d28d9;
-      --mem-soft: #ede9fe;
-      --net: #c2410c;
-      --net-soft: #ffedd5;
-      --warn-bg: #fffbeb;
-      --warn-border: #b45309;
-      --warn-text: #92400e;
-      --p-bg: #d1fae5; --p-fg: #065f46; --p-border: #059669;
-      --r-bg: #dbeafe; --r-fg: #1e40af; --r-border: #2563eb;
-      --e-bg: #ffedd5; --e-fg: #9a3412; --e-border: #c2410c;
-      --i-bg: #ede9fe; --i-fg: #5b21b6; --i-border: #7c3aed;
-      --focus: #b45309;
+      --surface-2: #f5f5f5;
+      --border: #f0f0f0;
+      --text: rgba(0, 0, 0, .88);
+      --text-muted: rgba(0, 0, 0, .65);
+      --heading: #1677ff;
+      --accent: #1677ff;
+      --accent-2: #237804;
+      --accent-soft: #f6ffed;
+      --mem: #722ed1;
+      --mem-soft: #f9f0ff;
+      --net: #d4380d;
+      --net-soft: #fff2e8;
+      --warn-bg: #fffbe6;
+      --warn-border: #874d00;
+      --warn-text: #874d00;
+      --p-bg: #e6f4ff; --p-fg: #1677ff; --p-border: #1677ff;
+      --r-bg: #f9f0ff; --r-fg: #722ed1; --r-border: #722ed1;
+      --e-bg: #fff2e8; --e-fg: #d4380d; --e-border: #d4380d;
+      --i-bg: #fffbe6; --i-fg: #874d00; --i-border: #874d00;
+      --focus: #d4380d;
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
     }
     @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0b1220;
-        --surface: #111a2c;
-        --surface-2: #17223a;
-        --border: #33415c;
-        --text: #e2e8f0;
-        --text-muted: #a8b3c7;
-        --heading: #f1f5f9;
-        --accent: #cbd5e1;
-        --accent-2: #67e8f9;
-        --accent-soft: #164e63;
-        --mem-soft: #3b2a63;
-        --net-soft: #4a2410;
-        --warn-bg: #2c2410;
-        --warn-border: #d97706;
-        --warn-text: #fcd34d;
-        --p-bg: #064e3b; --p-fg: #a7f3d0; --p-border: #10b981;
-        --r-bg: #1e3a8a; --r-fg: #bfdbfe; --r-border: #60a5fa;
-        --e-bg: #4a2410; --e-fg: #fdba74; --e-border: #ea580c;
-        --i-bg: #3b2a63; --i-fg: #ddd6fe; --i-border: #a78bfa;
-        --focus: #fbbf24;
+      :root:not([data-theme="light"]) {
+        --bg: #141414;
+        --surface: #141414;
+        --surface-2: #1f1f1f;
+        --border: #262626;
+        --text: rgba(255, 255, 255, .85);
+        --text-muted: rgba(255, 255, 255, .65);
+        --heading: #69b1ff;
+        --accent: #69b1ff;
+        --accent-2: #73d13d;
+        --accent-soft: #162312;
+        --mem: #b37feb;
+        --mem-soft: #241a3d;
+        --net: #ff9c6e;
+        --net-soft: #3a2113;
+        --warn-bg: #2b2111;
+        --warn-border: #ffc53d;
+        --warn-text: #ffc53d;
+        --p-bg: #111a2c; --p-fg: #69b1ff; --p-border: #69b1ff;
+        --r-bg: #241a3d; --r-fg: #b37feb; --r-border: #b37feb;
+        --e-bg: #3a2113; --e-fg: #ff9c6e; --e-border: #ff9c6e;
+        --i-bg: #2b2111; --i-fg: #ffc53d; --i-border: #ffc53d;
+        --focus: #ff9c6e;
       }
     }
     * { box-sizing: border-box; }
@@ -70,7 +72,7 @@
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+      font: 14px/1.5715 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
     }
     a { color: var(--accent-2); text-underline-offset: 3px; }
     a:hover { text-decoration-thickness: 2px; }
@@ -79,28 +81,29 @@
       position: absolute; left: 8px; top: -48px; z-index: 10;
       background: var(--surface); color: var(--text);
       border: 2px solid var(--focus); border-radius: 4px;
-      padding: 10px 16px; font-weight: 700; transition: top .15s ease;
+      padding: 12px 16px; font-weight: 700; transition: top .15s ease;
     }
     .skip-link:focus { top: 8px; }
     code, .num, .mono { font-family: var(--mono); }
-    .mono { font-size: .92em; }
+    code { font-size: 12px; }
+    .mono { font-size: 12px; }
 
     .topbar {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 10px 20px;
-      display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+      padding: 12px 20px;
+      display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center;
     }
     .topbar .site { font-weight: 800; color: var(--heading); text-decoration: none; margin-right: auto; }
-    .topbar a { color: var(--text); text-decoration: none; padding: 10px 4px; display: inline-block; }
+    .topbar a { color: var(--text); text-decoration: none; padding: 12px 4px; display: inline-block; }
     .topbar a:hover { color: var(--accent-2); text-decoration: underline; }
 
     .breadcrumb {
-      padding: 12px 20px 0; font-size: 14px; color: var(--text-muted);
+      padding: 12px 20px 0; font-size: 12px; color: var(--text-muted);
       max-width: 1240px; margin: 0 auto;
     }
-    .breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
-    .breadcrumb li + li::before { content: "→"; margin-right: 6px; color: var(--text-muted); }
+    .breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+    .breadcrumb li + li::before { content: "→"; margin-right: 8px; color: var(--text-muted); }
 
     .layout {
       max-width: 1240px; margin: 0 auto; padding: 8px 20px 40px;
@@ -116,43 +119,46 @@
     }
     aside nav, .toc-mobile-slot details {
       position: sticky; top: 16px;
-      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-      padding: 12px 14px; font-size: 14px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 12px 16px; font-size: 14px;
     }
     .toc-mobile-slot details { position: static; }
     aside nav strong, .toc-mobile-slot summary {
       color: var(--heading); display: block; margin-bottom: 8px; font-size: 14px;
     }
-    .toc-mobile-slot summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
+    .toc-mobile-slot summary { cursor: pointer; padding: 12px 0; font-weight: 700; }
     aside nav ol, .toc-mobile-slot ol {
       list-style: none; margin: 0; padding: 0; counter-reset: toc;
     }
-    aside nav li, .toc-mobile-slot li { margin: 2px 0; }
+    aside nav li, .toc-mobile-slot li { margin: 4px 0; }
     aside nav a, .toc-mobile-slot a {
-      display: block; padding: 8px 6px; text-decoration: none; color: var(--text);
-      border-radius: 4px; line-height: 1.4;
+      display: block; padding: 8px 8px; text-decoration: none; color: var(--text);
+      border-radius: 4px; line-height: 1.4; border-left: 3px solid transparent;
     }
-    aside nav a:hover, .toc-mobile-slot a:hover { background: var(--surface-2); color: var(--accent-2); }
+    aside nav a:hover, .toc-mobile-slot a:hover,
+    aside nav a:focus-visible, .toc-mobile-slot a:focus-visible {
+      color: var(--heading); border-left-color: var(--heading);
+    }
 
     main { min-width: 0; }
     section {
-      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-      padding: 20px 22px; margin: 0 0 22px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 20px 24px; margin: 0 0 24px;
       break-inside: avoid-page;
     }
-    h1 { font-size: 26px; line-height: 1.35; color: var(--heading); margin: 6px 0 4px; }
-    h2 { font-size: 21px; color: var(--heading); margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
-    h3 { font-size: 17px; color: var(--heading); margin: 20px 0 8px; }
+    h1 { font-size: 30px; line-height: 1.35; color: var(--heading); margin: 8px 0 4px; }
+    h2 { font-size: 20px; color: var(--heading); margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 16px; color: var(--heading); margin: 20px 0 8px; }
     p { max-width: 76ch; }
 
     .meta-note {
       background: var(--surface-2); border: 1px dashed var(--border); border-radius: 6px;
-      padding: 10px 14px; font-size: 14px; color: var(--text-muted); margin: 10px 0 16px;
+      padding: 12px 16px; font-size: 14px; color: var(--text-muted); margin: 12px 0 16px;
     }
     .tags { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
     .tags li {
-      border: 1px solid var(--border); border-radius: 999px;
-      padding: 6px 12px; font-size: 13px; background: var(--surface-2); color: var(--text);
+      border: 1px solid var(--accent-2); border-radius: 999px;
+      padding: 0 12px; font-size: 12px; background: var(--accent-soft); color: var(--accent-2);
     }
 
     .badge {
@@ -164,69 +170,69 @@
     .b-e { background: var(--e-bg); color: var(--e-fg); border-color: var(--e-border); }
     .b-i { background: var(--i-bg); color: var(--i-fg); border-color: var(--i-border); }
 
-    .fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0; }
+    .fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 16px 0; }
     .fact-card {
-      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
-      padding: 12px 14px; font-size: 14px;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 16px; font-size: 14px;
     }
     .fact-card dt { font-weight: 700; color: var(--heading); margin-bottom: 4px; }
     .fact-card dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 
     .callout-warning {
-      background: var(--warn-bg); border: 1px solid var(--warn-border); border-left-width: 5px;
+      background: var(--warn-bg); border: 1px solid var(--warn-border); border-left-width: 4px;
       border-radius: 6px; padding: 12px 16px; margin: 16px 0;
     }
     .callout-warning strong:first-child { color: var(--warn-text); }
 
     .table-scroll {
-      overflow-x: auto; margin: 14px 0;
-      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+      overflow-x: auto; margin: 16px 0;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
     }
     table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
-    caption { text-align: left; font-weight: 700; color: var(--heading); padding: 10px 12px 2px; font-size: 14px; }
-    th, td { border-top: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
-    thead th { background: var(--surface-2); color: var(--heading); border-top: none; white-space: nowrap; }
-    tbody tr:nth-child(even) { background: var(--surface-2); }
+    caption { text-align: left; font-weight: 700; color: var(--heading); padding: 12px 12px 4px; font-size: 14px; }
+    th, td { border-top: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+    thead th { background: var(--surface-2); color: var(--text); border-top: none; white-space: nowrap; }
+    tbody tr:hover td { background: var(--surface-2); }
     td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
 
-    .tradeoff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
-    .tradeoff-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--surface-2); font-size: 14px; }
-    .tradeoff-card h3 { margin: 0 0 6px; font-size: 15px; }
+    .tradeoff-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 16px 0; }
+    .tradeoff-card { border: 1px solid var(--border); border-radius: 6px; padding: 16px; background: var(--surface-2); font-size: 14px; }
+    .tradeoff-card h3 { margin: 0 0 8px; font-size: 14px; }
 
-    figure.architecture-diagram { margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--surface); }
+    figure.architecture-diagram { margin: 16px 0; border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--surface); }
     figure.architecture-diagram img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
-    figure.architecture-diagram figcaption { font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+    figure.architecture-diagram figcaption { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
     .diagram-scroll { overflow-x: auto; }
 
-    ul, ol { padding-left: 26px; }
+    ul, ol { padding-left: 24px; }
     li { margin: 4px 0; }
 
     .decision-checklist fieldset {
-      border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 10px 14px;
+      border: 1px solid var(--border); border-radius: 6px; margin: 12px 0; padding: 12px 16px;
     }
-    .decision-checklist legend { font-weight: 700; color: var(--heading); padding: 0 6px; }
+    .decision-checklist legend { font-weight: 700; color: var(--heading); padding: 0 8px; }
     .decision-checklist label {
-      display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; min-height: 44px; cursor: pointer;
+      display: flex; gap: 12px; align-items: flex-start; padding: 8px 4px; min-height: 44px; cursor: pointer;
     }
-    .decision-checklist input[type="checkbox"] { width: 20px; height: 20px; margin-top: 3px; flex: none; }
+    .decision-checklist input[type="checkbox"] { width: 20px; height: 20px; margin-top: 4px; flex: none; }
 
     .pager { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 8px 0 0; }
     .pager a {
-      display: inline-block; min-height: 44px; padding: 10px 16px;
-      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+      display: inline-block; min-height: 44px; padding: 12px 16px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
       color: var(--text); text-decoration: none; font-weight: 600;
     }
-    .pager a:hover { border-color: var(--accent-2); color: var(--accent-2); }
+    .pager a:hover { border-color: var(--heading); color: var(--heading); background: var(--surface); }
     .pager .spacer { flex: 1; }
 
     footer.site-footer {
       max-width: 1240px; margin: 0 auto; padding: 16px 20px 40px;
-      font-size: 13px; color: var(--text-muted); border-top: 1px solid var(--border);
+      font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border);
     }
     @media (max-width: 419px) {
       .pager a { width: 100%; text-align: center; }
       .fact-grid { grid-template-columns: 1fr; }
-      section { padding: 16px 14px; }
+      section { padding: 16px; }
     }
     @media print {
       .topbar, .breadcrumb, aside nav, .toc-mobile-slot, .pager { display: none !important; }
@@ -237,7 +243,7 @@
       a[href^="http"]::after { content: "（" attr(href) "）"; font-size: 11px; }
       thead { display: table-header-group; }
     }
-  </style>
+</style>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至正文</a>
@@ -575,7 +581,7 @@
         </ul>
         <h3>成本模型（参数化，非论文结论）</h3>
         <p>论文不含任何成本数据（仅吞吐/SLO/拒绝率）。架构师可用下式估算（<span class="badge evidence-badge b-i">I</span>，价格项为参数）：</p>
-        <p class="mono" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;overflow-x:auto">每百万请求成本 ≈ ( p_gpu × (N_P + N_D) + p_net ) ÷ R_adm × 10⁶ …（公式 1）</p>
+        <p class="mono" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:12px 16px;overflow-x:auto">每百万请求成本 ≈ ( p_gpu × (N_P + N_D) + p_net ) ÷ R_adm × 10⁶ …（公式 1）</p>
         <ul>
           <li><span class="mono">p_gpu</span>：单卡时租价（按查询日云价代入，<span class="badge evidence-badge b-e">E</span>）；</li>
           <li><span class="mono">N_P / N_D</span>：Prefill 池 / Decode 池卡数（如 [3P+1D]×每机卡数起步）；</li>

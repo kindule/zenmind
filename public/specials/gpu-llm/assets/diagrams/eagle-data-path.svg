@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 1010" role="img" aria-labelledby="eagle-svg-title eagle-svg-desc" font-family="system-ui, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="eagle-svg-title">EAGLE 数据路径图：第二层顶层特征 + 提前一步 token 的树状草稿，与目标模型一次前向的无损树验证，另示通用投机采样对照路径</title>
+  <desc id="eagle-svg-desc">流程自上而下并循环。对照路径：通用投机采样由更小的同系列模型自回归起草 token 链，再由目标模型一次前向并行验证；7B 目标没有合适草稿模型、7B 草稿拖慢 13B（图 1 标 N/A），这是 EAGLE 的动机。EAGLE 主路径：目标 LLM 一次前向产出第二层顶层特征（倒数第二层、LM Head 之前的隐藏态）并采样下一个 token；EAGLE 草稿模型以「特征 + 提前一个时间步的 token」为输入——token embedding 与特征拼接成 2 倍隐藏维，经全连接层降维后进入一层可训练 decoder（自回归头），预测下一特征，再经冻结的 LM Head 得到分布，每个节点扩展 k 个子节点（根节点 k=4；贪心取 top-k，非贪心采样 k）；由于每个分支携带自己的采样结果作为输入，图 3 所示的采样不确定性被消除。草稿经 5 次前向长成一棵树注意力草稿树（示意拓扑，论文文本只给出根节点 k=4 与 5 次前向；图 6 示例为 3 次前向 10 token）。验证阶段：目标模型用树注意力一次前向算出整棵树每个 token 的概率，随后在每个节点递归执行多轮投机采样——均匀随机数小于 p/p̂ 则接受，否则按 p←norm(max(0,p−p̂)) 调整分布换下一候选，全部拒绝才从调整后分布采样；输出分布与目标模型一致（贪心与非贪心均有理论保证）。被接受的 token 连同其目标模型特征并回上下文进入下一轮。右侧面板：训练形态（SmoothL1 回归 + 0.1×交叉熵分类、对目标特征加 U(−0.1,0.1) 噪声、ShareGPT 68000 对话、可训练参数 0.24B–0.99B、1–2 天）、硬件口径（batch=1 延迟为主、FP16、RTX 3090 与 4×A100 40G、EAGLE+gpt-fast 160.4 tokens/s）与边界风险（batch 增大加速比衰减、显存略增使最大 batch 减一、MoE 仅 1.50x、树增益不等效转化为加速比）。实线为数据流，虚线为控制流/训练配置；紫色为特征与上下文存储，绿色为可训练模块，雪花标记冻结的目标模型参数，琥珀色为风险与边界；编号一至七对应正文数据路径步骤。依据为论文（arXiv:2401.15077v3）第 2–13 页与页面证据台账，图内数字均带条件。</desc>
+  <defs>
+    <marker id="egl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="egl-arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/>
+    </marker>
+    <marker id="egl-arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f3a5f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="1010" fill="#ffffff"/>
+  <text x="30" y="34" font-size="19" font-weight="700" fill="#14385c">EAGLE：特征级树状草稿 + 目标模型一次前向无损验证的数据路径</text>
+  <text x="30" y="56" font-size="12" fill="#4b5563">方向：目标模型特征 + 提前一步 token → 自回归头逐层长树 → 树注意力一次前向验证 → 多轮投机采样接受 → 并回上下文循环　｜　依据：论文 p.2–13（arXiv:2401.15077v3）</text>
+
+  <!-- 图例 -->
+  <g font-size="11.5" fill="#374151">
+    <rect x="30" y="70" width="14" height="14" fill="#e6f7fb" stroke="#0e7490" stroke-width="1.6"/>
+    <text x="49" y="81">GPU 前向 / 数据流（实线）</text>
+    <rect x="212" y="70" width="14" height="14" fill="#f8fafc" stroke="#64748b" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="231" y="81">对照路径 / 控制流与训练配置（虚线）</text>
+    <rect x="426" y="70" width="14" height="14" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+    <text x="445" y="81">特征 / 上下文存储（紫）</text>
+    <rect x="596" y="70" width="14" height="14" fill="#ecfdf5" stroke="#166534" stroke-width="1.6"/>
+    <text x="615" y="81">可训练模块（绿）</text>
+    <rect x="722" y="70" width="14" height="14" fill="#fef3c7" stroke="#92400e" stroke-width="1.6"/>
+    <text x="741" y="81">风险与边界（琥珀）</text>
+  </g>
+
+  <!-- ① 输入与已确认上下文 -->
+  <rect x="50" y="100" width="580" height="62" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="62" y="122" font-size="12.5" font-weight="700" fill="#5b21b6">① 输入与已确认上下文</text>
+  <text x="62" y="140" font-size="10.5" fill="#374151">查询 + 已确认 token 序列 T₁..ⱼ 与其 KV 缓存；上一轮验证顺带产出的</text>
+  <text x="62" y="156" font-size="10.5" fill="#374151">第二层顶层特征 F₁..ⱼ（LM Head 之前的隐藏态，紫色）随序列保留</text>
+
+  <line x1="340" y1="162" x2="340" y2="184" stroke="#334155" stroke-width="2.5" marker-end="url(#egl-arr)"/>
+
+  <!-- ② 对照：通用投机采样 -->
+  <rect x="50" y="188" width="580" height="104" rx="6" fill="#f8fafc" stroke="#64748b" stroke-width="1.8" stroke-dasharray="6 4"/>
+  <text x="62" y="210" font-size="12.5" font-weight="700" fill="#475569">② 对照：通用投机采样（同系列小模型起草 token 链）</text>
+  <rect x="66" y="222" width="150" height="34" rx="4" fill="#ffffff" stroke="#64748b" stroke-width="1.4"/>
+  <text x="141" y="243" font-size="10.5" text-anchor="middle" fill="#475569">更小的 LLM（如 7B）</text>
+  <line x1="216" y1="239" x2="268" y2="239" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="272" y="222" width="128" height="34" rx="4" fill="#ffffff" stroke="#64748b" stroke-width="1.4"/>
+  <text x="336" y="243" font-size="10.5" text-anchor="middle" fill="#475569">起草 γ 个 token</text>
+  <line x1="400" y1="239" x2="452" y2="239" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="456" y="222" width="158" height="34" rx="4" fill="#ffffff" stroke="#1f3a5f" stroke-width="1.4"/>
+  <text x="535" y="243" font-size="10.5" text-anchor="middle" fill="#1f3a5f">目标模型一次前向验证</text>
+  <text x="66" y="276" font-size="10.5" fill="#92400e">动机边界：7B 目标没有合适草稿模型；7B 草稿反使 13B 慢于逐 token 解码（图 1 标 N/A）</text>
+
+  <line x1="340" y1="292" x2="340" y2="314" stroke="#334155" stroke-width="2.5" marker-end="url(#egl-arr)"/>
+
+  <!-- ③ 目标 LLM 前向：第二层顶层特征 -->
+  <rect x="50" y="318" width="580" height="118" rx="6" fill="#ffffff" stroke="#1f3a5f" stroke-width="2"/>
+  <text x="62" y="340" font-size="12.5" font-weight="700" fill="#1f3a5f">③ 目标 LLM 一次前向：产出第二层顶层特征 + 采样下一 token</text>
+  <rect x="66" y="354" width="128" height="30" rx="4" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.4"/>
+  <text x="130" y="373" font-size="10.5" text-anchor="middle" fill="#1f3a5f">Embedding（冻结 ❄）</text>
+  <line x1="194" y1="369" x2="224" y2="369" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="228" y="354" width="140" height="30" rx="4" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.4"/>
+  <text x="298" y="373" font-size="10.5" text-anchor="middle" fill="#1f3a5f">Transformer 各层</text>
+  <line x1="368" y1="369" x2="398" y2="369" stroke="#6d28d9" stroke-width="2" marker-end="url(#egl-arr-purple)"/>
+  <rect x="402" y="350" width="212" height="38" rx="4" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+  <text x="508" y="366" font-size="10.5" text-anchor="middle" fill="#5b21b6">第二层顶层特征 fⱼ（倒数第二层，</text>
+  <text x="508" y="382" font-size="10.5" text-anchor="middle" fill="#5b21b6">LM Head 之前）—— EAGLE 的自回归对象</text>
+  <text x="66" y="408" font-size="10.5" fill="#374151">并行地：LM Head（冻结 ❄）将 fⱼ 映射为分布 pⱼ₊₁，采样出 tⱼ₊₁（与逐 token 解码完全一致）</text>
+  <text x="66" y="424" font-size="10.5" fill="#475569">首轮之后，验证阶段会顺带产出被接受 token 的目标特征，无需额外前向（p.5 §3.3）</text>
+
+  <line x1="340" y1="436" x2="340" y2="458" stroke="#334155" stroke-width="2.5" marker-end="url(#egl-arr)"/>
+
+  <!-- ④ EAGLE 草稿模型 -->
+  <rect x="50" y="462" width="580" height="164" rx="6" fill="#e6f7fb" stroke="#0e7490" stroke-width="2.4"/>
+  <text x="62" y="484" font-size="12.5" font-weight="700" fill="#155e75">④ EAGLE 草稿模型（每层树深一次前向；核心差异在此）</text>
+  <rect x="66" y="496" width="168" height="44" rx="4" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+  <text x="150" y="513" font-size="10.5" text-anchor="middle" fill="#5b21b6">第二层顶层特征 fⱼ</text>
+  <text x="150" y="529" font-size="10" text-anchor="middle" fill="#5b21b6">形状 (bs, seq, hidden)</text>
+  <text x="242" y="522" font-size="13" fill="#334155">⊕</text>
+  <rect x="252" y="496" width="168" height="44" rx="4" fill="#f3ecfd" stroke="#6d28d9" stroke-width="1.6"/>
+  <text x="336" y="513" font-size="10.5" text-anchor="middle" fill="#5b21b6">提前一步的 token tⱼ₊₁</text>
+  <text x="336" y="529" font-size="9.5" text-anchor="middle" fill="#5b21b6">Embedding ❄ → (bs,seq,hidden)</text>
+  <line x1="420" y1="518" x2="446" y2="518" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="450" y="496" width="164" height="44" rx="4" fill="#ecfdf5" stroke="#166534" stroke-width="1.6"/>
+  <text x="532" y="513" font-size="10.5" text-anchor="middle" fill="#166534">拼接 2×hidden → FC 降维 →</text>
+  <text x="532" y="529" font-size="10.5" text-anchor="middle" fill="#166534">1 层 decoder（自回归头，可训练）</text>
+  <line x1="340" y1="540" x2="340" y2="556" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="66" y="560" width="164" height="40" rx="4" fill="#ecfdf5" stroke="#166534" stroke-width="1.6"/>
+  <text x="148" y="577" font-size="10.5" text-anchor="middle" fill="#166534">预测下一特征 f̂ⱼ₊₁</text>
+  <text x="148" y="592" font-size="10" text-anchor="middle" fill="#166534">（特征级自回归）</text>
+  <line x1="230" y1="580" x2="258" y2="580" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="262" y="560" width="150" height="40" rx="4" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.4"/>
+  <text x="337" y="577" font-size="10.5" text-anchor="middle" fill="#1f3a5f">LM Head（冻结 ❄）</text>
+  <text x="337" y="592" font-size="10" text-anchor="middle" fill="#1f3a5f">→ 分布 p̂，采样/取 top-k</text>
+  <line x1="412" y1="580" x2="440" y2="580" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="444" y="560" width="170" height="40" rx="4" fill="#ffffff" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="529" y="577" font-size="10.5" text-anchor="middle" fill="#155e75">每个节点扩展 k 个子节点</text>
+  <text x="529" y="592" font-size="10" text-anchor="middle" fill="#155e75">根 k=4；贪心 top-k / 非贪心采样 k</text>
+  <text x="66" y="610" font-size="10" fill="#155e75">关键：token 输入「提前一个时间步」，每个分支把自己的采样结果直接作为输入——</text>
+  <text x="66" y="623" font-size="10" fill="#155e75">f_I 配 t_always → f̂_always，f_I 配 t_am → f̂_am，图 3 的采样不确定性被消除（p.2 §1）</text>
+
+  <line x1="340" y1="626" x2="340" y2="648" stroke="#334155" stroke-width="2.5" marker-end="url(#egl-arr)"/>
+
+  <!-- ⑤ 树状草稿 -->
+  <rect x="50" y="652" width="580" height="118" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="2"/>
+  <text x="62" y="674" font-size="12.5" font-weight="700" fill="#155e75">⑤ 树注意力草稿树：5 次前向长成一棵树（深度 m &gt; 逐链）</text>
+  <g stroke="#0e7490" stroke-width="1.6" fill="#e6f7fb">
+    <ellipse cx="150" cy="700" rx="26" ry="12"/>
+    <ellipse cx="90"  cy="726" rx="22" ry="11"/>
+    <ellipse cx="150" cy="726" rx="22" ry="11"/>
+    <ellipse cx="210" cy="726" rx="22" ry="11"/>
+    <ellipse cx="252" cy="726" rx="22" ry="11"/>
+    <ellipse cx="62"  cy="750" rx="18" ry="10"/>
+    <ellipse cx="108" cy="750" rx="18" ry="10"/>
+    <ellipse cx="150" cy="750" rx="18" ry="10"/>
+    <ellipse cx="196" cy="750" rx="18" ry="10"/>
+    <ellipse cx="240" cy="750" rx="18" ry="10"/>
+  </g>
+  <g stroke="#0e7490" stroke-width="1.2">
+    <line x1="140" y1="710" x2="98" y2="717"/>
+    <line x1="150" y1="712" x2="150" y2="715"/>
+    <line x1="160" y1="710" x2="204" y2="717"/>
+    <line x1="170" y1="708" x2="246" y2="717"/>
+    <line x1="82"  y1="735" x2="66" y2="741"/>
+    <line x1="100" y1="735" x2="108" y2="741"/>
+    <line x1="146" y1="737" x2="150" y2="741"/>
+    <line x1="204" y1="736" x2="196" y2="741"/>
+    <line x1="244" y1="736" x2="240" y2="741"/>
+  </g>
+  <text x="150" y="703" font-size="9.5" text-anchor="middle" fill="#155e75">已确认</text>
+  <text x="290" y="700" font-size="10.5" fill="#374151">每条候选路径携带自己的 token 序列；高概率分支更深更宽</text>
+  <text x="290" y="716" font-size="10.5" fill="#374151">（论文自述树结构凭直觉、未精调；全部实验用同一棵，p.12 附录 A.1）</text>
+  <text x="290" y="732" font-size="10.5" fill="#374151">图 6 示例：3 次前向得 10-token 树；正文口径：草稿固定 5 次前向，</text>
+  <text x="290" y="748" font-size="10.5" fill="#374151">验证不论树/链都只需目标模型一次前向。左侧拓扑为编辑示意。</text>
+  <text x="290" y="762" font-size="10.5" fill="#475569">不用树时退化为链式草稿（消融口径），仍有约 2.3x–2.7x 加速（p.7）</text>
+
+  <line x1="340" y1="770" x2="340" y2="792" stroke="#334155" stroke-width="2.5" marker-end="url(#egl-arr)"/>
+
+  <!-- ⑥ 目标模型验证 -->
+  <rect x="50" y="796" width="580" height="120" rx="6" fill="#ffffff" stroke="#1f3a5f" stroke-width="2"/>
+  <text x="62" y="818" font-size="12.5" font-weight="700" fill="#1f3a5f">⑥ 目标模型验证：树注意力一次前向 + 多轮投机采样（无损）</text>
+  <rect x="66" y="830" width="238" height="40" rx="4" fill="#eef3fa" stroke="#1f3a5f" stroke-width="1.4"/>
+  <text x="185" y="847" font-size="10.5" text-anchor="middle" fill="#1f3a5f">树注意力掩码下一次前向</text>
+  <text x="185" y="862" font-size="10" text-anchor="middle" fill="#1f3a5f">得到整棵树每个 token 的目标概率 p</text>
+  <line x1="304" y1="850" x2="330" y2="850" stroke="#334155" stroke-width="2" marker-end="url(#egl-arr)"/>
+  <rect x="334" y="830" width="280" height="40" rx="4" fill="#ffffff" stroke="#0e7490" stroke-width="1.4"/>
+  <text x="474" y="847" font-size="10.5" text-anchor="middle" fill="#155e75">多轮投机采样（逐节点递归，与 SpecInfer 一致）</text>
+  <text x="474" y="862" font-size="10" text-anchor="middle" fill="#155e75">r &lt; p/p̂ 接受；否则 p←norm(max(0,p−p̂)) 换下一候选</text>
+  <text x="66" y="892" font-size="10.5" fill="#374151">全部候选被拒绝才从调整后分布采样一步；被接受 token 及其目标特征记录下来供下一轮草稿使用；</text>
+  <text x="66" y="908" font-size="10.5" fill="#374151">输出分布与目标模型严格一致——贪心与非贪心均有理论保证，无需修改目标模型或接受判据（p.5 §3.3、p.12–13）</text>
+
+  <line x1="340" y1="916" x2="340" y2="938" stroke="#6d28d9" stroke-width="2.5" marker-end="url(#egl-arr-purple)"/>
+
+  <!-- ⑦ 并回上下文 -->
+  <rect x="50" y="942" width="580" height="52" rx="6" fill="#f3ecfd" stroke="#6d28d9" stroke-width="2"/>
+  <text x="62" y="963" font-size="12.5" font-weight="700" fill="#5b21b6">⑦ 接受的 token + 其目标特征 并回上下文（KV 与特征序列同步追加）</text>
+  <text x="62" y="981" font-size="10.5" fill="#374151">回到 ③/④ 进入下一轮草稿-验证循环；退出循环即输出最终文本（分布与目标模型一致）</text>
+
+  <!-- 闭环箭头（左缘向上） -->
+  <path d="M 50 968 L 34 968 L 34 380 L 46 380" fill="none" stroke="#6d28d9" stroke-width="2" stroke-dasharray="7 4" marker-end="url(#egl-arr-purple)"/>
+  <text x="20" y="700" font-size="10.5" fill="#6d28d9" transform="rotate(-90 20 700)">下一轮解码循环</text>
+
+  <!-- 右侧面板 S1 训练形态 -->
+  <rect x="650" y="100" width="300" height="228" rx="6" fill="#f8fafc" stroke="#64748b" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="662" y="122" font-size="12.5" font-weight="700" fill="#475569">S1 训练形态（目标模型全程冻结）</text>
+  <text x="662" y="142" font-size="10.5" fill="#374151">损失 = SmoothL1 特征回归 + 0.1×交叉熵分类</text>
+  <text x="662" y="158" font-size="10.5" fill="#374151">（分类项数值约大一个量级，权重取 0.1，p.4–5）</text>
+  <text x="662" y="174" font-size="10.5" fill="#374151">训练时对目标特征加 U(−0.1, 0.1) 噪声抗误差累积</text>
+  <text x="662" y="190" font-size="10.5" fill="#374151">数据：ShareGPT 固定数据集 68,000 对话；lr 3e-5；</text>
+  <text x="662" y="206" font-size="10.5" fill="#374151">AdamW(0.9, 0.95)；梯度裁剪 0.5（p.5 §3.3）</text>
+  <text x="662" y="222" font-size="10.5" fill="#374151">可训练参数：0.24 / 0.37 / 0.56 / 0.99 B</text>
+  <text x="662" y="238" font-size="10.5" fill="#374151">（7B / 13B / 33B / 70B），Mixtral 0.28B</text>
+  <text x="662" y="254" font-size="10.5" fill="#374151">耗时 1–2 天：70B 用 4×A100 40G；</text>
+  <text x="662" y="270" font-size="10.5" fill="#374151">7B/13B/33B 可在 RTX 3090 节点完成（p.3 §1）</text>
+  <text x="662" y="286" font-size="10.5" fill="#374151">数据消融：目标模型自生成答案仅 2.88x vs 固定集</text>
+  <text x="662" y="302" font-size="10.5" fill="#374151">2.78x（LC7B MT-bench T=0，表 6）→ 对数据不敏感</text>
+  <text x="662" y="318" font-size="10.5" fill="#475569">Embedding / LM Head 复用目标参数不训练（❄）</text>
+
+  <!-- 右侧面板 S2 硬件口径 -->
+  <rect x="650" y="344" width="300" height="150" rx="6" fill="#f8fafc" stroke="#64748b" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="662" y="366" font-size="12.5" font-weight="700" fill="#475569">S2 评测硬件与口径</text>
+  <text x="662" y="386" font-size="10.5" fill="#374151">以 batch=1 的墙钟延迟为主口径，FP16（p.5、p.8）</text>
+  <text x="662" y="402" font-size="10.5" fill="#374151">显式披露：Vicuna 7B 单卡 RTX 3090（24G）；</text>
+  <text x="662" y="418" font-size="10.5" fill="#374151">LLaMA2-Chat 70B 用 4×A100 40G（160G）</text>
+  <text x="662" y="434" font-size="10.5" fill="#374151">其余型号推理硬件论文未披露（表 1/2 未复述）</text>
+  <text x="662" y="450" font-size="10.5" fill="#374151">组合量化/编译：EAGLE+gpt-fast（LC7B，3090）</text>
+  <text x="662" y="466" font-size="10.5" fill="#374151">FP16 100.2、int4 160.4 tokens/s（表 4，T=0）</text>
+  <text x="662" y="482" font-size="10.5" fill="#475569">吞吐口径：bs=1 加速 2.90x，但吞吐倍数 1.97x</text>
+
+  <!-- 右侧面板 S3 边界与风险 -->
+  <rect x="650" y="510" width="300" height="224" rx="6" fill="#fef3c7" stroke="#92400e" stroke-width="1.8"/>
+  <text x="662" y="532" font-size="12.5" font-weight="700" fill="#92400e">S3 边界与风险（全部数字带条件）</text>
+  <text x="662" y="552" font-size="10.5" fill="#78350f">batch 增大加速比衰减：V7B 2.90x(1)→2.87x(2)→</text>
+  <text x="662" y="568" font-size="10.5" fill="#78350f">2.65x(3)→2.76x(4)；LC70B 3.01x→2.40x（表 7）</text>
+  <text x="662" y="584" font-size="10.5" fill="#78350f">吞吐收益约 2x：V7B 1.97x / LC70B 1.99x</text>
+  <text x="662" y="600" font-size="10.5" fill="#78350f">显存略增：最大 bs 8→7（24G）、5→4（160G）</text>
+  <text x="662" y="616" font-size="10.5" fill="#78350f">MoE 受限：Mixtral 8x7B 仅 1.50x（验证或需读</text>
+  <text x="662" y="632" font-size="10.5" fill="#78350f">两个以上专家权重，表 3）</text>
+  <text x="662" y="648" font-size="10.5" fill="#78350f">树增益 ≠ 加速比增益：τ +0.6–0.8 仅换来</text>
+  <text x="662" y="664" font-size="10.5" fill="#78350f">加速 +0.3–0.5（每前向 token 变多，p.7）</text>
+  <text x="662" y="680" font-size="10.5" fill="#78350f">计算紧张时（如 bs=7）可关闭树注意力换吞吐</text>
+  <text x="662" y="696" font-size="10.5" fill="#78350f">每目标模型需单独训练草稿头（一次训练摊销）</text>
+  <text x="662" y="712" font-size="10.5" fill="#78350f">温度 1 加速低于温度 0（LC13B 2.66–2.89x vs</text>
+  <text x="662" y="728" font-size="10.5" fill="#78350f">3.01–3.76x，表 1）；论文未测服务框架集成</text>
+
+  <!-- 右侧面板 S4 指标口径 -->
+  <rect x="650" y="750" width="300" height="160" rx="6" fill="#ffffff" stroke="#0e7490" stroke-width="1.6"/>
+  <text x="662" y="772" font-size="12.5" font-weight="700" fill="#155e75">S4 指标口径（p.5 §4）</text>
+  <text x="662" y="792" font-size="10.5" fill="#374151">墙钟加速比 = 相对逐 token 自回归解码的实测比值</text>
+  <text x="662" y="808" font-size="10.5" fill="#374151">平均接受长度 τ = 目标模型每次前向被接受的 token 数</text>
+  <text x="662" y="824" font-size="10.5" fill="#374151">（表 1–2 范围 3.2–4.5，对比逐 token 解码的 1）</text>
+  <text x="662" y="840" font-size="10.5" fill="#374151">接受率 α 用链式草稿（无树）测量；n-α = 前 n 个</text>
+  <text x="662" y="856" font-size="10.5" fill="#374151">特征预测有误时的接受率（0-α 最高，1-α 起缓慢下降）</text>
+  <text x="662" y="872" font-size="10.5" fill="#374151">无损 = 输出分布与目标模型一致；论文因此不重复</text>
+  <text x="662" y="888" font-size="10.5" fill="#374151">评测生成质量（p.5：「既无必要也无意义」）</text>
+  <text x="662" y="904" font-size="10.5" fill="#475569">T=0（贪心）与 T=1（非贪心）口径不可混用</text>
+
+  <!-- 底部来源行 -->
+  <text x="30" y="1002" font-size="10.5" fill="#6b7280">依据：EAGLE 论文（arXiv:2401.15077v3，ICML 2024）p.1–13：图 3/5/6/9、表 1–7、算法 1、附录 A；图内 P 标注见页面证据台账；实线=数据流，虚线=控制流/训练配置；本图为编辑绘制，不含论文原图。</text>
+</svg>
