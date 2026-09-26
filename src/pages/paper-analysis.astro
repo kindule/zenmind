@@ -67,7 +67,7 @@ const corePresent = CORE_CATALOG.filter((p) => presentSlugs.has(p.slug))
 const coreMissing = CORE_CATALOG.filter((p) => !presentSlugs.has(p.slug))
 // 奠基论文（F01）：独立于核心 16 篇的内容，出现即单列展示（存无扩展名 slug）。
 const foundationPresent = paperFiles
-  .filter((f) => /^f01-/.test(f))
+  .filter((f) => /^(f01|b01)-/.test(f))
   .map((f) => f.replace(/\.html$/, ''))
 
 // Ilya 推荐书单系列（i 系列）：出现即单列展示（存无扩展名 slug）。
@@ -163,6 +163,22 @@ const SNAPSHOT_DATE = '2026-09-26'
           </div>
         ) : (
           <p>奠基论文页尚未收录。</p>
+        )
+      }
+      {
+        foundationPresent.includes('b01-annotated-transformer-zh') && (
+          <div class="foundation-card">
+            <h3>
+              <a href="/specials/gpu-llm/papers/b01-annotated-transformer-zh.html">B01 · The Annotated Transformer 中文导读（加餐）</a>
+            </h3>
+            <p>
+              Ilya 书单 i17 原作的中文导读：覆盖原文 35 节的逐节精读——模型架构、训练、两个实战例子与注意力可视化，
+              关键实现配中文思路说明，初中数学可读。加餐导读页（非逐字翻译），不计入核心论文数量。
+            </p>
+            <p>
+              <a class="button-link" href="/specials/gpu-llm/papers/b01-annotated-transformer-zh.html">阅读 B01 加餐导读 →</a>
+            </p>
+          </div>
         )
       }
     </section>

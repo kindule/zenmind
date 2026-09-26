@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>加餐 B01 · The Annotated Transformer 中文导读｜Ilya 推荐书单解读</title>
+<meta name="description" content="The Annotated Transformer 中文导读：覆盖原文 35 节的逐节精读——模型架构、训练、两个实战例子与注意力可视化，关键实现配中文思路说明，初中数学也能读。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="../index.html#foundation">加餐与奠基</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="../index.html#foundation">加餐解读</a></li>
+    <li aria-current="page">The Annotated Transformer 中文导读</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">加餐 B01 · The Annotated Transformer 中文导读</h1>
+  <p class="paper-hero-meta">原文：Sasha Rush 等，Harvard NLP（2018 首发 / 2022 重制）· 本页为覆盖全部章节的中文导读，含关键实现的中文思路与原文配图 · 初中数学可读</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <p><strong>The Annotated Transformer</strong>（逐行注解的 Transformer）——Harvard NLP 的 Sasha Rush 等人发布的"论文即代码"教程：把《Attention Is All You Need》逐段重写成可运行的 PyTorch 实现，论文每句话旁边就是对应代码。2018 年首次发布，2022 年以 Jupyter Book 形式重制，是 Ilya 推荐书单 i17 条目的原作。</p>
+  <p>原文入口：<a href="https://nlp.seas.harvard.edu/annotated-transformer/" rel="noopener noreferrer">新版（Jupyter Book）</a>；经典单页版：<a href="https://nlp.seas.harvard.edu/2018/04/03/attention.html" rel="noopener noreferrer">2018/04/03/attention.html</a>；代码仓库：<a href="https://github.com/harvardnlp/annotated-transformer" rel="noopener noreferrer">harvardnlp/annotated-transformer</a>（代码 MIT 许可）。</p>
+  <p><strong>本页性质声明：</strong>原文正文版权归 Harvard NLP / Sasha Rush 所有，未开放逐字转载许可，因此本页<strong>不是逐字翻译</strong>，而是覆盖原文全部章节的中文导读：每节讲清"这节在干什么、为什么这么设计"，关键实现配中文思路说明（代码遵循 MIT 许可引用），原文配图选取核心几张并注明来源。通读本页 + 按链接对照原文，即可用中文完整读懂它。</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>书单里 i16 是 Transformer 原论文，i17 就是这份 Annotated Transformer。原因很直白：读论文只能"看懂结构"，读它能把结构"跑起来"。它开创的"论文旁就是代码"的写法，后来被无数教程模仿，但公认它仍是把 Transformer 实现讲得最干净的一份材料。</p>
+  <p>对读者的实际收益：把概念（<a href="i16-attention-is-all-you-need.html">i16</a> 讲过的注意力、多头、位置编码）逐个落到几行代码上；本站另有系统视角的 <a href="f01-attention-is-all-you-need.html">F01 深度解读</a>可以对照阅读。</p>
+</section>
+
+<section id="structure" aria-labelledby="structure-title">
+  <h2 id="structure-title">全文地图：35 个小节怎么读</h2>
+  <p>原文共 35 个标题小节，分六大块：<strong>① 准备与背景</strong>（Prelims、Background）——环境与动机；<strong>② 模型架构</strong>（Model Architecture 及 9 个小节）——编码器、解码器、注意力、前馈、嵌入、位置编码、完整模型；<strong>③ 训练</strong>（Training 及 7 个小节）——批处理与掩码、训练循环、真实数据、硬件、优化器、正则化；<strong>④ 第一个例子</strong>（4 个小节）——复制任务、损失、贪心解码；<strong>⑤ 真实世界示例</strong>（5 个小节）——WMT14 数据与多卡训练；<strong>⑥ 结果与可视化</strong>——评测数字与注意力热图，最后是结论。</p>
+  <p>建议读法：第一遍只读 ② 里的主线（注意力 → 位置编码 → 完整模型），配合本页；第二遍再补训练与工程细节。</p>
+</section>
+
+<section id="walkthrough-arch" aria-labelledby="walkthrough-arch-title">
+  <h2 id="walkthrough-arch-title">逐节导读 · 模型架构部分</h2>
+  <p><strong>Encoder and Decoder Stacks（编码器-解码器堆叠）：</strong>两座塔各堆 6 层。编码器负责"把源句读透"，解码器负责"一边看编码结果一边逐词写译文"。每层都是"注意力 + 前馈 + 残差与归一化"的三件套。</p>
+  <p><strong>Attention（注意力）小节：</strong>把"查资料"拆成三个角色——查询（Q，我要找什么）、键（K，我这里有什么标签）、值（V，实际的内容）。打分 = 查询和每个键对一下相似度，再按分数把值加权取回来。<strong>缩放点积</strong>的除法是关键细节：词向量越长，打分差异越容易失控，所以除以一个和词长相关的数（约 √d），把分数压回温和区间——好比考试分数要按科目满分归一化才有可比性。</p>
+  <p><strong>Applications of Attention（三处应用）：</strong>编码器自注意力（每个词看全句）、解码器自注意力（只准看已经写出的部分，掩码挡住未来）、交叉注意力（译文回头看原文）——同一套积木，三种用法。</p>
+  <p><strong>Position-wise Feed-Forward Networks（逐位置前馈）：</strong>注意力管"词与词交流"，前馈管"每个词自己消化"：两层全连接，先扩张到约 4 倍维度再压缩回来，相当于每个词独立过一个小型加工车间。</p>
+  <p><strong>Embeddings and Softmax（嵌入与输出）：</strong>词先变成向量；一个容易被忽略的细节是嵌入向量要乘上词长的平方根，把量级拉齐。解码器输出端与嵌入共享权重，减少参数。</p>
+  <p><strong>Positional Encoding（位置编码）：</strong>注意力本身"分不清先后"，所以要给每个位置发一组不同频率的正弦/余弦标签——像钟表的时针、分针、秒针，不同频率组合出独一无二的时刻，模型靠它知道词序。</p>
+  <p><strong>Full Model（完整模型）：</strong>把上述零件组装成可训练的 make_model，并附带贪心解码函数——到这里，i16 论文的全部结构都有了对应实现。</p>
+</section>
+
+<section id="walkthrough-train" aria-labelledby="walkthrough-train-title">
+  <h2 id="walkthrough-train-title">逐节导读 · 训练部分</h2>
+  <p><strong>Batches and Masking（批与掩码）：</strong>训练以"翻译对"为单位成批喂入；掩码负责把"未来的词"挡住，防止解码器作弊偷看答案——高考不能翻下一页。</p>
+  <p><strong>Training Loop（训练循环）：</strong>算损失、清梯度、反向传播、优化器走一步，外加日志——工程上朴素，但每一步都可复现。</p>
+  <p><strong>Training Data and Batching（数据与分桶）：</strong>用 WMT14 翻译数据；句子长短不一，按长度分桶再组批，减少填充浪费。</p>
+  <p><strong>Hardware and Schedule（硬件与日程）：</strong>原文记录了所用的显卡数量与训练时长配置，具体数字以原文为准——想复现就照这一节准备机器。</p>
+  <p><strong>Optimizer（优化器）：</strong>Adam 配 Noam 式学习率：前期小步"热身"爬坡，过峰后按步数的平方根规律逐渐衰减——先热身再减速，训练才稳。</p>
+  <p><strong>Regularization（正则化）：</strong>两个手段：Dropout 在多个位置随机"闭眼"防死记；标签平滑（Label Smoothing）把标准答案从"1 和 0"抹成"接近 1 和接近 0"——不让模型把全部信心押在一个选项上，泛化更好，代价是损失值看起来偏高。</p>
+</section>
+
+<section id="walkthrough-example" aria-labelledby="walkthrough-example-title">
+  <h2 id="walkthrough-example-title">逐节导读 · 两个实战例子</h2>
+  <p><strong>A First Example（第一个例子）：</strong>用"复制任务"练手——让模型学会把输入原样抄成输出。任务小到几分钟就能跑通，却把"数据、损失、贪心解码"整条链路全走了一遍；损失计算部分顺带解释了标签平滑下的损失形态。</p>
+  <p><strong>A Real World Example（真实世界示例）：</strong>换上 WMT14 真实翻译数据：数据加载、按词表编号、迭代器封装、多 GPU 训练（ torch.distributed 风格的封装），最后把模型训练到可评测状态。读完这段，你就拥有了一个"从数据到模型"的完整最小工程。</p>
+</section>
+
+<section id="results" aria-labelledby="results-title">
+  <h2 id="results-title">结果与注意力可视化</h2>
+  <p>原文后半展示了训练出的模型的翻译评测结果，以及最著名的一部分：注意力权重的热图可视化。下面两张图取自原文生成结果（图源：The Annotated Transformer，Harvard NLP；模型出自 Vaswani et al. 2017）。</p>
+  <img src="../assets/at/attention-steps-early.png" alt="训练早期阶段的自注意力热图示例" loading="lazy">
+  <p>训练早期：注意力分布还很平，模型在"乱看"，词与词之间没有形成稳定的关注模式。</p>
+  <img src="../assets/at/attention-steps-late.png" alt="训练较充分阶段的自注意力热图示例" loading="lazy">
+  <p>训练较充分后：出现清晰的<strong>词对齐</strong>（某个词强烈关注它在另一侧的对应词），不同注意力头开始分工——有的盯相邻词，有的盯长距离结构。这两张图连起来看，就是"模型学会翻译"的直观证据。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <p><strong>Q / K / V：</strong>查询、键、值，注意力里的"找什么、凭什么标签、实际内容"三件套。<strong>缩放点积注意力：</strong>点积打分后除以词长相关量再取软最大，稳住分布。<strong>多头注意力：</strong>多组注意力并行，各自关注不同模式再拼合。<strong>掩码（mask）：</strong>把不该看见的位置的分数压成极小值。<strong>位置编码：</strong>不同频率正弦波给每个位置发的"身份标签"。<strong>Warmup：</strong>学习率先升后降的热身阶段。<strong>标签平滑：</strong>把硬答案软化的正则化手段。<strong>BPE：</strong>按高频片段切词的字词切分方法。</p>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul>
+    <li>新版（Jupyter Book，2022）：<a href="https://nlp.seas.harvard.edu/annotated-transformer/" rel="noopener noreferrer">nlp.seas.harvard.edu/annotated-transformer</a></li>
+    <li>经典单页版（2018）：<a href="https://nlp.seas.harvard.edu/2018/04/03/attention.html" rel="noopener noreferrer">nlp.seas.harvard.edu/2018/04/03/attention.html</a></li>
+    <li>代码仓库（MIT）：<a href="https://github.com/harvardnlp/annotated-transformer" rel="noopener noreferrer">github.com/harvardnlp/annotated-transformer</a></li>
+    <li>本站关联：<a href="i16-attention-is-all-you-need.html">i16 · Attention Is All You Need（教学版）</a>、<a href="f01-attention-is-all-you-need.html">F01 · 系统视角深度解读</a>、<a href="i00-ilya-reading-list.html">Ilya 书单系列导语</a></li>
+  </ul>
+</section>
+
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="../index.html#foundation" rel="prev">上一篇：返回首页「加餐与奠基」</a>
+  <a href="i00-ilya-reading-list.html" rel="next">下一篇：Ilya 书单系列导语</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页为 The Annotated Transformer 的中文导读，基于原文页面结构与 MIT 许可的官方代码仓库整理撰写，未逐字翻译原文正文；文中代码思路引用自 MIT 许可代码，配图引自原文生成结果并注明来源，图片版权归 Harvard NLP / Sasha Rush 所有。最后核验日期 2026-09-26。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>
