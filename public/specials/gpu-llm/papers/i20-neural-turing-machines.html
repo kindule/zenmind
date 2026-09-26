@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>神经图灵机（Neural Turing Machines）｜Ilya 推荐书单解读</title>
+<meta name="description" content="神经图灵机：控制器、外部存储矩阵与读写头，用「软寻址」按权重混合读出、分散写入，端到端学会复制一串序列。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">i20 神经图灵机</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">神经图灵机（Neural Turing Machines）</h1>
+  <p class="paper-hero-meta">Alex Graves、Greg Wayne、Danihelka（DeepMind） · arXiv 2014 · 给神经网络外挂一块可读写的「内存条」</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i19-order-matters.html" rel="prev">上一篇：i19 Order Matters</a>
+  <a href="i21-mpnn-message-passing.html" rel="next">下一篇：i21 消息传递神经网络</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i20 论文名片</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Neural Turing Machines</td></tr>
+        <tr><th scope="row">中文常用名</th><td>神经图灵机，简称 NTM</td></tr>
+        <tr><th scope="row">作者与年份</th><td>Alex Graves、Greg Wayne、Danihelka（DeepMind），arXiv 2014</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://arxiv.org/abs/1410.5401" rel="noopener noreferrer">https://arxiv.org/abs/1410.5401</a></td></tr>
+        <tr><th scope="row">一句话概括</th><td>给神经网络外挂一块可读写的内存，读写全用「软寻址」按权重混合，端到端可训练。</td></tr>
+        <tr><th scope="row">系列位置</th><td>i20（第四板块：Transformer 与进阶架构）；「给模型外挂记忆」思路的早期完整示范</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>普通网络的记忆全都压缩在权重里，相当于把要记的事全刻在脑子里——这本「记账本」太小，遇到需要精确记住一长串内容的任务就吃力。这篇 DeepMind 的论文给网络配上外部记忆：一块可以随时读写、独立于权重之外的「内存条」，容量问题第一次被摆上台面正面解决。</p>
+  <p>它在书单里的位置也很有意味：2014 年的工作，比书单里多数注意力论文还早，却第一次把「网络如何操作一块外部存储」做成了端到端可训练的整体。后来各种「给模型外挂记忆、外挂工具」的想法，都能在这篇里找到早期的完整示范——外挂不难，难的是让外挂本身也学会自己动手，这正是 NTM 的贡献。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想象教室前面摆着一排储物柜，老师要在里面查资料。笨办法是老师硬性指定「开 3 号柜」——可一旦指定的柜子里没放东西，查询就卡死了。NTM 的办法温柔得多：老师不做任何指定，而是给每个柜子发一盏亮度不同的灯。要找的内容和 3 号柜最相关，3 号柜的灯就最亮；2 号、5 号柜沾点边，灯就暗一些；不相关的柜子，灯干脆不亮。</p>
+  <p>读的时候，不是只看最亮的那一个柜，而是按亮度「混合着看」：最亮的看七成，次亮的看两成，剩下的看一成。写的时候同样温柔：新内容不猛砸进一个柜子，而是按亮度比例分摊着写进几个柜子。柜子还是那些柜子，但每一格都被柔光笼罩、按需取用——这就是「软寻址」的画面：不给死命令，只给一排亮度不同的聚光灯。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>NTM（Neural Turing Machines，神经图灵机）由三部分组成：控制器（Controller），负责思考的大脑；外部存储矩阵（External Memory），一格格排好的内存；读写头（Read/Write Heads），在内存上取放内容的手。普通网络的记忆压在权重里，本质是「把账刻在脑子上」；NTM 把账本搬到脑子外面，网络通过读写头随时翻账、记账，脑子和账本各自长大、互不挤占。</p>
+  <p>真正的妙处在读写的方式——软寻址（Soft Addressing）。读写头不「咔哒」一声只挑一个格子，而是给所有格子发不同权重的聚光灯：每个格子分到一个权重，全部权重加起来等于 1。读出时，按权重把所有格子的内容混合起来；写入时，按权重把新内容分散写进多个格子。没有任何一步是「硬选中」，整条链路从头到尾平滑连续。</p>
+  <p>为什么要追求平滑？因为这让整个系统端到端可训练（End-to-End Trainable）：从输入，到读内存、算一算、写内存，全是可微操作（Differentiable，粗略地说就是「每一步都能顺着来路知道该怎么改」），训练信号能一路传到底。于是读写策略不是人写死的规则，而是网络自己学出来的本事。经典任务是学会复制一串序列：看一遍输入，再原样吐出来——这要求网络真把内容放进内存、记好位置、再按原序取出来；软寻址的读写策略正是在这类任务上练出来的。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>看一次「按权重混合读出」。内存有 4 个格子，内容分别是 10、20、30、40；读写头发出的聚光灯权重是 0.6、0.3、0.1、0.0，加起来正好是 1。读出的内容 = 10×0.6 + 20×0.3 + 30×0.1 + 40×0.0 = 6 + 6 + 3 + 0 = 15。注意：没有任何一个格子的内容被原样读出，读出的是一份按权重调配的混合版；权重一变，混合版立刻跟着变——这就是「软」的含义。</p>
+  <p>再感受写入：新内容要写进内存，写头这次给的权重是 0.5、0.5、0、0，于是这份新内容的分量被摊到 1 号和 2 号格子各一半。权重收拢，就存得精确；权重摊开，就写得分散——收拢还是摊开，由网络在训练里自己学。你看，整套读写只有乘法和加法：把每个格子的内容按权重相乘、再全部加起来（读），或者把新内容按权重拆成几份分给各格子（写），全是小学算术。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>NTM 的影响不在「它赢了多少任务」，而在它立起了一个范式：记忆可以外置，读写策略可以学习。外部存储加可训练寻址的骨架，后来被反复重新发明和扩展；「按权重混合读取」的思路，与注意力家族「按分数取信息」一脉相通——书单把它放在 Transformer 板块旁边，正是让读者对照着看：聚光灯打在内存格子上是 NTM，打在词语上就是后来的注意力。</p>
+  <p>系列内相关阅读：按分数取信息的更早用例见 <a href="i15-nmt-attention.html">i15 注意力机器翻译</a>；把「按权重取信息」推成通用结构的是 <a href="i16-attention-is-all-you-need.html">i16 Attention Is All You Need</a>；在阅读顺序上，它紧挨着讨论「怎么读输入」的 <a href="i19-order-matters.html">i19 Order Matters</a> 与讨论「结构化数据」的 <a href="i21-mpnn-message-passing.html">i21 消息传递神经网络</a>。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i20 术语小词典</caption>
+      <thead>
+        <tr><th scope="col">术语</th><th scope="col">白话解释</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">神经图灵机（NTM）</th><td>带外部可读写内存的神经网络，名字致敬早期计算机的设计思路。</td></tr>
+        <tr><th scope="row">控制器（Controller）</th><td>NTM 里负责思考的部分，决定何时读、何时写。</td></tr>
+        <tr><th scope="row">外部存储矩阵（External Memory）</th><td>一格格排好的内存，独立于网络权重之外，是网络的外挂账本。</td></tr>
+        <tr><th scope="row">读写头（Read/Write Heads）</th><td>在内存上取放内容的部件，靠发「聚光灯权重」来定位。</td></tr>
+        <tr><th scope="row">软寻址（Soft Addressing）</th><td>不硬选一个格子，而是给所有格子发不同权重，按权重混合读出、分散写入。</td></tr>
+        <tr><th scope="row">端到端可训练（End-to-End Trainable）</th><td>从输入到内存读写整条链路都能用同一种训练信号一起学。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文：Neural Turing Machines（arXiv 2014）——<a href="https://arxiv.org/abs/1410.5401" rel="noopener noreferrer">https://arxiv.org/abs/1410.5401</a></li>
+    <li>思路对照：i16 Attention Is All You Need——<a href="i16-attention-is-all-you-need.html">i16-attention-is-all-you-need.html</a></li>
+    <li>阅读顺序相邻：i19 Order Matters——<a href="i19-order-matters.html">i19-order-matters.html</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i19-order-matters.html" rel="prev">上一篇：i19 Order Matters</a>
+  <a href="i21-mpnn-message-passing.html" rel="next">下一篇：i21 消息传递神经网络</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为科普解读页，解读对象是 Neural Turing Machines（Alex Graves、Greg Wayne、Danihelka，DeepMind，arXiv 2014），原文见 <a href="https://arxiv.org/abs/1410.5401" rel="noopener noreferrer">https://arxiv.org/abs/1410.5401</a>。文中储物柜等类比与全部算例为帮助理解而设，并非论文原文内容。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

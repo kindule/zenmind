@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>循环神经网络正则化｜Ilya 推荐书单解读</title>
+<meta name="description" content="Dropout 放在哪，才能既防死记硬背、又不打断记忆？Ilya 本人署名的实操论文：只在非循环连接上用 Dropout，语言模型困惑度明显下降。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">RNN 正则化</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">循环神经网络正则化</h1>
+  <p class="paper-hero-meta">Recurrent Neural Network Regularization · Wojciech Zaremba、Ilya Sutskever、Oriol Vinyals · arXiv 2014</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i12-lstm-networks.html" rel="prev">上一篇：理解 LSTM</a>
+  <a href="i14-relational-rnn.html" rel="next">下一篇：关系循环网络</a>
+</nav>
+
+<details class="toc">
+  <summary>本页目录</summary>
+  <ol>
+    <li><a href="#card">论文名片</a></li>
+    <li><a href="#why">Ilya 为什么选它</a></li>
+    <li><a href="#story">从生活说起</a></li>
+    <li><a href="#idea">核心思想拆解</a></li>
+    <li><a href="#worked">动手算一算</a></li>
+    <li><a href="#impact">它改变了什么</a></li>
+    <li><a href="#glossary">术语小词典</a></li>
+    <li><a href="#links">原文与代码</a></li>
+  </ol>
+</details>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <ul class="tag-row">
+    <li>2014 · arXiv 论文</li>
+    <li>LSTM</li>
+    <li>训练实操</li>
+  </ul>
+  <div class="fact-card">
+    <h3>速览</h3>
+    <p><strong>题目：</strong>Recurrent Neural Network Regularization（循环神经网络正则化）。</p>
+    <p><strong>作者：</strong>Wojciech Zaremba、Ilya Sutskever、Oriol Vinyals——第二位正是这份书单的主人。</p>
+    <p><strong>年份：</strong>2014 年，arXiv 论文。</p>
+    <p><strong>一句话结论：</strong>训练 LSTM 语言模型时，<strong>Dropout（随机失活）</strong>只放在非循环连接（进出 LSTM 的位置）上，困惑度（perplexity）明显下降；在循环连接上乱放反而更差。</p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>这是书单里少见的「实操手册」型论文：不提出新结构，只回答一个工程问题——Dropout 该放哪。Ilya 本人署名，也印证了简报对它的定位：书单里「实用主义」的代表。真正的进步常常不是发明全新的工具，而是把已知的工具放对位置，并且立刻能被工程师抄走用上。</p>
+  <p>它对付的敌人是过拟合（overfitting）：模型把训练材料死记硬背下来，一到没见过的句子就露馅。在数据有限、模型不小的年代，这是每个训练者每天都要面对的敌人；这篇论文给出的是一条便宜、可靠、当天就能落地的防线。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>备考时有人会把笔记的关键词遮住再背——而且每次遮的位置不同。这逼着你靠理解作答，而不是靠「背图」：记住某句话恰好写在纸面哪个角落。Dropout 就是这个操作的机器版：训练时随机「闭眼」一部分神经元，每次闭的还不一样。</p>
+  <p>但复习链条上有一样东西不能遮——昨天的记忆本身。今天的你能接上话，靠的是还记得昨天的结论；把「昨天的记忆」那条线遮了，复习就变成失忆。</p>
+  <p>训练循环网络时同理：哪些连线能遮、哪些不能遮，正是这篇论文回答的问题。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>Dropout 的常规用法。</strong>训练时按比例随机让一部分神经元「闭眼」，迫使网络不能依赖某几个固定搭档，知识被迫摊开存放，死记硬背被抑制。它是正则化（regularization）家族里最常用的成员之一。</p>
+  <p><strong>直觉上的坑。</strong>循环网络里有一条特殊的线——循环连接（recurrent connection），负责把上一步的记忆传给下一步。若在这条线上也随机设卡，等于记忆传递本身被随机打断：上一步刚记下「主语是他」，这一步「他」可能就被闭眼抹掉了。记忆被打乱，模型连正常句子都学不利索，效果反而变差。</p>
+  <p><strong>论文的发现。</strong>只在非循环连接——也就是输入进 LSTM、LSTM 输出往外的「进出门口」——使用 Dropout；记忆传送带本体不设卡。仅凭放置位置的改动，语言模型的困惑度（perplexity）明显降下来。困惑度可粗略理解为「模型预测下一个词时平均在多少个候选里犹豫」，数字越低越好。</p>
+  <div class="callout">
+    <p><strong>方法论一句话：</strong>正则化要挡住「抄近路背答案」的通道，别挡住「记忆本身」的通道。</p>
+  </div>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>本节算术为教学演示；论文的具体实验数值请看原文。</p>
+  <h3>演示一：闭眼比例</h3>
+  <p>若每轮随机让一半神经元闭眼（比例 50%），任何一个神经元平均只有一半的轮次在岗。网络因此不敢把本事全押在少数「学霸神经元」身上，知识被摊薄到更多神经元手里——这正是防「背图」的机制。</p>
+  <h3>演示二：为什么记忆线不能设卡</h3>
+  <p>假设记忆每传一步要过一道随机关卡、只有一半概率通过（保留 0.5）。传 10 步，全程通过的比例是 0.5 的 10 次方，约 0.001——千分之一。开头的信息几乎不可能完好走到第 10 步：记忆基本断线。这就是「在循环连接上做 Dropout 会打乱记忆」的算术直觉。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><strong>它把「训练大号 LSTM 语言模型」从手艺变成套路。</strong>此后许多序列模型（翻译、语音、文本生成）直接沿用「Dropout 只放非循环连接」的规则，省下的试错时间难以估量。工程小改动，收益立竿见影——实用主义的最好注脚。</p>
+  <p><strong>在系列里，它是主角的训练纪律。</strong><a href="i12-lstm-networks.html">理解 LSTM</a> 给了主角身体，这篇给了主角健身计划；随后主角继续进化——记忆学会比较（见 <a href="i14-relational-rnn.html">关系循环网络</a>）、学会回看原文（见 <a href="i15-nmt-attention.html">注意力机器翻译</a>），而训练时的朴素纪律一脉相承。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页出现的术语</caption>
+    <thead><tr><th scope="col">术语</th><th scope="col">白话解释</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Dropout（随机失活）</th><td>训练时随机「闭眼」一部分神经元，防死记硬背。</td></tr>
+      <tr><th scope="row">过拟合（overfitting）</th><td>把训练材料背下来而不懂规律，换题就垮。</td></tr>
+      <tr><th scope="row">正则化（regularization）</th><td>给训练加约束、防过拟合的手段总称。</td></tr>
+      <tr><th scope="row">循环连接（recurrent connection）</th><td>把上一步记忆传给下一步的那条线。</td></tr>
+      <tr><th scope="row">非循环连接（feed-forward connection，前馈连接）</th><td>信息从输入进 LSTM、或从 LSTM 输出出去的单向通道。</td></tr>
+      <tr><th scope="row">困惑度（perplexity）</th><td>语言模型常用分数，可粗读为「预测下一词时平均在多少个候选里犹豫」，越低越好。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文：<a href="https://arxiv.org/abs/1409.2329" rel="noopener noreferrer">Recurrent Neural Network Regularization（arXiv:1409.2329）</a></li>
+    <li>配套代码：<a href="https://github.com/wojzaremba/lstm" rel="noopener noreferrer">wojzaremba/lstm（GitHub）</a></li>
+    <li>系列导航：<a href="i00-ilya-reading-list.html">Ilya 书单系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i12-lstm-networks.html" rel="prev">上一篇：理解 LSTM</a>
+  <a href="i14-relational-rnn.html" rel="next">下一篇：关系循环网络</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为论文《Recurrent Neural Network Regularization》（Zaremba、Sutskever、Vinyals，arXiv:1409.2329，2014）的中文科普解读；事实以原文为准，文中算例为教学演示，非论文实验数字。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

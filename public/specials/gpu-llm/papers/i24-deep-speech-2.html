@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Speech 2：端到端语音识别｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读 2015 年论文《Deep Speech 2》：一段网络从声音直接到文字，英文中文同一套架构；大规模 GPU 集群与海量数据让错误率持续下降——「算力即进步」的实证宣言。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">Deep Speech 2</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">Deep Speech 2：端到端语音识别</h1>
+  <p class="paper-hero-meta">Deep Speech 2: End-to-End Speech Recognition in English and Mandarin · Dario Amodei 等（百度硅谷实验室）· arXiv 2015 · Ilya 推荐书单 i24</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>端到端</li>
+      <li>语音识别</li>
+      <li>规模化训练</li>
+    </ul>
+    <div class="table-scroll">
+    <table>
+      <caption>基本信息一览</caption>
+      <tbody>
+        <tr><th scope="row">中文题名</th><td>Deep Speech 2：端到端语音识别</td></tr>
+        <tr><th scope="row">英文题名</th><td>Deep Speech 2: End-to-End Speech Recognition in English and Mandarin</td></tr>
+        <tr><th scope="row">作者与机构</th><td>Dario Amodei 等（百度硅谷实验室）</td></tr>
+        <tr><th scope="row">发表</th><td>arXiv 2015</td></tr>
+        <tr><th scope="row">一句话定位</th><td>语音识别的「端到端 + 规模化」宣言，也是 Ilya 书单里「算力即进步」的代表。</td></tr>
+        <tr><th scope="row">一句话总结</th><td>一段网络从声音直接到文字，英文中文同一套架构；数据和模型变大，错误率持续下降。</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>原文出处见<a href="#links">「原文与代码」</a>。<span class="ev ev-p">论文事实</span></p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>2015 年之前的语音识别是一门「流水线工程」：音素模型、发音词典、语言模型各管一段，靠人工规则和中间产物串起来。每个部件由不同团队分别打磨，任何一段出错，误差都会传给下一段，而且整条流水线没法一起优化。这篇论文用一句话打破了分工：让一段网络从声音直接学到文字。</p>
+  <p>更值得记下的是，它同时押注了两件事：端到端（End-to-End）与规模化。英文和中文共用同一套架构，只换训练数据；训练则靠大规模 GPU 集群与海量数据撑起来。它用结果宣布：在语音这个成熟了几十年的领域，把模型和数据做大，错误率依然在持续下降。</p>
+  <p>在 Ilya 书单里，这一篇是「算力即进步」的代表——它比 i25「缩放定律」早了好几年，用工程实证先讲出了同一个故事的前半段。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>从前有个翻译社，专接外语录音的活儿。社里分三个科室：第一科先把录音标成一套音标符号，第二科拿着符号查一本厚厚的发音词典，第三科再润色成通顺句子。每一科都很敬业，可只要第一科标错一个音，第二科就会顺着错下去，最后成稿面目全非——而且出了错很难说清该怪谁。</p>
+  <p>后来社里来了位全能译员：录音进来，稿子出去，中间不再转手。她也会出错，但错了就是她的错，改一次就全对；听得多了、练得多了，水平肉眼可见地往上走。客户很快发现：与其维护三个科室和一堆交接单据，不如把预算花在给这位译员报班进修上。</p>
+  <p>旧式流水线与端到端模型的差别，正是「分段转手」与「一人到底」的差别：转手越多，误差越容易滚雪球；一人到底，进步也全部记在同一个人账上。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>旧式系统的三段流水线各有各的人工设计：音素模型管「这段声音是哪个基本音」，发音词典管「这些音拼成哪个词」，语言模型管「哪种句子像人话」。段与段之间靠中间结果衔接，每衔接一次就多一层误差，而且整体优化无从谈起——你没办法端着整条流水线一起「调参数」。</p>
+  <p>Deep Speech 2 的做法是把流水线换成一段网络：输入是声音，输出直接是文字，中间的所有环节都交给网络自己学。英文和中文用的是同一套架构——不需要为中文另发明一套方法，换数据即可。这隐含着一个大胆的判断：语音识别的本质难题在各语言之间是共通的，通用架构加上海量数据足以覆盖。</p>
+  <p>训练上的支撑是规模化：大规模 GPU 集群、海量标注数据。论文给出的结论性经验是：数据和模型变大，错误率持续下降。这句话今天听来平淡，在当时等于宣判了「手工流水线」的出局——原来进步可以不靠更精巧的规则，而靠更大的规模。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>用一个示意计算看看「误差级联」有多伤（数字是教学假设，不是论文数据）。假设旧流水线有 4 段，每段正确率都是 90%：要整条流水线全对，四段得依次都对，正确率是 0.9 的 4 次方，也就是 0.9×0.9×0.9×0.9 ≈ 0.656，约 66%——每段只错 10%，串起来错误率却超过三成。</p>
+  <p class="formula">四段级联：0.9 × 0.9 × 0.9 × 0.9 ≈ 0.656 → 错误率约 34%；两段级联：0.9 × 0.9 = 0.81 → 错误率约 19%</p>
+  <p>若把 4 段合并成 2 段、每段同样保持 90%：0.9×0.9 = 0.81，错误率降到约 19%。这正是端到端的动机之一：分段越多，每段再正确也架不住连乘；把转手次数砍掉，同样的段内水平，整体错误率就明显下降。而端到端训练还有额外的好处——整段网络朝着最终目标一起调，不必各段各自为战。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><span class="ev ev-p">论文结论</span> 短期看，它把工业界语音识别的技术路线掰到了端到端一边；长期看，它给了整个行业一个心理预期：在语音上，规模投资的回报是可以预期的——这个信念后来在语言模型上被 i25「缩放定律」升级成了定量规律。</p>
+  <p><span class="ev ev-i">本站推断</span> 它也示范了「通用架构」的威力：一套架构、两种语言，省掉的是无数人工特判。这种「换数据不换方法」的思路，正是后来大模型时代最被看重的品质；它与书单里 i06「AlexNet」、i08「ResNet」同属一条主线——深度学习的能力随算力与深度一起成长。</p>
+  <p>系列内相关阅读：<a href="i25-scaling-laws.html">i25 缩放定律</a>（把「变大变好」从经验升级为定律）、<a href="i26-gpipe.html">i26 GPipe</a>（模型大到一张卡装不下时怎么办）、<a href="i06-alexnet.html">i06 AlexNet</a>（深度学习爆发的起点）。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页术语速查</caption>
+    <tbody>
+      <tr><th scope="row">端到端（End-to-End）</th><td>从原始输入直接训练到最终输出，中间不设人工流水线。</td></tr>
+      <tr><th scope="row">音素（Phoneme）</th><td>语音中能区别意义的最小声音单元，旧式系统的基本积木。</td></tr>
+      <tr><th scope="row">发音词典（Pronunciation Lexicon）</th><td>记录「词由哪些音组成」的对照表。</td></tr>
+      <tr><th scope="row">语言模型（Language Model）</th><td>判断「哪种句子更像人话」的部件。</td></tr>
+      <tr><th scope="row">错误率（Error Rate）</th><td>识别错的字数占总字数的比例，语音识别的核心指标。</td></tr>
+      <tr><th scope="row">GPU 集群</th><td>成百上千张显卡协同工作的训练系统，规模化的硬件基础。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（arXiv 摘要页）：<a href="https://arxiv.org/abs/1512.02595" rel="noopener noreferrer">arxiv.org/abs/1512.02595</a></li>
+    <li>本页只收录批次简报给出的外链；论文配套代码请以原文页面为准，本站不臆造仓库地址。</li>
+    <li>系列内相关页：<a href="i23-vlae.html">i23 变分有损自编码器</a> · <a href="i25-scaling-laws.html">i25 缩放定律</a> · <a href="i00-ilya-reading-list.html">系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i23-vlae.html" rel="prev">上一篇：变分有损自编码器</a>
+  <a href="i25-scaling-laws.html" rel="next">下一篇：缩放定律</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据论文《Deep Speech 2》（arXiv:1512.02595）与批次简报撰写；所有类比、示意数字与延伸解读均为本站原创，不代表论文原文表述。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

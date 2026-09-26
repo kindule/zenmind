@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>理解 LSTM 网络｜Ilya 推荐书单解读</title>
+<meta name="description" content="一条记忆传送带加三道阀门（遗忘门、输入门、输出门），如何让神经网络记住长句子的开头。白话拆解 Christopher Olah 的 LSTM 标准入门。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">理解 LSTM</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">理解 LSTM 网络</h1>
+  <p class="paper-hero-meta">Understanding LSTM Networks · Christopher Olah · 2015 · 博文</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i11-rnn-effectiveness.html" rel="prev">上一篇：RNN 的惊人有效性</a>
+  <a href="i13-rnn-regularization.html" rel="next">下一篇：RNN 正则化</a>
+</nav>
+
+<details class="toc">
+  <summary>本页目录</summary>
+  <ol>
+    <li><a href="#card">论文名片</a></li>
+    <li><a href="#why">Ilya 为什么选它</a></li>
+    <li><a href="#story">从生活说起</a></li>
+    <li><a href="#idea">核心思想拆解</a></li>
+    <li><a href="#worked">动手算一算</a></li>
+    <li><a href="#impact">它改变了什么</a></li>
+    <li><a href="#glossary">术语小词典</a></li>
+    <li><a href="#links">原文与代码</a></li>
+  </ol>
+</details>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <ul class="tag-row">
+    <li>2015 · 博文</li>
+    <li>LSTM 入门经典</li>
+    <li>图解科普</li>
+  </ul>
+  <div class="fact-card">
+    <h3>速览</h3>
+    <p><strong>题目：</strong>Understanding LSTM Networks（理解 LSTM 网络）。</p>
+    <p><strong>作者与形式：</strong>Christopher Olah，2015 年长篇图解博文。</p>
+    <p><strong>地位：</strong>史上被读得最多的深度学习科普之一，<strong>LSTM（Long Short-Term Memory，长短期记忆网络）</strong>的标准入门。</p>
+    <p><strong>一句话内容：</strong>普通 RNN 的记忆每一步都被重写，长句记不住开头；LSTM 用一条「记忆传送带（cell state，细胞状态）」加三道阀门（遗忘门、输入门、输出门），决定旧记忆留什么、新信息存什么、此刻用什么。</p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>上一篇 <a href="i11-rnn-effectiveness.html">RNN 的惊人有效性</a>展示了循环网络能有多神奇，也暴露了「记性差」的短板；本篇补上的正是那块基建。在 Transformer 出现之前的好些年里，LSTM 是翻译、语音、语言模型等序列任务的主力结构，读懂它，才读懂那个时代的论文。</p>
+  <p>选这篇博文而不是原始论文，还因为它开创了一种讲法：先用图示与生活直觉把门的作用讲透，公式退居幕后。这种「直觉优先」的讲法影响了后来无数教程，也让它成为书单里最好的「钥匙」——拿到它，后续更难的论文才推得开。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想象一个记账员，用一块小黑板记账：每来一笔新账，他就把整块黑板擦掉重写。一个月后问他「这个月第一天记了什么」——早就没有了。普通 RNN 的记忆正是这块黑板：每读一个新字符（或新词），整块记忆都被重写一遍，长句开头自然保不住。</p>
+  <p>改良方案有两件套。第一，加一条<strong>传送带</strong>：旧账不再被擦掉，而是放上传送带平稳向前走，随时可以取用。第二，装三道<strong>阀门</strong>：一道决定旧账擦多少、一道决定新账存多少、一道决定此刻往外用多少。</p>
+  <p>换个更贴身的画面：像一本笔记本，每天只擦掉一部分、写进一部分——大部分旧内容还在，新内容也有条理地补进去，本子越记越厚而不失章法。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>先说病根。</strong>普通 RNN 的记忆每一步都被重写；所谓「梯度消失（vanishing gradient）」的白话版就是：开头的影响每往传递一步就打个小折扣，传几十步就近乎归零。于是句子读到结尾，主语是单数还是复数、前文承诺过什么，全都记不清了。</p>
+  <p><strong>第一件套：传送带。</strong>LSTM 的细胞状态是一条横穿整个「读句子」过程的传送带。信息上了带就平稳向前，不经过每一步的重写；想对它做加减，必须通过阀门。长程信息因此有了「直达通道」。</p>
+  <p><strong>第二件套：三道阀门（gate，门）。</strong>遗忘门（forget gate）看着当前输入，决定传送带上哪些旧记忆该擦、擦多少；输入门（input gate）决定眼前的新信息存多少上带；输出门（output gate）决定此刻从带上取多少出去用。三道门都像水龙头：开度可以大、可以小、可以停在中间，而不是非开即关。</p>
+  <p><strong>分工一句话：</strong>留什么、存什么、用什么——遗忘门管留，输入门管存，输出门管用。Olah 原文用一步步的图示讲解三道门的配合，直觉为主、公式为辅；本页遵循同样的精神，只建立画面感，不写门公式。</p>
+  <div class="callout">
+    <p><strong>关键洞察：</strong>LSTM 的关键不是「记更多」，而是给记忆修一条不被每步重写的通道，再用阀门缓缓调整它——该记的近乎全保，该忘的迅速放掉。</p>
+  </div>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>本节算术为教学演示，不是论文数字。</p>
+  <h3>演示：打折扣与传送带的差距</h3>
+  <p>假设记忆影响每传一步打九折（乘 0.9），50 步之后是 0.9 的 50 次方，约 0.005，只剩千分之五；若阀门把保留比例提到九九折（乘 0.99），50 步之后是 0.99 的 50 次方，约 0.6，还剩六成。同样是 50 步，后者留下的是前者的 100 多倍。</p>
+  <p>这就是「传送带加阀门」的算术本质：让「保留比例」变成可以逐处学习、逐处不同的量。重要的信息路径保留比例接近一（几乎无损），无关的信息则被迅速放掉。长句开头的线索，就这样一路活到句子结尾。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><strong>对内：</strong>它修补了字符接龙那条线的短板，让翻译、语音、语言模型等长序列任务真正可用。本系列随后的两篇都盖在它的地基上：<a href="i13-rnn-regularization.html">RNN 正则化</a>研究怎么把 LSTM 训练得更好；<a href="i15-nmt-attention.html">注意力机器翻译</a>则发现，就算记性好，写译文时还是想「随时回看原文」。</p>
+  <p><strong>对外：</strong>「传送带加三道阀门」的画面成了整整一代人理解「记忆如何流过神经网络」的通用隐喻；直到今天，讲循环网络的教程几乎都沿用 Olah 建立的图示直觉。一篇博文的讲法，成了一门课的标准教材。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页出现的术语</caption>
+    <thead><tr><th scope="col">术语</th><th scope="col">白话解释</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">LSTM（Long Short-Term Memory，长短期记忆网络）</th><td>加装传送带与阀门的循环网络，擅长记住长距离信息。</td></tr>
+      <tr><th scope="row">细胞状态（cell state）</th><td>记忆传送带，横穿整个处理过程，信息在上面平稳流动。</td></tr>
+      <tr><th scope="row">门（gate）</th><td>水龙头式开关，开度可大、可小、可停在中间；LSTM 共三道。</td></tr>
+      <tr><th scope="row">遗忘门（forget gate）</th><td>决定旧记忆留多少、擦多少。</td></tr>
+      <tr><th scope="row">输入门（input gate）</th><td>决定新信息存多少上传送带。</td></tr>
+      <tr><th scope="row">输出门（output gate）</th><td>决定此刻从传送带取多少出去使用。</td></tr>
+      <tr><th scope="row">梯度消失（vanishing gradient）</th><td>白话版：影响每传一步打个小折扣，传几十步就近乎归零。</td></tr>
+      <tr><th scope="row">时间步（time step）</th><td>模型读入一个字符（或词）并更新一次记忆的「一步」。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文博文：<a href="https://colah.github.io/posts/2015-08-Understanding-LSTMs/" rel="noopener noreferrer">Understanding LSTM Networks</a></li>
+    <li>系列导航：<a href="i00-ilya-reading-list.html">Ilya 书单系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i11-rnn-effectiveness.html" rel="prev">上一篇：RNN 的惊人有效性</a>
+  <a href="i13-rnn-regularization.html" rel="next">下一篇：RNN 正则化</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为 Christopher Olah 博文《Understanding LSTM Networks》（2015）的中文科普解读；门机制只讲直觉、不列公式，算例为教学演示。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

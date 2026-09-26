@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>变分有损自编码器｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读 2016 年论文《变分有损自编码器》：码的容量是预算，网络自动学会把全局梗概写进码、把局部纹理留给解码器补——码变有损，重建更聪明。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">变分有损自编码器</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">变分有损自编码器</h1>
+  <p class="paper-hero-meta">Variational Lossy Autoencoder · Xi Chen 等 · arXiv 2016 · Ilya 推荐书单 i23</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>自编码器</li>
+      <li>有损压缩</li>
+      <li>信息预算</li>
+    </ul>
+    <div class="table-scroll">
+    <table>
+      <caption>基本信息一览</caption>
+      <tbody>
+        <tr><th scope="row">中文题名</th><td>变分有损自编码器</td></tr>
+        <tr><th scope="row">英文题名</th><td>Variational Lossy Autoencoder</td></tr>
+        <tr><th scope="row">作者</th><td>Xi Chen 等</td></tr>
+        <tr><th scope="row">发表</th><td>arXiv 2016</td></tr>
+        <tr><th scope="row">一句话定位</th><td>用「信息预算」解释网络学会把什么写进压缩码。</td></tr>
+        <tr><th scope="row">一句话总结</th><td>码的容量有限，网络自动学会把全局梗概写进码、把局部纹理留给解码器补——码变「有损」，重建反而更聪明。</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>原文出处见<a href="#links">「原文与代码」</a>。<span class="ev ev-p">论文事实</span></p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>自编码器（Autoencoder）是深度学习里最朴素的想象之一：把图压成一小段码，再用这段码把原图建回来。听起来似乎应该「什么都记一点」，可真正训练出来的网络常常让人看不懂：码里到底存了什么？为什么有时重建模糊、有时锐利？这些问题过去多半只能靠事后猜测。</p>
+  <p>这篇论文递过来一把解释的钥匙：预算。码的容量就是预算，网络在训练中被逼着决定「把钱花在哪」。论文观察到的规律是：给解码器（Decoder）的能力越多——比如它自己也能看到邻域像素——压缩码里就自动只留「全局梗概」，纹理细节不再占预算。一个纯技术问题背后，是清清楚楚的信息分配逻辑。</p>
+  <p>对这份书单而言，它是 i01「最小描述长度」与 i02「Kolmogorov 复杂度」里「描述长度」思想在真实网络中的回响：好的压缩从来不是照抄一切，而是把有限的描述长度花在最值得的地方。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>搬家的时候行李箱格子有限，你不会把日用品全塞进去——牙膏肥皂到新家现买就是了。箱子里只放两样东西：贵重品，和一张「什么放在哪」的清单。贵重品丢了补不回来，清单是日后一切安排的总纲，而日用品随处可以再得。</p>
+  <p>存照片也是同一个道理。会存图的人不平均用力：画面的构图——人脸在哪、天空占多大——一旦存错，整张图就「不像了」；而草地的纹理、皮肤的颗粒哪怕略有出入，肉眼几乎看不出。于是聪明的存法只存构图，纹理交给「脑补」来补全。</p>
+  <p>变分有损自编码器把这套搬家智慧装进了网络：码是行李箱，全局梗概是清单和贵重品，解码器是「到新家现买日用品」的能力本身。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>先摆结构。自编码器分两半：编码器把输入图压成一小段码；解码器拿着码重建原图。训练目标朴素得不能再朴素——重建得越像越好。但就在这个朴素目标之下，只要调节「解码器能看到什么」，码里存什么就会系统性地跟着变。</p>
+  <p>论文的关键观察是：当解码器本身能力很强（例如自带局部视野，能参照重建像素的周边邻域）时，局部细节它自己就能补出来，码里再存细节纯属浪费；于是训练自动把码的预算腾出来，只存解码器无从得知的全局信息——物体的位置、形状、整体布局。反过来，若解码器很弱，码就被迫事无巨细地照抄像素。</p>
+  <p>背后的信息论直觉一句话就能说完：码的每个字节都珍贵，只放「必须全局共享的信息」。这也是 bits-back 思想的通俗版——本页不展开公式，记住「预算有限、按需分配」就够了。这样得到的码是「有损」的：它不追求记录每个像素，却让整体重建更聪明、更像原图。</p>
+  <div class="callout">
+    <p>这与 i01「最小描述长度」、i02「Kolmogorov 复杂度」一脉相承：凡是被局部规律预测得到的部分，不值得写进描述；宝贵的描述长度应该留给真正的「意外」——全局安排。</p>
+  </div>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>做一个格子游戏（示意数字，只用于说明取舍）。假设压缩码只有 10 个格子。方案 A：把左上角一小块像素的精确颜色挨个塞进去——10 格只够存一小角，画面其余部分完全没有信息，重建图整体不像。方案 B：花 6 格记「图中有一只猫、位于左上、约占画面三分之一」，4 格记粗略的明暗分布，细节一概不存。</p>
+  <p class="formula">方案 A：10 格全给局部 → 全局信息 0；方案 B：6 格全局 + 4 格粗略 → 局部由解码器经验补全</p>
+  <p>比较一下：方案 A 保存了 10 格「局部精确」，却丢了 100% 的全局；方案 B 全局齐全，局部靠解码器凭经验补。哪张重建图更像原图？显然是 B。这就是「有损但更聪明」：牺牲没人缅怀的局部精确，换来决定「像不像」的全局正确。整个取舍，本质上只是一道四则运算的选择题。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><span class="ev ev-p">论文观察</span> 它改变了评价「压缩」的标准：不是失真越小越好，而是预算有没有花在刀刃上——「存什么」比「存多少」更根本。此后生成模型与图像编码的工作反复借用这个分工：全局语义与局部细节，各干各的擅长的事。</p>
+  <p><span class="ev ev-i">本站推断</span> 它也示范了如何解释「网络为什么学成这样」：不诉诸玄学，只追问两个问题——谁的预算、谁的能力。表征学习里「编码器与解码器分工」的种种设计，都能在这篇论文里找到通俗原型。</p>
+  <p>系列内相关阅读：<a href="i22-relational-reasoning.html">i22 关系推理模块</a>（上一站：推理结构）、<a href="i24-deep-speech-2.html">i24 Deep Speech 2</a>（下一站：端到端与规模化）、<a href="i00-ilya-reading-list.html">系列导语</a>。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页术语速查</caption>
+    <tbody>
+      <tr><th scope="row">自编码器（Autoencoder）</th><td>先把输入压成短码、再用短码重建输入的网络。</td></tr>
+      <tr><th scope="row">编码器（Encoder）</th><td>负责压缩的那一半。</td></tr>
+      <tr><th scope="row">解码器（Decoder）</th><td>负责重建的那一半。</td></tr>
+      <tr><th scope="row">有损压缩（Lossy Compression）</th><td>允许细节损失、追求整体相似的压缩方式。</td></tr>
+      <tr><th scope="row">信息预算（本站通俗说法）</th><td>码的容量有限，写什么、不写什么必须取舍。</td></tr>
+      <tr><th scope="row">bits-back（位点回补思想）</th><td>把「码的成本」与「模型能自行补出的信息」分开记账的信息论思路；本页只取其通俗直觉，不展开公式。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（arXiv 摘要页）：<a href="https://arxiv.org/abs/1611.02731" rel="noopener noreferrer">arxiv.org/abs/1611.02731</a></li>
+    <li>本页只收录批次简报给出的外链；论文配套代码请以原文页面为准，本站不臆造仓库地址。</li>
+    <li>系列内相关页：<a href="i22-relational-reasoning.html">i22 关系推理模块</a> · <a href="i24-deep-speech-2.html">i24 Deep Speech 2</a> · <a href="i00-ilya-reading-list.html">系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i22-relational-reasoning.html" rel="prev">上一篇：关系推理模块</a>
+  <a href="i24-deep-speech-2.html" rel="next">下一篇：Deep Speech 2</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据论文《Variational Lossy Autoencoder》（arXiv:1611.02731）与批次简报撰写；所有类比、示意数字与延伸解读均为本站原创，不代表论文原文表述。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ilya 推荐书单系列导语：塑造现代 AI 的 27 篇论文｜Ilya 推荐书单解读</title>
+<meta name="description" content="Ilya Sutskever 赠予 John Carmack 的研究书单（流传约 30 条、公开整理版 27 条）：来源故事、七大部分导览、建议阅读路线，以及每篇初中数学也能懂的深度解读入口。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">系列导语</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">Ilya 推荐书单系列：塑造现代 AI 的 27 篇论文</h1>
+  <p class="paper-hero-meta">来源：Ilya Sutskever 赠予 John Carmack 的研究清单（2024 年经推文公开流传）· 公开整理版 27 条 · 每篇配初中数学也能懂的深度解读</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">系列名片</h2>
+  <p>这是一个由 <strong>27 篇论文与资料</strong>组成的深度解读系列，源头是一份著名的研究书单：<strong>Ilya Sutskever</strong>（AlexNet 与 Transformer 论文作者之一、OpenAI 前首席科学家）在 2024 年赠予传奇程序员 <strong>John Carmack</strong> 的阅读清单。清单随推文公开流传（流传说法「约 30 条」，公开整理版本的正式条目为 27 条），Ilya 附的原话是：</p>
+  <blockquote><p>“If you really learn all of these, you’ll know 90% of what matters today.”——如果你真的学会这些，你就懂了当今重要的 90%。</p></blockquote>
+  <p>本系列把 27 条逐一展开成<strong>初中数学也能读懂</strong>的深度解读页：每篇只用四则运算、幂与指数、百分比和图像直觉来讲，更深的概念全部转成生活类比。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从一条推文说起</h2>
+  <p>2024 年年中，一条推文把这份书单带进了大众视野：有人发现 Ilya Sutskever 给 John Carmack 发去了一份约 30 条的研究论文清单。这两个人都值得介绍一下——Ilya 是深度学习三次浪潮的深度参与者：他是 2012 年 AlexNet 的作者之一，也是 2017 年 Transformer 论文《Attention Is All You Need》的作者之一，长期担任 OpenAI 首席科学家；Carmack 则是游戏引擎时代的传奇工程师（《毁灭战士》《雷神之锤》的缔造者），后来把注意力转向通用人工智能。</p>
+  <p>清单最初通过一个 Arc 浏览器的书签文件夹分享，随后被多个开源仓库整理归档。为什么一份书单能火？因为开书单的人极少有 Ilya 这种「选手兼裁判」的资历：他不是旁观者，而是清单里多条技术路线（卷积网络、循环网络、注意力、规模化）的亲历者与推动者。这样的清单更像一张「过来人的行军地图」，而不是随手转发的收藏夹。</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">为什么值得按这份清单读</h2>
+  <p><strong>第一，脉络完整。</strong>27 条按时间与主题天然分成七段：先打理论地基（怎么衡量「描述得短」与「压缩得好」），再走视觉（卷积网络）、序列（循环网络），进入注意力与 Transformer，然后是架构探索（记忆、指针、图、关系推理），最后是规模化定律与「智能的定义」这种哲学收尾。读完相当于把 2012–2020 年深度学习主干走了一遍。</p>
+  <p><strong>第二，亲历者视角。</strong>清单里没有面面俱到的教科书，只有「塑造了今天」的那批工作：AlexNet 引爆深度学习、ResNet 让网络深得起来、注意力一步步走向 Transformer、缩放定律为大模型时代定调。每一条都在回答「今天的 AI 为什么是这个样子」。</p>
+  <p><strong>第三，本系列的特殊读法。</strong>每一篇都按同一副骨架展开：论文名片 → Ilya 为什么选它 → 从生活说起 → 核心思想拆解 → 动手算一算 → 它改变了什么 → 术语小词典 → 原文与代码。数学只用到初中水平；遇到更深的工具（微积分、矩阵、概率分布），一律翻译成生活场景再讲。</p>
+</section>
+
+<section id="map" aria-labelledby="map-title">
+  <h2 id="map-title">七大部分导览</h2>
+  <p><strong>板块一 · 理论地基：怎么衡量「好模型」（i01–i05）。</strong>一切都从「描述长度」开始：最短描述即最好模型（<a href="i01-mdl.html">i01 最小描述长度</a>）；它的理论天花板是 Kolmogorov 复杂度（<a href="i02-kolmogorov.html">i02 Kolmogorov 复杂度</a>）；Hinton 在 1993 年就把它用到神经网络权重上（<a href="i03-keeping-nn-simple.html">i03 用描述长度精简神经网络</a>）；咖啡自动机（<a href="i04-coffee-automaton.html">i04 咖啡自动机</a>）与「复杂动力学第一定律」（<a href="i05-complexodynamics.html">i05 复杂动力学第一定律</a>）则讨论一个更微妙的问题——为什么封闭系统会先变复杂、再归于简单。</p>
+  <p><strong>板块二 · 卷积网络：让机器看懂图（i06–i10）。</strong>AlexNet（<a href="i06-alexnet.html">i06 AlexNet</a>）引爆一切；CS231n（<a href="i07-cs231n.html">i07 CS231n</a>）把 CNN 学扎实；ResNet（<a href="i08-resnet.html">i08 ResNet</a>）解决「深不起来」，恒等映射（<a href="i09-identity-mappings.html">i09 恒等映射</a>）解释为什么；膨胀卷积（<a href="i10-dilated-convolutions.html">i10 膨胀卷积</a>）给卷积装上望远镜。</p>
+  <p><strong>板块三 · 循环网络与注意力的诞生（i11–i15）。</strong>Karpathy 让我们看见 RNN 写作的魔力（<a href="i11-rnn-effectiveness.html">i11 RNN 的惊人有效性</a>）；Olah 讲透 LSTM 的门与传送带（<a href="i12-lstm-networks.html">i12 理解 LSTM</a>）；Ilya 本人署名的 Dropout 用法（<a href="i13-rnn-regularization.html">i13 RNN 正则化</a>）；关系循环网络（<a href="i14-relational-rnn.html">i14 关系循环网络</a>）给记忆加比较能力；Bahdanau 注意力（<a href="i15-nmt-attention.html">i15 注意力机器翻译</a>）让翻译学会「回头看」。</p>
+  <p><strong>板块四 · Transformer（i16–i17）。</strong>Attention Is All You Need（<a href="i16-attention-is-all-you-need.html">i16 Attention Is All You Need</a>）是一切大模型的地基（本站另有其系统视角的深度解读 f01 页，两页互为补充）；The Annotated Transformer（<a href="i17-annotated-transformer.html">i17 Annotated Transformer</a>）把它逐行落成可运行代码。</p>
+  <p><strong>板块五 · 架构探索（i18–i23）。</strong>指针网络（<a href="i18-pointer-networks.html">i18 指针网络</a>）让输出「指向输入」；Order Matters（<a href="i19-order-matters.html">i19 Order Matters</a>）处理无序集合；神经图灵机（<a href="i20-neural-turing-machines.html">i20 神经图灵机</a>）外挂内存条；消息传递神经网络（<a href="i21-mpnn-message-passing.html">i21 消息传递神经网络</a>）统一图模型；关系推理模块（<a href="i22-relational-reasoning.html">i22 关系推理模块</a>）把「两两比较」做成积木；变分有损自编码器（<a href="i23-vlae.html">i23 变分有损自编码器</a>）用信息预算解释表示学习。</p>
+  <p><strong>板块六 · 规模化（i24–i26）。</strong>Deep Speech 2（<a href="i24-deep-speech-2.html">i24 Deep Speech 2</a>）实证「端到端+变大变好」；缩放定律（<a href="i25-scaling-laws.html">i25 缩放定律</a>）把「变大变好」变成可预测的幂律；GPipe（<a href="i26-gpipe.html">i26 GPipe</a>）解决「大到装不下」的流水线并行。</p>
+  <p><strong>板块七 · 智能的定义（i27）。</strong>压轴的 Shane Legg 博士论文（<a href="i27-machine-super-intelligence.html">i27 机器超级智能</a>）不造工具，只造「尺子」：通用智能到底该怎么严格定义、怎么衡量。</p>
+</section>
+
+<section id="book" aria-labelledby="book-title">
+  <h2 id="book-title">与《30 篇论文 PyTorch 实战》一书的关系</h2>
+  <p>市面上的《建構 AI 世界最重要的 30 篇論文：用 PyTorch 完整實作》（旗標出版）封面以「Sutskever 大神推薦」为引。需要说明的是：该书按 1958–2022 的教学线自行组织选目（包含感知机、AlphaGo、BERT/GPT/RLHF 等），与 Ilya 原始清单（公开整理版 27 条）并不完全重合。两者是互补关系：本系列呈现「前沿者认为什么重要」的原单脉络，那本书呈现「教学线怎么串起 64 年」；如果你以读懂原单为目标，按本系列顺序走即可，每篇的「原文与代码」一节都给了公开链接。</p>
+</section>
+
+<section id="howto" aria-labelledby="howto-title">
+  <h2 id="howto-title">建议阅读路线</h2>
+  <p><strong>零基础路线：</strong>先读板块一里最容易的 <a href="i04-coffee-automaton.html">i04 咖啡自动机</a> 与 <a href="i05-complexodynamics.html">i05 复杂动力学第一定律</a>（不涉及神经网络，只谈「复杂度」直觉），再进板块二的 <a href="i06-alexnet.html">i06 AlexNet</a>、<a href="i07-cs231n.html">i07 CS231n</a>，然后按顺序走完板块三、四；板块五可按兴趣挑读；板块六适合关心大模型训练的读者；<a href="i27-machine-super-intelligence.html">i27 机器超级智能</a> 留到最后。</p>
+  <p><strong>大模型从业者路线：</strong>直接读 <a href="i15-nmt-attention.html">i15 注意力机器翻译</a> → <a href="i16-attention-is-all-you-need.html">i16 Attention Is All You Need</a> → <a href="i17-annotated-transformer.html">i17 Annotated Transformer</a> → <a href="i25-scaling-laws.html">i25 缩放定律</a> → <a href="i26-gpipe.html">i26 GPipe</a>，再回补其余。每篇独立成页，可跳读；页内「它改变了什么」都标了与系列其他篇的连接。</p>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原始出处与公开整理仓库</h2>
+  <ul>
+    <li>书单流传推文：<a href="https://twitter.com/keshavchan/status/1787861946173186062" rel="noopener noreferrer">keshavchan 的推文（含 Ilya 原话）</a></li>
+    <li>清单原始书签：<a href="https://arc.net/folder/D0472A20-9C20-4D3F-B145-D2865C0A9FEE" rel="noopener noreferrer">Arc.net 公开文件夹</a></li>
+    <li>整理仓库一：<a href="https://github.com/dzyim/ilya-sutskever-recommended-reading" rel="noopener noreferrer">dzyim/ilya-sutskever-recommended-reading</a></li>
+    <li>整理仓库二（含章节化免费书）：<a href="https://github.com/piyushjajoo/ilya-30u30-book" rel="noopener noreferrer">piyushjajoo/ilya-30u30-book</a></li>
+    <li>站内关联页：<a href="f01-attention-is-all-you-need.html">F01 · Attention Is All You Need 深度解读（系统视角）</a></li>
+  </ul>
+</section>
+
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="../index.html" rel="prev">上一篇：返回论文站首页</a>
+  <a href="i01-mdl.html" rel="next">下一篇：i01 最小描述长度</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页基于公开流传的 Ilya Sutskever→John Carmack 书单及 GitHub 公开整理仓库（dzyim、piyushjajoo 等）撰写；清单条目、链接与背景故事以上述来源为据（27 条为公开整理版正式条目数，流传说法约 30 条）；最后核验日期 2026-09-26。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

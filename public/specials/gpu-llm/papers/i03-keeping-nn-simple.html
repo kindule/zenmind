@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用最小化权重的描述长度让神经网络保持简单｜Ilya 推荐书单解读</title>
+<meta name="description" content="Hinton 与 van Camp 在 1993 年就把 MDL 用到神经网络上：权重本身要花字节描述，先加噪声再量化让权重码更短；码越短，死记硬背的空间越小，泛化越好。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">用描述长度精简神经网络</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">用描述长度精简神经网络：给权重省字节的 1993 年妙招</h1>
+  <p class="paper-hero-meta">原文：Keeping Neural Networks Simple by Minimizing the Description Length of the Weights · Geoffrey Hinton、Dirk van Camp · COLT 1993 ｜ i 系列 03 / 27 · 板块一：理论地基</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>会议论文</li>
+      <li>1993 年</li>
+      <li>i 系列 03 / 27</li>
+    </ul>
+    <table>
+      <caption>名片速览</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Keeping Neural Networks Simple by Minimizing the Description Length of the Weights</td></tr>
+        <tr><th scope="row">作者</th><td>Geoffrey Hinton、Dirk van Camp</td></tr>
+        <tr><th scope="row">发表</th><td>COLT 1993（计算学习理论会议）</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://www.cs.toronto.edu/~hinton/absps/colt93.pdf" rel="noopener noreferrer">cs.toronto.edu/~hinton/absps/colt93.pdf</a></td></tr>
+        <tr><th scope="row">一句话定位</th><td>把 i01/i02 的描述长度哲学第一次按到神经网络上：权重自己也要花字节，省字节的权重换来更好的泛化。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">这篇论文比深度学习的爆发早了将近二十年。在当时「神经网络」还常被当作贬义词的年代，Hinton 已经在用「字节数」思考泛化问题。</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p><strong>师承线索。</strong>Hinton 是 Ilya 在多伦多大学读博时的导师，而这份书单正出自 Ilya 之手。学生在书单里放进老师 1993 年的论文，既是致意，也是判断：这条「压缩换泛化」的思路足够根本，值得每个后来者回头一看。</p>
+  <p><strong>思想地位。</strong>今天炼丹师们天天在用的正则化（regularization，给学习加约束、防止死记硬背的各种手段），以及「用记一个大概分布代替逐点硬记」的变分方法（variational methods），思想源头之一都能追到这篇短论文。它把 i01/i02 的抽象哲学变成了神经网络的具体操作。</p>
+  <p>理解了这一篇，再看书单后面 i23（<a href="i23-vlae.html">变分有损自编码器</a>）与 i25（<a href="i25-scaling-laws.html">缩放定律</a>），会看到同一条思想河流的下游。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p><strong>行李箱的预算。</strong>出门远行，行李箱就那么大：每多塞一件东西，都要亲手搬着它走完全程。老练的旅行者只带关键几件，其余到现场再说。神经网络也一样：训练好的网络要「搬家」（部署到别处使用），每个权重数值都得一字不差地写进文件带走——权重越多、小数位越长，「搬家费」越贵。Hinton 的疑问由此而来：能不能让网络既学得好，又搬得轻？</p>
+  <p><strong>背口诀的同学。</strong>背诵圆周率，甲同学硬背两百位；乙同学只记几句口诀，其余现场推导。考「照本默写」时两人都过关，可换一道要「用」圆周率的题，只有乙同学行。死记硬背占用的是长长的「描述」，理解占用的是短短的「规律」。MDL 站在乙同学这边：描述越短，越说明抓住了规律而不是复印了题目——因为描述本身也是要花力气的，行李箱的容量就那么大。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>网络的体积不只是层数。</strong>数一个神经网络「多大」，通常数层数、数神经元；但 MDL 视角提醒我们还有另一笔账：把训练好的网络交给别人时，<strong>每个权重数值都要花字节写下来</strong>。于是描述总长度 = 权重的码 + 训练误差的码。想总长短，只有两条路：误差小（学得准），或者权重好描述（码得省）。最好的网络，是这两笔账加起来最短的网络。</p>
+  <p><strong>妙招一：先加噪声。</strong>如果训练时就故意给权重加噪声（noise，随机的小扰动），网络就被迫适应「模糊版」的自己——它不能把性能押在权重的第 8 位小数上，只能依靠权重的「大致量级」。这样一来，事后把每个权重四舍五入到粗档位，性能也掉不了多少。</p>
+  <p><strong>妙招二：再上量化。</strong>量化（quantization）就是把连续的小数变成有限几个档位，比如把 0 到 1 之间切成 0.0、0.1、……、1.0 十档。档位越粗，每个权重花的字节越少；而有了前面的噪声训练打底，粗档位造成的伤害被提前「免疫」了。两招连用，权重的码大幅缩短，误差的码几乎不变——总描述长度实打实下降。</p>
+  <p><strong>更进一步：记范围，不记点。</strong>与其精确记录每个权重「是多少」，不如记录「它大概在哪、上下晃动多大」——记一个范围，比记一个精确值短得多。这种「用分布代替点值」的记账法，正是变分方法的思想雏形；书单里的 i23 可以看作这套想法在深度自编码器上的遥远回声。</p>
+  <p><strong>因果链条一气呵成：</strong>权重码更短 → 网络能死记硬背的空间更小 → 只能去抓真规律 → 泛化更好。奥卡姆剃刀就这样被 Hinton 装进了神经网络。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>玩具算术（以下数字均为演示假设，不是论文数据）：设一个小网络有 1 亿个权重。</p>
+  <div class="table-scroll">
+    <table>
+      <caption>两种「记权重」方式的描述长度（演示假设）</caption>
+      <thead><tr><th scope="col">方案</th><th scope="col">每个权重的记录</th><th scope="col" class="num">1 亿个权重合计</th></tr></thead>
+      <tbody>
+        <tr><td>普通精度</td><td>约 10 个字符的小数</td><td class="num">10 亿个字符</td></tr>
+        <tr><td>先加噪声，再按十档量化</td><td>1 个字符（档位号 0–9）</td><td class="num">1 亿个字符</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>省下 9 亿个字符，正好是原来的 <strong>90%</strong>。代价呢？档位一粗，每个权重最多偏差零点零几——这正是「先加噪声」的意义：网络在训练期就天天与带误差的权重相处，部署后这点误差伤不了它。一句话概括这篇论文的操作顺序：<strong>先打疫苗（噪声），再上强度（量化）</strong>。</p>
+  <p>再算一笔泛化账：假如网络想死记硬背训练样本的答案，粗档位下它能动用的「记忆字节」被压到原来的约十分之一，装不下那么多小抄，只好老老实实去学规律。字节数一紧，聪明自然外露——这就是「码短则泛化」的直觉版。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>这篇 1993 年的短论文是两条现代主线的源头之一。一是<strong>正则化</strong>：从权重衰减到各种「给训练添堵」的手段，核心都是不让模型把容量浪费在死记硬背上。二是<strong>变分方法</strong>：「用分布代替点值」的记账法后来长成了深度生成模型的一大分支，书单里的 <a href="i23-vlae.html">i23 变分有损自编码器</a> 是它的直系后代之一。</p>
+  <p>想补齐它的思想谱系：理论地基读 <a href="i01-mdl.html">i01 最小描述长度</a>，理论天花板读 <a href="i02-kolmogorov.html">i02 Kolmogorov 复杂度</a>；而「更大的模型配上更多的数据」这笔现代版大账怎么算，见 <a href="i25-scaling-laws.html">i25 缩放定律</a>。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>本页术语速查</caption>
+      <thead><tr><th scope="col">术语</th><th scope="col">英文</th><th scope="col">一句话解释</th></tr></thead>
+      <tbody>
+        <tr><td>描述长度</td><td>description length</td><td>把一个对象完整写下来所需的字节数。</td></tr>
+        <tr><td>量化</td><td>quantization</td><td>把连续数值四舍五入到有限档位，用更少字节记录。</td></tr>
+        <tr><td>噪声</td><td>noise</td><td>训练时故意加的随机小扰动，逼网络适应不精确的自己。</td></tr>
+        <tr><td>正则化</td><td>regularization</td><td>给学习加约束、防死记硬背的各种手段的总称。</td></tr>
+        <tr><td>变分方法</td><td>variational methods</td><td>用「记一个分布的范围」代替「逐点精确记录」的建模思路。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文 PDF（Hinton 多伦多大学主页）：<a href="https://www.cs.toronto.edu/~hinton/absps/colt93.pdf" rel="noopener noreferrer">Keeping Neural Networks Simple by Minimizing the Description Length of the Weights · Hinton &amp; van Camp · COLT 1993</a></li>
+    <li>代码：1993 年会议论文，没有官方代码；文中思想如今在任何深度学习框架里都有现成实现。</li>
+    <li>系列续读：上一篇 <a href="i02-kolmogorov.html">i02 Kolmogorov 复杂度</a>；下一篇 <a href="i04-coffee-automaton.html">i04 咖啡自动机</a>。</li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i02-kolmogorov.html" rel="prev">上一篇：i02 Kolmogorov 复杂度</a>
+  <a href="i04-coffee-automaton.html" rel="next">下一篇：i04 咖啡自动机</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据 Hinton 与 van Camp 的 COLT 1993 会议论文（Hinton 主页公开 PDF）撰写，为面向大众的科普解读；准确表述以原文为准；文中具体数字均为演示假设，非论文数据；最后核验日期 2026-09-26。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

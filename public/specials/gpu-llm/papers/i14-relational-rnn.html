@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>关系循环网络｜Ilya 推荐书单解读</title>
+<meta name="description" content="记忆不该只是流水账：把「两两比较再汇总」装进循环网络，找规律、排序、推路径的能力明显变强。DeepMind 关系循环网络白话解读。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">关系循环网络</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">关系循环网络</h1>
+  <p class="paper-hero-meta">Relational Recurrent Neural Networks · Adam Santoro 等（DeepMind）· arXiv 2018</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i13-rnn-regularization.html" rel="prev">上一篇：RNN 正则化</a>
+  <a href="i15-nmt-attention.html" rel="next">下一篇：注意力机器翻译</a>
+</nav>
+
+<details class="toc">
+  <summary>本页目录</summary>
+  <ol>
+    <li><a href="#card">论文名片</a></li>
+    <li><a href="#why">Ilya 为什么选它</a></li>
+    <li><a href="#story">从生活说起</a></li>
+    <li><a href="#idea">核心思想拆解</a></li>
+    <li><a href="#worked">动手算一算</a></li>
+    <li><a href="#impact">它改变了什么</a></li>
+    <li><a href="#glossary">术语小词典</a></li>
+    <li><a href="#links">原文与代码</a></li>
+  </ol>
+</details>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <ul class="tag-row">
+    <li>2018 · arXiv 论文</li>
+    <li>DeepMind</li>
+    <li>关系推理</li>
+  </ul>
+  <div class="fact-card">
+    <h3>速览</h3>
+    <p><strong>题目：</strong>Relational Recurrent Neural Networks（关系循环网络）。</p>
+    <p><strong>作者与年份：</strong>Adam Santoro 等（DeepMind），2018 年。</p>
+    <p><strong>一句话内容：</strong>给循环神经网络（Recurrent Neural Network，RNN）的记忆装上「比较」能力，而不只是「存」——把记忆内容两两比较再汇总，做成一个可训练模块；模型在需要找规律、排序、推路径的任务上明显变强。</p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>普通循环网络的记忆是流水账：按时间顺序一条条往下记。可很多问题天生是「关系问题」——谁比谁大、哪两个东西同类、从 A 到 B 要经过谁。流水账记得再全，也未必答得出这种「横着比」的问题；书单需要一个展示「记忆还能怎么升级」的样本，本篇就是。</p>
+  <p>DeepMind 团队在关系推理（relational reasoning）方向上有个朴素主张：智能的核心动作是「比较 + 汇总」。本系列后文的关系推理模块（Relation Network）一文与本文思想同源；这一篇把同一思想装进循环记忆，让「边记边比」成为结构的一部分，而不靠模型自己碰运气悟出来。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>两名学生记同一门课的笔记。甲一行行往下抄，抄得工整极了；乙抄完后每周花十分钟把笔记两两对看——发现「A 事件比 B 事件早」「B 和 C 原来是同一类」。考试考事件先后与归类，高下立判。乙只多做了一个动作：比较。</p>
+  <p>玩过「找不同」的人都懂：单看一张图说不出所以然，两张图并排放，差异自己跳出来。信息在对比之中才产生意义——这正是关系推理的本能起点。</p>
+  <p>排序类问题更是如此。给你五个数，问谁第二大：光把它们背得滚瓜烂熟没有用，必须两两比过才知道。记忆负责「记得住」，比较负责「分得清」——两样齐备，问题才答得出来；缺了后一样，背得再熟也是流水账。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>问题设定。</strong>普通 RNN 的记忆像流水账，回答「谁比谁大」「哪两个东西有关」这类关系问题弱。原因不在「记不住」，而在「没对过」——答案需要的不是某一时刻的单条记忆，而是几条记忆放在一起对看之后的结论。</p>
+  <p><strong>核心方案。</strong>把「对记忆内容两两比较、再汇总」整个做成一个可训练模块，嵌进循环网络的记忆更新。画面感是：每条记忆都与每条记忆碰个头，交换一句「我们像不像、谁先谁后」，然后把所有交谈的结论汇总起来，形成新一轮记忆。</p>
+  <p><strong>为什么这个设计合理。</strong>比较不是零星动作，而是一套可以反复使用的固定套路：取两条记忆、对出一句结论、把结论交上去汇总。既然是固定套路，就可以做成网络里的一块标准零件，让训练过程自己打磨它——这正是「可训练模块」的含义。</p>
+  <p><strong>效果。</strong>在需要找规律、排序、推路径的任务上，模型明显变强。这些任务的共同点正是「比较密集」：光记住材料没用，必须把材料摆在一起对出结构。</p>
+  <p><strong>谱系。</strong>它与关系推理模块（Relation Network）一文思想同源——比较 + 汇总；区别在于这一篇把它接上了时间轴：记忆边流动、边比较，比较的结论又反过来塑造后续记忆。</p>
+  <div class="callout">
+    <p><strong>关键洞察：</strong>从「存记忆」到「用记忆做比较」——记忆的价值，诞生于记忆与记忆的对话。</p>
+  </div>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>本节为教学算术，非论文数字。</p>
+  <h3>演示：两两比较要做多少次</h3>
+  <p>设记忆里有 n 条内容，两两比较的次数是 n×(n−1)÷2：4 条 → 4×3÷2 = 6 次；10 条 → 10×9÷2 = 45 次；20 条 → 20×19÷2 = 190 次。</p>
+  <p>留意增长速度：条数从 10 翻倍到 20，比较次数从 45 涨到 190，变成四倍多。这说明两件事：其一，「横着比」代价不小，不能无脑全比；其二，把它做成可训练模块是聪明的——让网络自己学着判断该重视哪些比较，把力气花在有用的配对上。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><strong>它把「关系推理」从额外任务升级为循环记忆的标配能力之一。</strong>此后谈记忆模块，「比较 + 汇总」成了标准设计词汇；记忆不再只按「记多久、记多少」评价，还要看「会不会对看」。</p>
+  <p><strong>在书单里，它一头连训练、一头连注意力。</strong>它与 <a href="i13-rnn-regularization.html">RNN 正则化</a>形成一对——一个管训练纪律，一个管记忆结构；又与 <a href="i15-nmt-attention.html">注意力机器翻译</a>共享同一个思想内核：把多份信息放在一起打分、比较、汇总。记性好只是起点，会比较才是本事。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页出现的术语</caption>
+    <thead><tr><th scope="col">术语</th><th scope="col">白话解释</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">关系推理（relational reasoning）</th><td>回答「A 和 B 什么关系」这类问题的能力：比较、排序、找关联。</td></tr>
+      <tr><th scope="row">流水账记忆</th><td>按时间顺序逐条累积、缺少横向比较的记忆方式（对普通 RNN 记忆的形象说法）。</td></tr>
+      <tr><th scope="row">两两比较（pairwise comparison）</th><td>让每条记忆与其他每条记忆各对看一次。</td></tr>
+      <tr><th scope="row">汇总</th><td>把所有比较得出的结论合并成一份新记忆。</td></tr>
+      <tr><th scope="row">可训练模块（module）</th><td>网络里职责明确的一块结构，像积木一样可以嵌进更大的模型。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文：<a href="https://arxiv.org/abs/1806.01822" rel="noopener noreferrer">Relational Recurrent Neural Networks（arXiv:1806.01822）</a></li>
+    <li>系列导航：<a href="i00-ilya-reading-list.html">Ilya 书单系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i13-rnn-regularization.html" rel="prev">上一篇：RNN 正则化</a>
+  <a href="i15-nmt-attention.html" rel="next">下一篇：注意力机器翻译</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为论文《Relational Recurrent Neural Networks》（Santoro 等，arXiv:1806.01822，2018）的中文科普解读；事实以原文为准，文中算例为教学演示，非论文实验数字。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Matters：面向集合的序列到序列｜Ilya 推荐书单解读</title>
+<meta name="description" content="Order Matters：集合没有天然顺序，seq2seq 却天生吃顺序；read-up 读法让模型自己决定关注谁，数数、排序等任务稳定提升。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">i19 Order Matters</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">Order Matters：面向集合的序列到序列</h1>
+  <p class="paper-hero-meta">Oriol Vinyals 等 · arXiv 2015 · 处理「没有天然顺序」的输入——集合</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i18-pointer-networks.html" rel="prev">上一篇：i18 指针网络</a>
+  <a href="i20-neural-turing-machines.html" rel="next">下一篇：i20 神经图灵机</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i19 论文名片</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Order Matters: Sequence to Sequence for Sets</td></tr>
+        <tr><th scope="row">中文常用名</th><td>Order Matters：面向集合的序列到序列</td></tr>
+        <tr><th scope="row">作者与年份</th><td>Oriol Vinyals 等，arXiv 2015</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://arxiv.org/abs/1511.06391" rel="noopener noreferrer">https://arxiv.org/abs/1511.06391</a></td></tr>
+        <tr><th scope="row">一句话概括</th><td>答案与念的顺序无关，模型却天生吃顺序；论文用 read-up 读法让模型自己决定关注谁，而不是靠人为定序。</td></tr>
+        <tr><th scope="row">系列位置</th><td>i19，与 i18 同一团队（Oriol Vinyals 等），思想连续：都在回答「怎么读输入」</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>序列模型吃顺序，可世界上很多数据没有天然顺序：一袋数字、一桌菜、一堆商品。把它们硬按某个顺序念给模型听，模型学到的本事里就掺进了「念法」这个与任务无关的因素——念法一变，成绩就抖。这篇论文把「顺序污染」问题摆上台面，并给出一种让模型自己决定怎么读的方案。</p>
+  <p>它与 i18 是同一团队（Oriol Vinyals 等）的前后脚工作，思想一脉相承：i18 解决「输出怎么指回输入」，这一篇解决「输入怎么读进来」。两篇合起来，是书单里早期围绕「结构化输入怎么处理」最清晰的两次思考，也为后来处理集合与图的各种模型埋下了思路源头。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>老师统计全班的总分：点名册按座位念也好，按成绩念也好，按姓氏拼音念也好，念的顺序五花八门，但该加出来的总分是同一个数。顺序是「念法」，不是「事实」——事实是这一袋数字加在一起是多少。换任何一种念法都该得到同一个答案，这才叫算得对。</p>
+  <p>可 seq2seq 模型（序列到序列模型，Seq2Seq）天生把「念法」当「事实」：输入是一个序列，先念谁、后念谁会影响它内部的计算路径。于是出现怪事——同一组数字，按一种顺序念出来求和是对的，换个顺序再念，答案就乱跳。这篇论文要教模型学会一件听起来简单的事：随便从哪个开始念，结果都该一样。就像那个班级总分，不管点名册怎么排，分数不许变。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>问题设定很简单：给模型一组数字让它求和，答案与念的顺序无关；但 seq2seq 结构天生吃顺序，念法一变，内部状态走的路就变，结果跟着乱跳。数数（数一数这堆元素有几个）、排序等任务上有同样的毛病。根源在于：输入本身是集合（Set），没有天然顺序，却被硬塞进序列模型这条「独木桥」——桥的宽度就成了能力的上限。</p>
+  <p>论文的解法是给输入加一种「读法」模块，叫 read-up：不再人为规定顺序，而是按内容相关度取用每个元素——模型自己决定关注谁、关注多少。直观地说，读入不再是一条排队前进的队伍，而变成一次「点名后的自由浏览」：每个元素按它自身的内容被赋予关注度，谁与当前任务相关，谁就被多看一眼。顺序因素从源头上被绕开了，模型不必再把念法当成要学的东西。</p>
+  <p>效果上，论文在数数、排序等任务上取得了稳定提升。更长远的价值是提出了一种自觉：「输入的结构决定读法」——集合就该有集合的读法，不能永远套用序列的读法。这个自觉后来长成了处理集合与图结构的一整条研究脉络，书单里的 i21、i22 都在这条延长线上。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>先看「顺序不该影响答案」：三个数 2、3、7。按 2+3+7 算是 12；按 7+2+3 算还是 12；按任何顺序算都是 12——加法交换律保证总分不变。再看模型的毛病：把「2, 3, 7」和「7, 2, 3」分别喂给一个按顺序读入的模型，读第一个数时它的内部状态就已经分岔——一个从「看到 2」出发，一个从「看到 7」出发。学得不扎实时，两条路可能一个通向 12，另一个通向别的数。</p>
+  <p>read-up 的读法用小例子感受一下：模型读入时不排队，而是对每个元素按内容打关注度。比如当前任务是求和，三个元素各分到 40%、35%、25% 的关注度，随后每个元素带着自己的关注度进入计算。关键在于：你把输入顺序调换，各元素的内容没变，各自分到的关注度也不变——2 还是那个被关注 40% 的 2。顺序从「必经之路」变成了「无关变量」，答案自然稳了。整套算术只有加法和百分比。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>这篇论文把「集合输入」变成一个正经的研究问题，也把 seq2seq 的适用边界划得更清楚：序列归序列，集合归集合。它给出的「让模型自己决定怎么读输入」的思路，与 i18 的「让输出指回输入」一起，构成了处理结构化输入的早期双支柱。</p>
+  <p>系列内相关阅读：同团队、同主题的前一篇是 <a href="i18-pointer-networks.html">i18 指针网络</a>；继续讨论「没有顺序、只有关系」的输入，见 <a href="i22-relational-reasoning.html">i22 关系推理模块</a>；而把「按内容相关度取用元素」发展成通用机制的，是后来的 <a href="i16-attention-is-all-you-need.html">i16 Attention Is All You Need</a>。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i19 术语小词典</caption>
+      <thead>
+        <tr><th scope="col">术语</th><th scope="col">白话解释</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">集合（Set）</th><td>只有内容、没有顺序的一组元素；{2,3,7} 和 {7,2,3} 是同一个集合。</td></tr>
+        <tr><th scope="row">序列到序列（Seq2Seq）</th><td>把一个序列读进来、再吐出一个序列的模型框架，天生按顺序处理输入。</td></tr>
+        <tr><th scope="row">读法模块（read-up）</th><td>论文提出的读入方式：按内容相关度取用每个元素，模型自己决定关注谁。</td></tr>
+        <tr><th scope="row">顺序无关</th><td>换任何念法，答案都一样；总分不因点名顺序而变。</td></tr>
+        <tr><th scope="row">数数与排序（Counting / Sorting）</th><td>论文验证思路的典型集合任务：数元素个数、把元素排好。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文：Order Matters: Sequence to Sequence for Sets（arXiv 2015）——<a href="https://arxiv.org/abs/1511.06391" rel="noopener noreferrer">https://arxiv.org/abs/1511.06391</a></li>
+    <li>同团队前篇：i18 Pointer Networks——<a href="i18-pointer-networks.html">i18-pointer-networks.html</a></li>
+    <li>思路的通用化：i16 Attention Is All You Need——<a href="i16-attention-is-all-you-need.html">i16-attention-is-all-you-need.html</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i18-pointer-networks.html" rel="prev">上一篇：i18 指针网络</a>
+  <a href="i20-neural-turing-machines.html" rel="next">下一篇：i20 神经图灵机</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为科普解读页，解读对象是 Order Matters: Sequence to Sequence for Sets（Oriol Vinyals 等，arXiv 2015），原文见 <a href="https://arxiv.org/abs/1511.06391" rel="noopener noreferrer">https://arxiv.org/abs/1511.06391</a>。文中点名册等类比与全部算例为帮助理解而设，并非论文原文内容。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

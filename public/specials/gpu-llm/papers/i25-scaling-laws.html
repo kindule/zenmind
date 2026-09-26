@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>神经语言模型的缩放定律｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读 OpenAI 2020 年论文《神经语言模型的缩放定律》：损失随参数、数据、算力按幂律平滑下降——训练之前就能算出大概性能的「规划地图」。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">缩放定律</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">神经语言模型的缩放定律</h1>
+  <p class="paper-hero-meta">Scaling Laws for Neural Language Models · Jared Kaplan 等（OpenAI）· arXiv 2020 · Ilya 推荐书单 i25</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>幂律</li>
+      <li>预算规划</li>
+      <li>大模型时代</li>
+    </ul>
+    <div class="table-scroll">
+    <table>
+      <caption>基本信息一览</caption>
+      <tbody>
+        <tr><th scope="row">中文题名</th><td>神经语言模型的缩放定律</td></tr>
+        <tr><th scope="row">英文题名</th><td>Scaling Laws for Neural Language Models</td></tr>
+        <tr><th scope="row">作者与机构</th><td>Jared Kaplan 等（OpenAI）</td></tr>
+        <tr><th scope="row">发表</th><td>arXiv 2020</td></tr>
+        <tr><th scope="row">一句话定位</th><td>大模型时代的「规划地图」：性能可以提前算出来。</td></tr>
+        <tr><th scope="row">一句话总结</th><td>模型错误随参数、数据、算力的增加按幂律平滑下降；三个量要成比例地分配，规模与性能从此可以提前计算。</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>原文出处见<a href="#links">「原文与代码」</a>。<span class="ev ev-p">论文事实</span></p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>在这篇论文之前，「把模型做大就会更好」是一条人人隐约相信、却没人说得出「好多少」的经验。多投一倍算力，回报是多少？把参数翻十倍，错误能降几成？没人能提前给出答案，于是每一次大规模投入都像赌注。</p>
+  <p>论文的核心贡献是把这份「玄学」变成可计算的规律：模型错误（损失，Loss）随参数量、数据量、训练算力的增加，按幂律（Power Law）平滑下降。规模与性能之间不再是谜，而是一条能画出来的曲线——训练之前，就可以照着曲线做预算规划。</p>
+  <p>这正是它入选书单的理由：它给「大力出奇迹」装上了定量的骨架，也直接催生了后来一轮又一轮更大规模模型的投入决策。i24「Deep Speech 2」里「变大变好」还是经验，到这里升级成了定律。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>刷题提分人人都体验过：从 60 分刷到 80 分，可能一百道题就够了；从 80 分到 90 分，也许要三百道；从 90 分再往上，同样的功夫只换来一两分。收益在递减——但递减得很有规律，像是每次都按固定折扣「打折」。</p>
+  <p>如果这个折扣率足够稳定，事情就变得可算了：家长可以照着规律决定「再报几个班，性价比才说得过去」，学生可以决定「还剩两周，值得再刷多少题」。成绩从「碰运气」变成了「看地图」。</p>
+  <p>缩放定律干的就是这件事，只不过刷题的是模型，题海是海量文本，成绩是损失。它告诉所有准备下重注的人：规模换性能，换多少，可以提前算。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>核心发现用一句话说：在很大的范围内，模型错误随规模平滑、可预测地下降。这里的「规模」指三个量：参数量（模型有多大）、数据量（喂了多少文本）、训练算力（花了多少计算）。三者任何一个增大，损失都按幂律下滑。</p>
+  <p>「幂律」不神秘。白话版：每把规模翻一倍，改进量按一个稳定的比例打折——方向确定、比例稳定，只是越往后每次的绝对收益越小。把这条曲线画在「双对数」坐标上，它近似一条直线；所谓双对数，就是把横竖两个方向的刻度都换成「翻了几倍」——倍数关系变成等距离，原本越来越平缓的曲线就被「拉直」了。</p>
+  <p>第二个要点是分配：三个量要成比例地一起加。只堆参数不堆数据，模型会「吃不饱」——同样预算下，参数多而数据少，损失降不到该到的地方；反过来，数据多参数少也是浪费。缩放定律不止告诉你「要大」，还告诉你「怎么个大地」。</p>
+  <div class="callout callout-inference">
+    <p>从 i24 到 i25 的跨越值得点破：前者证明了「变大确实变好」，后者给出了「变大能好多少」。从实证到定律，这是一门领域走向成熟的样子。</p>
+  </div>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>做一个翻倍游戏（示意数字，非论文数据）。假设某种配置下「规模每翻一倍，损失打八折」。从损失 100 出发：翻倍一次，100×0.8 = 80；再翻倍，80×0.8 = 64；再翻，51.2；再翻，40.96。损失一直在降，方向从不含糊。</p>
+  <p class="formula">100 → 80 → 64 → 51.2 → 40.96　（每步 ×0.8；四次下降量分别为 20、16、12.8、10.24）</p>
+  <p>但绝对收益每步都在缩水：四次翻倍分别换来 20、16、12.8、10.24 的下降。比例稳定、绝对量递减——这就是幂律的全部秘密，也是「双对数坐标上是直线」的白话版：把「翻倍次数」当横轴，每翻一次都打同样的折，画出来自然是一条笔直的路。</p>
+  <p>再看分配。假设预算只够「参数翻 4 倍」或「数据翻 4 倍」，二选一怎么选？答案看现状：数据还喂得饱参数，就加参数；数据已经不够，先补数据。只堆参数不堆数据，模型「吃不饱」，损失降不到该到的地方——缩放定律的价值正在于此：它让「钱花在哪个量上」从拍脑袋变成查曲线。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><span class="ev ev-p">论文影响</span> 最直接的是决策方式：训练之前先在小规模上量出曲线，再按定律外推，估算大模型需要多少参数、多少数据、多少算力、能达到什么损失。「先算后练」取代了「先练再说」，后来多轮更大规模模型的投入决策里都能看到这种规划地图的影子。</p>
+  <p><span class="ev ev-i">本站推断</span> 它也重新排列了研究优先级：既然损失由规模决定的部分如此稳定，那么工程与数据基建——怎么喂得快、喂得饱——的重要性显著上升，这直接接上了 i26「GPipe」要解决的「装得下」问题。</p>
+  <p>系列内相关阅读：<a href="i24-deep-speech-2.html">i24 Deep Speech 2</a>（同一信念的工程实证版）、<a href="i26-gpipe.html">i26 GPipe</a>（把「必须变大」变成「装得下」）、<a href="i27-machine-super-intelligence.html">i27 机器超级智能</a>（规模之外，还差一把衡量「通用」的尺子）。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页术语速查</caption>
+    <tbody>
+      <tr><th scope="row">幂律（Power Law）</th><td>一个量随另一个量按固定比例变化；白话版即「翻倍打折、折扣稳定」。</td></tr>
+      <tr><th scope="row">损失（Loss）</th><td>模型输出与正确答案的差距，训练要压低的目标。</td></tr>
+      <tr><th scope="row">参数量（Number of Parameters）</th><td>模型内部可调节的旋钮总数，衡量模型大小。</td></tr>
+      <tr><th scope="row">训练算力（Training Compute）</th><td>训练消耗的计算量，大致对应「预算」。</td></tr>
+      <tr><th scope="row">双对数坐标（Log-Log Plot）</th><td>横竖轴都按「倍数」刻度的画图方式，幂律画上去近似直线。</td></tr>
+      <tr><th scope="row">收益递减（Diminishing Returns）</th><td>规模每加一倍，绝对改进比上一次小，但比例可预测。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（arXiv 摘要页）：<a href="https://arxiv.org/abs/2001.08361" rel="noopener noreferrer">arxiv.org/abs/2001.08361</a></li>
+    <li>本页只收录批次简报给出的外链；论文配套代码请以原文页面为准，本站不臆造仓库地址。</li>
+    <li>系列内相关页：<a href="i24-deep-speech-2.html">i24 Deep Speech 2</a> · <a href="i26-gpipe.html">i26 GPipe</a> · <a href="i00-ilya-reading-list.html">系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i24-deep-speech-2.html" rel="prev">上一篇：Deep Speech 2</a>
+  <a href="i26-gpipe.html" rel="next">下一篇：GPipe</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据论文《Scaling Laws for Neural Language Models》（arXiv:2001.08361）与批次简报撰写；所有类比、示意数字与延伸解读均为本站原创，不代表论文原文表述。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

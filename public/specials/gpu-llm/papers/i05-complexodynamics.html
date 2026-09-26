@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>复杂动力学第一定律｜Ilya 推荐书单解读</title>
+<meta name="description" content="2011 年的一篇博客先于论文提出问题：热力学第二定律只管无序度单调上升，解释不了「为什么中途最有趣」。复杂度为何先升后降？能否用压缩长度把它量出来？三年后问题长成了咖啡自动机论文。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">复杂动力学第一定律</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">复杂动力学第一定律：一个好问题的诞生</h1>
+  <p class="paper-hero-meta">原文：The First Law of Complexodynamics · Scott Aaronson 博文 · 2011 ｜ i 系列 05 / 27 · 板块一：理论地基</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>博客文章</li>
+      <li>2011 年</li>
+      <li>i 系列 05 / 27</li>
+    </ul>
+    <table>
+      <caption>名片速览</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>The First Law of Complexodynamics</td></tr>
+        <tr><th scope="row">作者</th><td>Scott Aaronson</td></tr>
+        <tr><th scope="row">年份与形式</th><td>2011 年发表的博客文章，以博文形式入选书单</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://scottaaronson.blog/?p=762" rel="noopener noreferrer">scottaaronson.blog/?p=762</a></td></tr>
+        <tr><th scope="row">一句话定位</th><td>i04 的思想前传——博文先提出「复杂度为何先升后降」，数年后长成了咖啡自动机论文。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">在这份以论文为主的书单里，一篇博客占一席之地，本身就是一种表彰：表彰「把问题问清楚」这门手艺。</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>这篇博文的入选，展示了一条少有人明说的研究规律：<strong>好问题先于好答案</strong>。2011 年，Aaronson 从一杯咖啡出发提出「复杂度起落」之问；2014 年，才有团队（他自己也在其中）用论文认真作答——也就是书单里的 i04。三年时间，一个问题长成一篇论文。</p>
+  <p>它也在提醒读者：热力学第二定律这条教科书定律，其实留着一个大缺口。它把「无序度只会增加」讲得清清楚楚，却对「结构丰富度为何先增后减」保持沉默——而后者才是我们日常语言里「有趣」「精彩」「复杂」的真正所指。发现教科书定律的缺口，往往比填补它更需要眼光。</p>
+  <p>顺带一提阅读顺序：虽然书单把它排在 i04 之后，但按时间线它是先发生的。先读本篇的「提问」，再读 <a href="i04-coffee-automaton.html">i04 的「作答」</a>，滋味最足。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p><strong>一本日记的弧线。</strong>翻一本普通人的日记：童年几页，一天三行——「吃饭、上学、睡觉」，单调；青年到中年，一天三页都写不下——考试、旅行、离别、选择，事件套着事件，最丰富；再往后，日子渐渐归于平静，日记重新变薄。岁月只增不减，日记的「内容丰富度」却走出了一条先升后降的弧线。人生的「有趣」是峰值，不是终点。</p>
+  <p><strong>博文的原点在咖啡杯旁。</strong>这篇博文的起点正是那杯加了奶的咖啡：看着大理石纹路升起又消散，作者问出了一句要紧的话——物理定律里，有哪一条能解释「中途最有趣」？热力学第二定律解释了「为什么终将混匀」，却没有一条定律解释「为什么半路上最精彩」。问题一旦问出，三年后便有了 i04 的格子宇宙与压缩尺子。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>第二定律的缺口。</strong>热力学第二定律（second law of thermodynamics）说：封闭系统的熵（无序度）单调上升，永不回头。这是一条「单行道」定律，它预言了结局（混匀），却对过程保持沉默：从「黑白分明」到「完全均匀」，中间必经的大理石纹阶段，在熵的账本上只是路过的台阶——可那恰恰是我们眼里最有趣的一段。单调的线，画不出有峰的桥。</p>
+  <p><strong>给未来的定律起好名字。</strong>博文把这个假想中的定律戏称为「复杂动力学第一定律」（the first law of complexodynamics）。注意这是修辞：文章是在<strong>呼吁寻找</strong>这条定律，不是宣布已经找到了它。它的大致轮廓被描述为：封闭系统的「结构丰富度」（复杂度）随时间先升后降。名字先立起来，问题就有了门牌号。</p>
+  <p><strong>量它，得找个替身。</strong>要研究曲线，先得有尺。真正的「最短描述」——Kolmogorov 复杂度——已被证明不可计算（见 <a href="i02-kolmogorov.html">i02</a>）；博文于是讨论用压缩长度当代理（proxy）：把系统某一时刻的快照交给压缩器，压缩后的文件越长，认为画面越复杂。替身并不完美（纯随机噪点也难压缩），但足够让问题从嘴上落到纸上。</p>
+  <p><strong>好问题的待遇。</strong>三年后，这个问题真的被做成了论文：元胞自动机当玩具宇宙，压缩长度当尺子，量出复杂度先升后降的完整弧线——也就是 <a href="i04-coffee-automaton.html">i04 咖啡自动机</a>。博文入选书单的理由，此刻不言自明：Ilya 想让读者看见研究完整的一生——从一杯咖啡边的疑问，到一篇论文的回答。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>把「两条曲线」的关系画在纸上，用一张表就够：</p>
+  <div class="table-scroll">
+    <table>
+      <caption>咖啡三幕剧：熵与复杂度的走势（直觉示意）</caption>
+      <thead><tr><th scope="col">阶段</th><th scope="col">熵（无序度）</th><th scope="col">复杂度（结构丰富度）</th></tr></thead>
+      <tbody>
+        <tr><td>刚倒入：黑白分明</td><td>低</td><td>低</td></tr>
+        <tr><td>中途：大理石纹</td><td>中</td><td>高</td></tr>
+        <tr><td>最后：均匀浅褐</td><td>高</td><td>低</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>两条曲线的形状一句话说清：<strong>熵是斜坡，只升不降；复杂度是拱桥，升后必落。</strong>第二定律只负责左边那一条；右边那座桥，直到这篇博文发问之前，没有一条定律管它。</p>
+  <p>再用压缩直觉验一遍拱桥：全白画面像一句「1 万个白格」就能说清的话，压完几乎不剩字节；均匀灰画面一样；只有纹路盘绕的中间画面，压缩器抓耳挠腮也压不短——文件大小沿着三幕剧画出「低、高、低」，正是那座拱桥的形状。尺子粗，桥却量得真。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><strong>问题长成了论文。</strong>本篇与 <a href="i04-coffee-automaton.html">i04 咖啡自动机</a> 是书单里罕见的「前传与正传」组合：2011 年博文提问，2014 年论文作答。把两篇连读，能看到一个问题从直觉到实验的全过程。</p>
+  <p><strong>工具各有师承。</strong>「压缩长度当尺子」承接 <a href="i02-kolmogorov.html">i02 Kolmogorov 复杂度</a>；「描述长度即好坏」的哲学则来自 <a href="i01-mdl.html">i01 最小描述长度</a>。第一板块到本篇收官，五篇连起来正是一条完整的线：哲学（i01）→ 极限（i02）→ 神经网络（i03）→ 实验（i04）→ 提问的前传（i05）。</p>
+  <p>离开理论地基后，书单将转向真正「会看图」的机器：下一篇 <a href="i06-alexnet.html">i06 AlexNet</a>，深度学习的引爆点。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>本页术语速查</caption>
+      <thead><tr><th scope="col">术语</th><th scope="col">英文</th><th scope="col">一句话解释</th></tr></thead>
+      <tbody>
+        <tr><td>热力学第二定律</td><td>second law of thermodynamics</td><td>封闭系统的无序度（熵）不减；管结局，不管精彩。</td></tr>
+        <tr><td>复杂动力学</td><td>complexodynamics</td><td>博文自造的戏称：研究「复杂度如何随时间起落」的学问。</td></tr>
+        <tr><td>代理指标</td><td>proxy</td><td>直接量不到的目标，用可量的替身顶上，如用压缩长度近似复杂度。</td></tr>
+        <tr><td>快照</td><td>snapshot</td><td>系统某一时刻的定格画面；本篇讨论的量都建立在快照上。</td></tr>
+        <tr><td>封闭系统</td><td>closed system</td><td>不与外界交换物质的系统；盖紧盖子的咖啡杯是它的日常替身。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文（Scott Aaronson 博客）：<a href="https://scottaaronson.blog/?p=762" rel="noopener noreferrer">The First Law of Complexodynamics · 2011</a></li>
+    <li>代码：博文没有代码；它催生的实验见 <a href="i04-coffee-automaton.html">i04 咖啡自动机</a>。</li>
+    <li>系列续读：正传 <a href="i04-coffee-automaton.html">i04 咖啡自动机</a>；下一篇进入卷积时代 <a href="i06-alexnet.html">i06 AlexNet</a>。</li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i04-coffee-automaton.html" rel="prev">上一篇：i04 咖啡自动机</a>
+  <a href="i06-alexnet.html" rel="next">下一篇：i06 AlexNet</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据 Scott Aaronson 2011 年博文《The First Law of Complexodynamics》（scottaaronson.blog）撰写，为面向大众的科普解读；准确表述以原文为准；最后核验日期 2026-09-26。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

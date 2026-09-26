@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlexNet：用深度卷积网络拿下 ImageNet｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读 AlexNet（NIPS 2012）：ReLU、Dropout、数据增广与两块 GTX 580 显卡训练，把 ImageNet top-5 错误率从 26.2% 打到 15.3%，引爆深度学习时代。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">AlexNet</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">AlexNet：用深度卷积网络拿下 ImageNet</h1>
+  <p class="paper-hero-meta">ImageNet Classification with Deep Convolutional Neural Networks｜Alex Krizhevsky、Ilya Sutskever、Geoffrey Hinton｜NIPS 2012</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i05-complexodynamics.html" rel="prev">上一篇：复杂动力学第一定律</a>
+  <a href="i07-cs231n.html" rel="next">下一篇：CS231n</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>AlexNet 基本信息一览</caption>
+    <tbody>
+      <tr><th scope="row">中文题名</th><td>AlexNet：用深度卷积网络拿下 ImageNet</td></tr>
+      <tr><th scope="row">英文题名</th><td>ImageNet Classification with Deep Convolutional Neural Networks</td></tr>
+      <tr><th scope="row">作者</th><td>Alex Krizhevsky、Ilya Sutskever、Geoffrey Hinton</td></tr>
+      <tr><th scope="row">发表</th><td>NIPS 2012</td></tr>
+      <tr><th scope="row">成绩</th><td>ImageNet 竞赛 top-5 错误率 15.3%，当年第二名是 26.2%</td></tr>
+      <tr><th scope="row">一句话定位</th><td>深度学习时代的「引爆点」：证明「深网络 + 大数据 + GPU」这条路能赢</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>这份书单里的大多数篇目，是 Ilya Sutskever 读过并深受影响的名作；而这篇格外特别——他自己就是作者之一。书单里「作者在场」的情况并不多见，把一篇自己署名的论文放进推荐列表，几乎等于直接告诉你：这是我人生的转折点，也是整个领域的转折点。</p>
+  <p>2012 年之前，图像识别的主流做法是「手工设计规则」：研究者凭经验设计各种特征，再把这些特征交给分类器去判别。AlexNet 在当年的 ImageNet 大规模视觉识别竞赛上，把 top-5 错误率从第二名的 26.2% 一口气打到 15.3%。领先幅度大到让整个领域不得不重新思考：也许正确的路不是更好的手工规则，而是更深的网络、更多的数据、更强的算力。</p>
+  <p>这三件套——深度、数据、GPU——正是此后十年深度学习爆发的配方。读懂这篇论文，就读懂了这份书单后续所有篇章的共同起点。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>假设你要教一个从没见过猫的外星人认猫。第一种办法是写规则：「猫有尖耳朵、长胡须、竖瞳孔」。可你很快会发现，规则越写越长却总也写不全——折耳猫的耳朵并不尖，黑猫在暗处连眼睛都看不清，一张侧光照片就能让整套规则集体失灵。这就是手工设计规则认图的真实处境：世界的变化永远比规则快。</p>
+  <p>第二种办法完全不同：不写任何规则，搬来几百万张已经标好名字的照片，让外星人反复看、反复猜，猜错了就被纠正。看得多了，它脑子里会自己长出「什么是猫」的判断。这就像教小孩认字——没有人是靠背字典学会认字的，都是一笔一画见得多了，自然就认得了。</p>
+  <p>AlexNet 用的正是第二种办法，而且它在「看照片」这件事上动了一个关键手术：不再由人来规定该看哪些特征，而是让网络自己一层一层学出该看什么。浅层学会看线条和色块，深层把线条拼成眼睛、耳朵，再把眼睛耳朵拼成整只猫——判断标准从「人教」变成了「自悟」。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>先把舞台交代清楚。ImageNet 是一个超大规模图像识别竞赛：数据集达到千万级图片、上千个类别，规模远超此前学术界常用的数据集。在这个大舞台上，AlexNet 用一个很深的卷积神经网络（Convolutional Neural Network, CNN）参赛，拿下了当年第一名。</p>
+  <p>它手里的关键武器有四件。第一件是 ReLU 激活函数：可以把它想成每个神经元门口的「单向门槛」，低于门槛的信号一律归零，超过门槛的信号原样通过。这个看似简单的开关让网络训练快了许多，深网络这才真正训得动。第二件是 Dropout（随机失活）：训练时随机让一部分神经元「请假」，逼着剩下的神经元个个都能顶事，而不是整个团队依赖个别明星员工——这是防止网络死记硬背训练集的绝招。</p>
+  <p>第三件是数据增广（Data Augmentation）：把一张照片左右翻转、裁一块、变变色，一张就当成好几张用，变相把数据集又扩大一圈。模型见多了各种姿势，就不容易只记住固定模样。第四件是工程硬功夫：当年单块消费级显卡的显存装不下这么大的网络，他们用两块 GTX 580 显卡把网络拆开并行训练，硬是把约 6000 万个参数的大模型喂了进去。这提醒我们，深度学习从一开始就不只是算法故事，也是算力与工程的故事。</p>
+  <p>四件武器合在一起，成绩就是最有说服力的语言：top-5 错误率 15.3%，把第二名的 26.2% 远远甩在身后。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>top-5 错误率的意思是：模型给出前五个猜测，只要正确答案不在这五个里，这张图就算错。我们用小学算术感受一下 26.2% 到 15.3% 的差距。</p>
+  <p>假设测试集是 10000 张图。第二名错 26.2%，约等于 2620 张图的正确答案没进前五；AlexNet 错 15.3%，约 1530 张。两者相差约 1090 张——相当于每 10 张图就多答对 1 张以上，在顶尖选手之间，这是碾压级的差距。换个角度看，错误率相对下降的幅度是 (26.2 − 15.3) ÷ 26.2 ≈ 41.6%，接近四成。</p>
+  <p>再感受一下参数规模。6000 万个参数，如果每个参数是一格数字格子，排成每页 1000 格的本子，需要 6 万页。这么一大本「笔记」要反复誊写修订，靠人力手算毫无可能——这正是 GPU 必须登场的原因：它把无数次重复的乘法加法打包成大规模并行运算，相当于从「一个会计打算盘」变成「一整层楼的会计同时开工」。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>第一，研究风向整个掉头。2012 年之后，图像识别领域几乎全面转向「深网络 + 大数据 + GPU」的路线，手工特征设计迅速退出主舞台。此后数年在 ImageNet 上刷新纪录的工作，大多沿着这条赛道继续奔跑。</p>
+  <p>第二，它催生了系统化的知识整理。卷积网络从此成为显学，斯坦福的 CS231n 课程把这些新技术编排成一条清晰的学习路径，成为无数人入门卷积网络的第一课（见 <a href="i07-cs231n.html">i07 CS231n</a>）。</p>
+  <p>第三，它抛出了新的问题：网络越深就越好吗？深到几十层、上百层之后会遇到什么？对这些问题的回答，直接引出了几年后的残差网络（见 <a href="i08-resnet.html">i08 ResNet</a>）。从这份书单自己的编排也能看出端倪：紧跟着 AlexNet 的，正是教你怎么学 CNN 的课程，和教你怎么把网络做深的 ResNet。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <dl>
+    <dt>ImageNet</dt><dd>超大规模图像数据集与年度竞赛，千万级图片、上千个类别，2010 年代图像识别的「高考考场」。</dd>
+    <dt>top-5 错误率</dt><dd>模型前五个猜测里不含正确答案的图片占比，数值越低越好。</dd>
+    <dt>卷积神经网络（Convolutional Neural Network, CNN）</dt><dd>用小模板在图上滑动扫描局部花纹的网络结构，本篇与后续多篇的主角。</dd>
+    <dt>ReLU（修正线性单元）</dt><dd>一种激活函数：负数归零、正数照传，像给每个神经元装了单向门槛。</dd>
+    <dt>Dropout（随机失活）</dt><dd>训练时随机关闭一部分神经元，防止网络过度依赖个别通路而死记硬背。</dd>
+    <dt>数据增广（Data Augmentation）</dt><dd>通过翻转、裁剪、变色等办法把一张图变成多张训练样本，变相扩充数据集。</dd>
+  </dl>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（NIPS 2012 官方页面）：<a href="https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks" rel="noopener noreferrer">ImageNet Classification with Deep Convolutional Neural Networks</a></li>
+  </ul>
+  <div class="callout">
+    <p>提示：本系列各篇只链接原文或官方页面；如想动手实现，建议先读完 <a href="i07-cs231n.html">i07 CS231n</a> 再回头复现这篇，会顺利得多。</p>
+  </div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i05-complexodynamics.html" rel="prev">上一篇：复杂动力学第一定律</a>
+  <a href="i07-cs231n.html" rel="next">下一篇：CS231n</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页为 Ilya 推荐书单系列解读（i06）；事实与数字均取自 NIPS 2012 原文页面（见「原文与代码」一节）及无争议公开常识，未引入书单之外的具体数字；类比与解读为本站原创。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

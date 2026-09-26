@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attention Is All You Need（Transformer）｜Ilya 推荐书单解读</title>
+<meta name="description" content="零基础读懂 Transformer：为什么「注意力全都要」——去掉循环、训练并行、任意两词直接相连，用小学算术看懂缩放点积注意力。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">i16 Attention Is All You Need</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">Attention Is All You Need（Transformer）</h1>
+  <p class="paper-hero-meta">Ashish Vaswani 等 · arXiv 2017 · 整份书单最出名的一篇，今天所有大语言模型的地基</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i15-nmt-attention.html" rel="prev">上一篇：i15 注意力机器翻译</a>
+  <a href="i17-annotated-transformer.html" rel="next">下一篇：i17 Annotated Transformer</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i16 论文名片</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Attention Is All You Need</td></tr>
+        <tr><th scope="row">中文常用名</th><td>《注意力就是你所需要的一切》，更常见的叫法是直接称它为 Transformer</td></tr>
+        <tr><th scope="row">作者与年份</th><td>Ashish Vaswani 等，arXiv 2017</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://arxiv.org/abs/1706.03762" rel="noopener noreferrer">https://arxiv.org/abs/1706.03762</a></td></tr>
+        <tr><th scope="row">一句话概括</th><td>彻底去掉循环结构，让整句所有词同时互相打分、按分数取信息——这就是今天所有大语言模型的地基。</td></tr>
+        <tr><th scope="row">系列位置</th><td>i16（第四板块：Transformer 与进阶架构）；本站另有 f01 系统视角深度解读页与本页互链</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>在 Ilya 的书单里，这篇是名气最大的一篇，也是整条时间线的分水岭：在它之前，处理句子离不开循环网络——像书单前面那些工作一样，一个词一个词按顺序往前挪；在它之后，主流路线换成了 Transformer。选它的理由很直接：想理解今天的大语言模型为什么造得出来、为什么能一路做大，绕不开这篇论文立下的地基。</p>
+  <p>它的主张可以压缩成一句话——「注意力全都要」：不再需要循环结构按顺序传话，注意力本身就足以承担句子内部全部的信息交换。论文给出三大好处：训练可以全程并行；任意两个词之间直接相连，长距离依赖不再需要一步步传话；结构统一，可以像积木一样不断堆叠。这三条合在一起，解释了大模型时代的很多「为什么」。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想象一场十个人的圆桌会，要讨论一个方案。老式开会是主持人点名：第一个发完第二个说，每个人只能听到前面人说过的话。轮到第十个人时，前面九个人的发言他只能靠自己「记着」，越靠前的越模糊。循环网络就像这种排队发言：词按顺序进模型，越到后面，早期信息越容易在一次次传递中变淡、走样。</p>
+  <p>圆桌会换一种开法：所有人同时发言，每个人面前装一排小旋钮，可以自由调节「听每个人多少」。当讨论对象是「苹果很好吃」这句话里的「苹果」时，代表「好吃」的发言人对它最有用，旋钮就拧大一点；代表「天空」的那位没什么用，旋钮就拧小一点。没有主持人按顺序点名，所有人一齐开口，各取所需——这就是 Transformer 里注意力工作的画面，也是「注意力全都要」的生活版本：发言人人有份，听谁、听多少，由每句话自己决定。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>先看它去掉了什么：循环结构（Recurrence）。老结构像接力赛，信息一棒一棒往下传，传得越远越容易走样；而且第一棒不跑完，第二棒就不能动，训练没法并行。Transformer 把接力赛改成圆桌会：整句所有词同时进模型，互相之间直接建立联系。第 1 个词和第 50 个词之间不再隔着四十九棒，而是第一次打分就拉上一根线。</p>
+  <p>再看注意力怎么打分。每个词先变成一串数字，叫词向量（Embedding），可以想成这个词的「数字名片」。打分过程是：每个词拿自己的名片去和句中其他词的名片对照，越相关分越高，然后按分数高低「取信息」——分高的多听一点，分低的少听一点。每个词最后得到的，是一份按相关度调配的「全场发言混合版」。</p>
+  <p>论文真正使用的打分方式叫缩放点积注意力（Scaled Dot-Product Attention）。名字听着吓人，关键动作只有一个：把打出来的分数除以一个与词向量长度相关的数——大约是长度的平方根（比如向量长度 64，就除以 8）。为什么要除？向量一长，打出的分数容易因为数字偏大而「过热」，注意力会过度集中在个别词上。除一下，等于把打分压回温和区间，让注意力分布得从容一些。直觉上记住一句就够：分数除一除，别让打分器上头。</p>
+  <p>三大好处串起来看。其一，训练全程并行：圆桌会同时开，不用等谁先发言，而现代硬件最擅长的恰恰是「大家一起算」；其二，任意两词直接相连：长句子里隔得很远的两个词第一次就能对上话，长距离依赖从难题变成常规操作；其三，结构统一可堆叠：整套「打分—取信息」是一块标准积木，一层不够摞两层，两层不够摞几十层——后来的大模型正是靠这个可堆叠的统一结构一路长高的。</p>
+  <p>补充一句：本站还有一篇从系统视角出发的深度解读 <a href="f01-attention-is-all-you-need.html">f01 Attention Is All You Need</a>，偏工程与全局；本页定位是零基础教学版，两页互为补充，建议搭配阅读。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>设某个词的向量长度是 64，除数就取 64 的平方根，也就是 8（因为 8×8=64）。假设它对句中四个词的原始打分是 12、8、24、6。不除的话，24 一家独大，注意力几乎全押在一个词上。除以 8 之后：12÷8=1.5，8÷8=1，24÷8=3，6÷8=0.75。最大的 3 和第二大的 1.5 之间只剩两倍差距，打分整体回到温和区间。</p>
+  <p>接着算取信息的占比：把四个新分数加起来，3+1.5+1+0.75=6.25。各词占比为 3÷6.25=48%，1.5÷6.25=24%，1÷6.25=16%，0.75÷6.25=12%，合计正好 100%。取信息时，就按这四个百分比去调配四个词的信息——最重要的词占近一半，其余词也都多少在场。（真实的模型在算占比前还会对分数做一次指数式的柔和处理，直觉不变：分高的占比大，且差距更明显。）整套装下来只有比大小、除法、百分比三种算术，全是小学内容。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>这篇论文之后，注意力从「辅助工具」升级为「主角」。更早的注意力（比如 <a href="i15-nmt-attention.html">i15 注意力机器翻译</a>）是在循环结构旁边帮忙对齐词与词；它之后，循环结构整体退场，注意力独立撑起整个模型。训练能并行、结构能堆叠，这两条让「把模型做大」从想法变成工程上可执行的事——今天所有大语言模型都长在这块地基上。</p>
+  <p>系列内相关阅读：想看这篇论文如何逐行落成代码，读 <a href="i17-annotated-transformer.html">i17 Annotated Transformer</a>；想看系统视角的深度解读，读 <a href="f01-attention-is-all-you-need.html">f01 深度解读</a>；想对照注意力更早的用法，回到 <a href="i15-nmt-attention.html">i15 注意力机器翻译</a>。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i16 术语小词典</caption>
+      <thead>
+        <tr><th scope="col">术语</th><th scope="col">白话解释</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">Transformer</th><td>完全依靠注意力、不用循环结构的模型结构名，也是这篇论文的代称。</td></tr>
+        <tr><th scope="row">注意力机制（Attention）</th><td>词与词之间互相打分、按分数取信息的方法。</td></tr>
+        <tr><th scope="row">词向量（Embedding）</th><td>把一个词变成一串数字，作为它的「数字名片」。</td></tr>
+        <tr><th scope="row">缩放点积注意力（Scaled Dot-Product Attention）</th><td>Transformer 使用的打分方式，特点是打完分除以约「向量长度的平方根」，防止分数过热。</td></tr>
+        <tr><th scope="row">循环结构（Recurrence）</th><td>一个词一个词按顺序处理的旧结构，是本文的主要去除对象。</td></tr>
+        <tr><th scope="row">并行训练（Parallel Training）</th><td>所有位置同时计算，不用排队等前一步算完。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文：Attention Is All You Need（arXiv 2017）——<a href="https://arxiv.org/abs/1706.03762" rel="noopener noreferrer">https://arxiv.org/abs/1706.03762</a></li>
+    <li>本站深度解读：f01 Attention Is All You Need（系统视角）——<a href="f01-attention-is-all-you-need.html">f01-attention-is-all-you-need.html</a></li>
+    <li>配套代码解读：i17 Annotated Transformer——<a href="i17-annotated-transformer.html">i17-annotated-transformer.html</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i15-nmt-attention.html" rel="prev">上一篇：i15 注意力机器翻译</a>
+  <a href="i17-annotated-transformer.html" rel="next">下一篇：i17 Annotated Transformer</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为科普解读页，解读对象是 Attention Is All You Need（Ashish Vaswani 等，arXiv 2017），原文见 <a href="https://arxiv.org/abs/1706.03762" rel="noopener noreferrer">https://arxiv.org/abs/1706.03762</a>。文中圆桌会等类比与全部算例为帮助理解而设，并非论文原文内容。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

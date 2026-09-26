@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>循环神经网络的惊人有效性｜Ilya 推荐书单解读</title>
+<meta name="description" content="只靠「看完前文，猜下一个字符」，神经网络就能写出括号配对、章节结构像模像样的仿作。解读 Karpathy 2015 年这篇让一代人看见语言模型的博文。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">RNN 的惊人有效性</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">循环神经网络的惊人有效性</h1>
+  <p class="paper-hero-meta">The Unreasonable Effectiveness of Recurrent Neural Networks · Andrej Karpathy · 2015 · 博文</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i10-dilated-convolutions.html" rel="prev">上一篇：膨胀卷积</a>
+  <a href="i12-lstm-networks.html" rel="next">下一篇：理解 LSTM</a>
+</nav>
+
+<details class="toc">
+  <summary>本页目录</summary>
+  <ol>
+    <li><a href="#card">论文名片</a></li>
+    <li><a href="#why">Ilya 为什么选它</a></li>
+    <li><a href="#story">从生活说起</a></li>
+    <li><a href="#idea">核心思想拆解</a></li>
+    <li><a href="#worked">动手算一算</a></li>
+    <li><a href="#impact">它改变了什么</a></li>
+    <li><a href="#glossary">术语小词典</a></li>
+    <li><a href="#links">原文与代码</a></li>
+  </ol>
+</details>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <ul class="tag-row">
+    <li>2015 · 博文</li>
+    <li>字符级语言模型</li>
+    <li>循环神经网络</li>
+  </ul>
+  <div class="fact-card">
+    <h3>速览</h3>
+    <p><strong>题目：</strong>The Unreasonable Effectiveness of Recurrent Neural Networks（循环神经网络的惊人有效性）。</p>
+    <p><strong>作者与形式：</strong>Andrej Karpathy，2015 年长篇博文，配套开源代码 char-rnn。</p>
+    <p><strong>它做的事：</strong>训练<strong>字符级语言模型（character-level language model）</strong>——不给模型词典、语法书和任何规则，只让它反复做一件事：看完前文，预测下一个字符。模型本体是<strong>循环神经网络（Recurrent Neural Network，RNN）</strong>。</p>
+    <p><strong>它展示的事：</strong>分别用莎士比亚剧本、维基百科、Linux 源码、LaTeX 论文做训练，生成的假文本连括号配对、章节结构都像模像样。</p>
+  </div>
+  <p>一句话定位：这是让一代人第一次<strong>看见</strong>神经网络会「写作文」的文章。</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>这份书单里大多是论文，这篇却是博文。选它，是因为它承担着一个替代不了的角色：<strong>示范</strong>。在 2015 年，语言模型对多数人来说只是排行榜上的一个分数；这篇博文让人亲眼看到，一个只会「猜下一字符」的模型，居然能写出格式严谨的假代码、假论文。直观印象一旦建立，后面所有关于语言模型的技术讨论都有了抓手。</p>
+  <p>更深一层，这篇博文是后来 GPT 路线的种子。「预测下一个字符」这个目标看起来笨拙，却蕴含语法与结构知识；既然如此，把模型做大、把数据做多的路线就是成立的。本系列后面讲注意力机制（见 <a href="i15-nmt-attention.html">注意力机器翻译</a>）与 Transformer 的文章，本质上都在回答同一个问题：这台「接龙机器」还能变得多强。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想想成语接龙的高手。他没有背过《接龙大全》，但玩得多了，你说一个「马」，他自然接出「马到成功」；你再给一个「功」，他又接得又快又顺，甚至带着你说话的腔调。没有人教过他规则，规则长在成千上万次「你一句、我一句」的练习里。</p>
+  <p>再想想常听歌的人。一首歌的前奏刚起，他嘴里已经哼出了下一句的调子。他并不是「推理」出了这个调子，只是前文给出的线索太充分，下一句几乎是自然涌出来的。</p>
+  <p>手机输入法也是同一回事：打出「你好」，它就联想「吗」「呀」；打出「明天」，它就联想「见」。联想背后正是一台微型的「预测下一个字符」机器。Karpathy 这篇博文做的事情，就是把这台小机器认真放大、认真训练，然后展示它能走多远。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>任务只有一个。</strong>字符级语言模型只做一件事——看完前文，预测下一个字符。训练材料是一大段连续文本：可能是莎士比亚剧本，可能是维基百科，可能是 Linux 源码，也可能是 LaTeX 写成的论文。模型每次猜完就对照原文，猜错了调整自己，如此循环往复。</p>
+  <p><strong>生成就是反过来接龙。</strong>训练好后，给模型一个开头，它就一个字符一个字符往下写。精妙之处在于：要猜得准，模型必须自己悟出各种「隐形规则」——引号开了要关、括号开了要配对、C 语言的函数有固定骨架、LaTeX 的文章有章节结构。没有人把这些规则写给它，是「猜下一字符」这个目标逼着它学出来的。</p>
+  <p><strong>结果有多像样？</strong>用莎士比亚训练，产出带人名与台词格式的仿剧本；用维基百科训练，产出带词条结构的假百科；用 Linux 源码训练，产出的假 C 代码连括号配对都大体正确；用 LaTeX 论文训练，产出的假论文有章节、有公式环境、有图表引用。假文本连括号配对、章节结构都像模像样——这正是标题里「惊人有效性」的含义。</p>
+  <div class="callout">
+    <p><strong>关键洞察：</strong>「预测下一字符」这个看似简单的小目标，蕴含语法与结构知识。目标可以极简，学到的东西却可以极深——这个信念支撑了此后十年的语言模型路线。</p>
+  </div>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>本节算术为教学演示，帮助建立直觉，不是论文里的实验数字。</p>
+  <h3>演示一：旧记忆会打折扣</h3>
+  <p>假设开头字符的影响，每往后续写一步就打九折（乘 0.9）。1 步之后剩 0.9；10 步之后是 0.9 的 10 次方，约 0.35；50 步之后是 0.9 的 50 次方，约 0.005——只剩千分之五。也就是说，写到第 50 个字符时，开头是什么几乎已经影响不到模型。这解释了普通循环网络「记性有限」的毛病，也给下一篇的改进埋下伏笔。</p>
+  <h3>演示二：候选池有多大</h3>
+  <p>英文字符表（字母、数字、标点、空格）大约百来个；中文常用字有几千个。同样是猜一个字符，前者是在百来个候选里挑，后者是在几千个候选里挑，规模差几十倍。候选池小、语料好找，字符级模型在英文上演示起来成本低、效果又直观，这类演示多用英文语料是顺理成章的事。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><strong>它把语言模型从「评分指标」变成了「舞台主角」。</strong>在这篇博文之前，语言模型更多是学术评测里的一个数字；之后，「看看模型生成了什么」成了最直观的能力展示，深度学习社区第一次集体直观感受到：机器生成文字是做得到的事。</p>
+  <p><strong>它暴露了短板，也指明了路线。</strong>演示一里「记忆打折」的问题，引出两条改进线：一条把记忆本身修好，见 <a href="i12-lstm-networks.html">理解 LSTM</a>；另一条干脆不依赖内部记忆，让模型随时回看原文，见 <a href="i15-nmt-attention.html">注意力机器翻译</a>，其思想最终长成 <a href="i16-attention-is-all-you-need.html">Attention Is All You Need</a>。而「预测下一字符」这个目标本身一路未改，成了今天大语言模型的训练内核。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页出现的术语</caption>
+    <thead><tr><th scope="col">术语</th><th scope="col">白话解释</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">循环神经网络（Recurrent Neural Network，RNN）</th><td>带「记忆」的神经网络：读文本时一边读、一边更新脑中的内部状态。</td></tr>
+      <tr><th scope="row">语言模型（language model）</th><td>判断一段文字像不像「人话」、并能预测下一字符或下一词的模型。</td></tr>
+      <tr><th scope="row">字符级（character-level）</th><td>把文本拆到单个字符来处理，而不是按单词切分。</td></tr>
+      <tr><th scope="row">隐藏状态（hidden state）</th><td>模型的「草稿记忆」，每读一个字符就更新一次；「记忆打折」就发生在它的传递过程中。</td></tr>
+      <tr><th scope="row">采样（sampling）</th><td>生成时按各候选字符「可能性大小」来挑选；同一个开头可以接出不同续写。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文博文：<a href="https://karpathy.github.io/2015/05/21/rnn-effectiveness/" rel="noopener noreferrer">The Unreasonable Effectiveness of Recurrent Neural Networks</a></li>
+    <li>配套代码：<a href="https://github.com/karpathy/char-rnn" rel="noopener noreferrer">karpathy/char-rnn（GitHub）</a></li>
+    <li>系列导航：<a href="i00-ilya-reading-list.html">Ilya 书单系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i10-dilated-convolutions.html" rel="prev">上一篇：膨胀卷积</a>
+  <a href="i12-lstm-networks.html" rel="next">下一篇：理解 LSTM</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为 Andrej Karpathy 博文《The Unreasonable Effectiveness of Recurrent Neural Networks》（2015）的中文科普解读；事实以原文为准，文中算例为教学演示，非论文实验数据。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

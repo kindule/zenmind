@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>深度残差网络中的恒等映射｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读恒等映射（arXiv 2016）：shortcut 上原样传递就是最好选择，pre-activation 调整层内顺序，让 1000 层以上的残差网络也能训练。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">恒等映射</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">深度残差网络中的恒等映射</h1>
+  <p class="paper-hero-meta">Identity Mappings in Deep Residual Networks｜何恺明等｜arXiv 2016</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i08-resnet.html" rel="prev">上一篇：ResNet</a>
+  <a href="i10-dilated-convolutions.html" rel="next">下一篇：膨胀卷积</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>恒等映射基本信息一览</caption>
+    <tbody>
+      <tr><th scope="row">中文题名</th><td>深度残差网络中的恒等映射</td></tr>
+      <tr><th scope="row">英文题名</th><td>Identity Mappings in Deep Residual Networks</td></tr>
+      <tr><th scope="row">作者</th><td>何恺明等</td></tr>
+      <tr><th scope="row">发表</th><td>arXiv 2016</td></tr>
+      <tr><th scope="row">关键结果</th><td>恒等 shortcut 最优；pre-activation 让 1000 层以上的网络（实验到 1000+ 层）也能训练</td></tr>
+      <tr><th scope="row">一句话定位</th><td>ResNet 续作——回答「shortcut 上到底应该放什么」，并把「为什么有效」从经验变成分析</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>ResNet 一战成名后，研究者立刻追问一个细节问题：shortcut 这条近路上，到底该原样照传，还是也加点加工？听起来只是小改，实际上牵动着几百上千层网络能否训练的大局。2016 年，何恺明等人的续作给出干脆的回答：恒等映射——什么都不加、原样传递——就是最好的 shortcut。</p>
+  <p>这篇论文更大的价值，是把「残差为什么有效」从经验升级成分析：信号可以沿 shortcut 无衰减地一路传到深处，这解释了超深网络为什么训得动；顺着这条思路调整层内顺序（pre-activation，前置激活），连 1000 层以上的网络也能稳定训练。深度记录从「奇迹」变成了「设计的结果」。</p>
+  <p>放进书单还有一层用意：它是「追问到底」的典范。上一篇文章成功了，多数人会急着用它；而这篇作者团队选择回头把原理抠透——正是这种较真，让残差网络从一次性胜利变成长期可复用的地基。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>再看一次传话游戏，这次有两种规则。规则甲：每人必须用自己的话把听到的内容复述一遍再传下去；规则乙：允许有人宣布「原话照传」，一字不改地往下传。链条一长，规则甲的失真越来越狠；规则乙只要链上有人照传，原话就始终有据可查。恒等映射就是 shortcut 上的「原话照传」：它不生产信息，只保存信息。</p>
+  <p>也可以想成 100 段接力运水：如果中途每个接力点都允许「喝一口再传」，到终点只剩桶底；恒等捷径相当于在水桶队列旁边架了一根直通水管，水源头的压力不打折扣地送到最后一站。所谓「信号无衰减地传到深处」，说的就是这根直通水管。</p>
+  <p>这两个比喻指向同一条朴素的道理：一个长链条系统要想可靠，链条里必须存在不打折扣的环节。互联网能传一张照片不糊，靠的是数据原样到达； ResNet 能深到上千层，靠的也是 shortcut 原样到达。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>恒等映射为什么最好？因为 shortcut 一旦原样照传，深处每一层就同时握有两样东西——原始输入的「原文」，以及上层传来的「批注」。任何一层都不必猜测「我前面的信息被改成了什么样」，因为原文一直在手边，只需专心回答「这一步该补什么」。论文对比了在 shortcut 上加各种变换的做法，结论一致：不加变换、保持恒等，训练最顺、效果最好。</p>
+  <p>第二个发现是 pre-activation（前置激活）。原版残差块里，卷积打头阵，归一化（Normalization，把数值拉回规整范围的处理）和激活跟在后面；这篇把顺序掉了头——先归一化、再激活、最后卷积。好处在于：每个「两路相加」的交会点之后，信号立刻被整理得规规整整再进入下一层加工。像每个接力交接点都配了一位理棒员，交接棒永远摆正，队伍越长越受益。</p>
+  <p>两条改动合起来的效果：1000 层以上的网络（实验做到 1000+ 层）也能正常训练，退化问题在如此深度下依然被按得死死的。回想 ResNet 当年的 152 层已经让人惊叹，一年后深度直接再上了一个数量级。</p>
+  <p>这篇论文的写法同样值得学：它不是「我调了调、涨点了」式的报告，而是先讲清楚信号沿哪条路走、为什么不会消失，再让实验验证分析。工程技巧由此升格为设计原则，后来者才能站在原理上继续盖楼，而不是在黑暗中试错。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>先算衰减账。假设信号每经过一个「加工环节」只剩 90% 原味。连续经过 20 个环节，剩下的就是 0.9 的 20 次方，约等于 12%——原文只剩一成多，基本面目全非。可如果这 20 个环节之间有一条恒等捷径，信号可以走捷径直达，保留 100%。所谓「无衰减通路」，翻译成小学算术就是一句话：1 乘以多少个 1 都还是 1。</p>
+  <p>再算接力账。1000 层网络就是 1000 个接力环节。让每个环节守两条规矩——shortcut 原样照传、交会点后先整理再加工——接力就能一直传下去。深度不再吃人，反而供人驱使。</p>
+  <p>最后做个对比账。从 ResNet 的 152 层到本篇实验的 1000 层以上，一年之间深度翻了近七倍，主要靠的不是更强的硬件，而是把「信号走哪条路、按什么顺序加工」想明白。好分析的杠杆，有时比好机器更大。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>shortcut 的默认设计从此有了依据：后续网络几乎都把恒等捷径当作起点，谁要在上面加东西，反而需要拿出理由。「为什么有效」的经验，变成了「如何设计」的守则——这正是续作超越原作补充的地方。</p>
+  <p>它也让「千层网络」从不可能变成日常实验对象。当深度不再是瓶颈，研究者的注意力得以转向更本质的问题：加深的每层到底该学什么。这个思维习惯——先保证信息通路畅通，再谈规模——影响了此后许多网络结构的设计。</p>
+  <p>建议连读它的前传 <a href="i08-resnet.html">i08 ResNet</a>：先看「残差如何赢得比赛」，再看「shortcut 为什么必须原样照传」，一条线才算读完。本板块的下一篇 <a href="i10-dilated-convolutions.html">i10 膨胀卷积</a> 则换个方向发力——不加深，而是让卷积看得更远。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <dl>
+    <dt>恒等映射（Identity Mapping）</dt><dd>原样传递、输出等于输入，shortcut 上的最佳选择。</dd>
+    <dt>捷径连接（Shortcut Connection）</dt><dd>跨层直连的旁路，让信息与纠错信号抄近路。</dd>
+    <dt>前置激活（pre-activation）</dt><dd>先归一化、再激活、最后卷积的层内加工顺序。</dd>
+    <dt>归一化（Normalization）</dt><dd>把数值拉回规整范围的处理，让下一环节拿到的信号稳定。</dd>
+    <dt>信号衰减（Signal Attenuation）</dt><dd>信号逐层传递时逐渐减弱、失真的现象，恒等捷径正是它的解药。</dd>
+    <dt>残差网络（Residual Network, ResNet）</dt><dd>带捷径连接、只学修正量的深度网络。</dd>
+  </dl>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（arXiv 页面）：<a href="https://arxiv.org/abs/1603.05027" rel="noopener noreferrer">Identity Mappings in Deep Residual Networks</a></li>
+  </ul>
+  <div class="callout">
+    <p>提示：本篇是 <a href="i08-resnet.html">i08 ResNet</a> 的续作，先读前传再读本篇，两条实验与两条分析才能对上号。</p>
+  </div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i08-resnet.html" rel="prev">上一篇：ResNet</a>
+  <a href="i10-dilated-convolutions.html" rel="next">下一篇：膨胀卷积</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页为 Ilya 推荐书单系列解读（i09）；事实与结论均取自 arXiv 原文页面（见「原文与代码」一节）及无争议公开常识，未引入书单之外的具体数字；类比与解读为本站原创。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

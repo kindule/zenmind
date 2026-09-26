@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPipe：微批流水线并行｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读 Google 2018 年论文《GPipe》：把大网络按层切开分给多张卡，再把数据拆成微批排队灌入——「一张卡装不下」就此变成流水线协作。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">GPipe</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">GPipe：微批流水线并行</h1>
+  <p class="paper-hero-meta">GPipe: Easy Scaling with Micro-Batch Pipeline Parallelism · Yanping Huang 等（Google）· arXiv 2018 · Ilya 推荐书单 i26</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>流水线并行</li>
+      <li>微批</li>
+      <li>多卡协作</li>
+    </ul>
+    <div class="table-scroll">
+    <table>
+      <caption>基本信息一览</caption>
+      <tbody>
+        <tr><th scope="row">中文题名</th><td>GPipe：微批流水线并行</td></tr>
+        <tr><th scope="row">英文题名</th><td>GPipe: Easy Scaling with Micro-Batch Pipeline Parallelism</td></tr>
+        <tr><th scope="row">作者与机构</th><td>Yanping Huang 等（Google）</td></tr>
+        <tr><th scope="row">发表</th><td>arXiv 2018</td></tr>
+        <tr><th scope="row">一句话定位</th><td>把「一个网太大、一张卡装不下」变成「切开分给多张卡」。</td></tr>
+        <tr><th scope="row">一句话总结</th><td>网络按层切段、各段占一张卡，数据拆成微批排队依次灌入——流水线减少空转，多卡就能训练远超单卡容量的大模型。</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>原文出处见<a href="#links">「原文与代码」</a>。<span class="ev ev-p">论文事实</span></p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>缩放定律（i25）说「要大」，工程立刻反问：「大」到一张显卡装不下怎么办？深度网络每一层的参数、还有层与层之间流传的中间结果，都要占显存；模型一大，单卡显存先亮红灯——这不是「练得慢」，而是「根本放不下」。</p>
+  <p>GPipe 给出的答案朴素而漂亮：装不下就切开。网络按层切成几段，各段住一张卡；数据不等整批到齐，而是拆成小份「微批」排队依次灌入。它没有发明什么深奥理论，却解决了一个绕不开的物理约束，是大模型训练「并行切分」思路的代表。</p>
+  <p>在书单里，它与 i25 恰好互补：一个论证「必须变大」，一个回答「怎么装得下」。想大，先解决装得下——工程与科学在这两篇之间咬合得严丝合缝。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想象洗衣房里有三台机器：洗衣机、烘干机、折叠台，一批衣物要走完三步。最笨的干法是「一批做到底」：第一批洗 30 分钟、烘 30 分钟、叠 30 分钟。全程里，洗衣机在第一批烘干、折叠时闲着，烘干机在第一批折叠时闲着——大部分时间，三台机器里总有两台在发呆。</p>
+  <p>聪明的干法是流水作业：第一批一进烘干机，第二批立刻进洗衣机；第一批上折叠台，第二批进烘干机，第三批进洗衣机。任一时刻三台机器都在干活，空转只发生在开工和收工的边角。同样的活儿，时间几乎省一半。</p>
+  <p>GPipe 把洗衣房搬进了显卡集群：洗衣机、烘干机、折叠台对应网络切出的三段，各占一张卡；一批批衣物就是数据微批，排队依次流过每张卡。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>问题的本质是显存：模型大到单卡装不下。最直接的切法是「按层切分」——把网络沿着纵深方向切成几段，比如前几层放第一张卡，中间几层放第二张卡，尾部几层放第三张卡。数据像接力一样依次穿过每张卡，每张卡只须容纳自己那一段。</p>
+  <p>但单纯接力有个尴尬：第一张卡算的时候，第二、三张卡闲着；轮到第三张卡算时，前两张又闲了——并行变成了轮流。GPipe 的关键一步是把每一批数据再拆成更小的「微批」（Micro-Batch）：第一段算微批 2 的时候，第二段正在算微批 1，第三段刚送走上一份——流水线灌满之后，每张卡都有活干，空转被压到开工与收工的边角。</p>
+  <p>效果：多张普通卡协作，能训练远超单卡容量的大模型。切口越多、微批越细，流水线越接近「满负荷」，但每段之间的接力缝永远存在——就像洗衣房开工时洗衣机先转、收工时折叠台最后收尾，这一点点空档是流水线的天然成本。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>算一笔洗衣房的时间账（示意数字）。设洗、烘、叠各需 30 分钟，共 4 批衣物。「一批做到底再做下一批」：每批 30×3 = 90 分钟，4 批共 360 分钟——大部分时间三台机器里总有两台在发呆。改成流水作业呢？</p>
+  <p class="formula">串行：30 × 3 × 4 = 360 分钟；流水作业：30 × (4 + 3 − 1) = 180 分钟</p>
+  <p>流水作业为什么是 30×(4+3−1)？4 是批数，3 是工位数，减 1 是因为第一批只经过 1 个工位就开始往下传、不必等满 3 个工位。批数越多，边角空档占比越小：10 批时流水线要 30×(10+3−1) = 360 分钟，串行却要 30×3×10 = 900 分钟——效率差距越拉越大。</p>
+  <p>对应回 GPipe：把 1 个大批拆成 8 个微批，就像把一大桶水分成 8 杯依次倒——每次接力的步子小了，等待自然就短了；网络切出的段数相当于工位数，微批数相当于批数，算式完全同构。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><span class="ev ev-p">论文效果</span> GPipe 让「模型大小」的上限从「单卡显存」改写成「你能凑到多少张卡」。多卡协作从此可以训练远超单卡容量的大模型，大模型训练的「并行切分」思路就此立住了代表之作。</p>
+  <p><span class="ev ev-i">本站推断</span> 它的贡献更在于思路示范：硬件约束不是天花板，而是可以拆解、排队、流转的调度题。这种「先把大问题切成能装下的小块」的思维方式，贯穿了此后大模型基础设施的设计；它让 i25 缩放定律所呼唤的规模化训练真正落了地。</p>
+  <p>系列内相关阅读：<a href="i25-scaling-laws.html">i25 缩放定律</a>（为什么必须变大）、<a href="i24-deep-speech-2.html">i24 Deep Speech 2</a>（大规模 GPU 集群训练的先行实践）、<a href="i27-machine-super-intelligence.html">i27 机器超级智能</a>（书单压轴：规模之后的问题）。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页术语速查</caption>
+    <tbody>
+      <tr><th scope="row">流水线并行（Pipeline Parallelism）</th><td>把网络按层切成几段，各段放在不同设备上，数据依次流过。</td></tr>
+      <tr><th scope="row">微批（Micro-Batch）</th><td>把一个训练批次再拆成的小份，用来填满流水线。</td></tr>
+      <tr><th scope="row">显存（GPU Memory）</th><td>显卡上存放模型参数与中间结果的空间，本篇要突破的瓶颈。</td></tr>
+      <tr><th scope="row">空转/气泡（Bubble，白话）</th><td>流水线里设备没活干的时段，主要出现在开工与收工的边角。</td></tr>
+      <tr><th scope="row">按层切分</th><td>沿网络纵深方向把层分组、分配给不同设备的切法。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（arXiv 摘要页）：<a href="https://arxiv.org/abs/1811.06965" rel="noopener noreferrer">arxiv.org/abs/1811.06965</a></li>
+    <li>本页只收录批次简报给出的外链；论文配套代码请以原文页面为准，本站不臆造仓库地址。</li>
+    <li>系列内相关页：<a href="i25-scaling-laws.html">i25 缩放定律</a> · <a href="i27-machine-super-intelligence.html">i27 机器超级智能</a> · <a href="i00-ilya-reading-list.html">系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i25-scaling-laws.html" rel="prev">上一篇：缩放定律</a>
+  <a href="i27-machine-super-intelligence.html" rel="next">下一篇：机器超级智能</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据论文《GPipe》（arXiv:1811.06965）与批次简报撰写；所有类比、示意数字与延伸解读均为本站原创，不代表论文原文表述。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

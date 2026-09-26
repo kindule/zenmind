@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>咖啡自动机：封闭系统中复杂度的量化起落｜Ilya 推荐书单解读</title>
+<meta name="description" content="奶倒进咖啡，「有趣程度」先升后降：分明、大理石纹、均匀。论文用元胞自动机模拟这一过程，并拿「压缩后长度」当复杂度的尺子——这把尺子正是 Kolmogorov 复杂度的工程替身。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">咖啡自动机</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">咖啡自动机：给「复杂度的起落」造一把尺</h1>
+  <p class="paper-hero-meta">原文：Quantifying the Rise and Fall of Complexity in Closed Systems: The Coffee Automaton · Scott Aaronson 等 · 2014 ｜ i 系列 04 / 27 · 板块一：理论地基</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>论文（含模拟实验）</li>
+      <li>2014 年</li>
+      <li>i 系列 04 / 27</li>
+    </ul>
+    <table>
+      <caption>名片速览</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Quantifying the Rise and Fall of Complexity in Closed Systems: The Coffee Automaton</td></tr>
+        <tr><th scope="row">作者</th><td>Scott Aaronson 等</td></tr>
+        <tr><th scope="row">年份与形式</th><td>2014 年发表论文，包含计算机模拟实验</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://arxiv.org/abs/1405.6903" rel="noopener noreferrer">arxiv.org/abs/1405.6903</a></td></tr>
+        <tr><th scope="row">一句话定位</th><td>把「奶倒进咖啡」做成格子玩具宇宙，认真量出复杂度如何先升后降。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">书单里最「日常」的一篇：不训练任何网络、不刷任何榜单，只认真回答一个问题——一杯咖啡由分明变均匀的途中，「有趣」到底是怎么起落的？</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>前三篇都在讲「描述长度」的哲学与工程，这一篇忽然去量一杯咖啡——跨度虽大，逻辑却顺：「复杂度」这把尺子造出来之后，总得先找个最干净的场合试刀。一杯加了奶的咖啡，规则简单、人人可感，是绝佳的试验田。</p>
+  <p>它也是书单中少有的「问题驱动」样本：先有 i05 的博文把问题问出来（2011 年），再有这篇论文把答案做出来（2014 年）。Ilya 把这一对收录进来，等于示范了研究是怎么从「好问题」长成「好论文」的。</p>
+  <p>更深一层：智能活在「复杂而有结构」的世界里——眼前的世界既不是全白画面，也不是纯噪点。想造能理解世界的机器，先得能说清「复杂」本身怎么量。这篇论文就是朝这个方向迈出的一小步。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p><strong>一杯咖啡的三幕剧。</strong>清晨，把奶倒进黑咖啡：第一幕，黑白分明，一眼看穿，简单；第二幕，勺子轻搅，杯中浮起大理石般的漩涡纹路，怎么看都不腻——最有趣；第三幕，放下杯子随它去，最终混成均匀的浅褐色，又归于简单。「有趣程度」走了一条先升后降的弧线，终点甚至不如起点耐看。</p>
+  <p><strong>延时摄影的选片难题。</strong>给这杯咖啡拍一段延时摄影，事后只许挑一帧发朋友圈：没人挑第一帧（纯黑一片），也没人挑最后一帧（灰扑扑一杯），大家都会挑中途纹路最盛的那一帧。直觉都知道「中途最精彩」，但直觉不是科学——中途到底「复杂」多少？升了多少、又落了多少？要回答，得先把「复杂」变成一个能写在纸上的数。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>熵不够用了。</strong>热力学第二定律（second law of thermodynamics）说：封闭系统的熵（entropy，粗略说就是「无序度」）只增不减。它能预言牛奶终将混匀，却画不出「中途最有趣」这道拱桥——因为熵是一条只会往上爬的单调线，而「有趣」是一座有峰有谷的山。「黑白分明」和「完全均匀」都是简单状态，可熵只负责沿单调线往上走，「结构丰富度」这回事它根本不管。所以要量「有趣」，得另造一把尺。</p>
+  <p><strong>造一个格子玩具宇宙。</strong>论文用元胞自动机（cellular automaton，一格一格、按简单局部规则逐步演化的「棋盘世界」）模拟咖啡杯：格子里两种「粒子」代表奶与咖啡，按简单规则逐步交换位置，从黑白分明一路演化到均匀混合。每一时刻的画面，都是一张可以存进电脑的图。</p>
+  <p><strong>尺子：压缩后长度。</strong>怎么量每张画的「复杂度」？把画面交给压缩器，看压缩后的文件有多长。道理接续 <a href="i02-kolmogorov.html">i02</a>：一个画面如果充满规律（全白、纯灰），几句话就能说清，压完所剩无几；如果处处是出乎意料的细节，就只能老老实实记录，压不短。真正的「最短描述」（Kolmogorov 复杂度）算不出来，压缩器就是它现成的工程替身。</p>
+  <p><strong>结果：直觉有了数字。</strong>用这把尺子逐帧去量玩具宇宙：复杂度从起点出发先爬升、在大理石纹阶段附近达到峰顶、再滑落下去；而熵始终单调上升。「复杂」与「无序」从此在数字上分了家——一个是拱桥，一个是单行道。论文也老实讨论了这把尺子的微妙之处：纯随机的噪点同样压不短，可见「难压缩」与「有趣」并不完全是一回事，量复杂度比看上去更需要巧劲。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>为什么「压缩后长度」能当尺子？拿三张 100×100 的黑白图做对比（比喻性说明，比例按定义直觉估计，不是论文数据）：</p>
+  <div class="table-scroll">
+    <table>
+      <caption>三种画面的压缩直觉对比</caption>
+      <thead><tr><th scope="col">画面</th><th scope="col">描述它要多长</th><th scope="col">直觉</th></tr></thead>
+      <tbody>
+        <tr><td>全白图</td><td>「100×100 全是白格」一句话</td><td>压完所剩无几，接近零</td></tr>
+        <tr><td>大理石纹图</td><td>大块纹路有规律可省，纹路走向却处处变化</td><td>最难压，文件最大</td></tr>
+        <tr><td>纯噪点图</td><td>相邻格子毫无关系，几乎格格都要记录</td><td>也压不短，但难得没有花样</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>三行对比里藏着本篇的全部机关。其一，压缩长度成功地把「全白」与「大理石纹」分开——一个近乎零，一个很大，这正是熵做不到的区分。其二，纯噪点提醒我们尺子的边界：它量的是「难描述」，而「有趣」还需要结构。书单把本篇与 i05 放在一起，正是让你同时看到这把尺子的锋利与局限。</p>
+  <p>一句话画龙点睛：<strong>熵是单行道，复杂度是拱桥。</strong></p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><strong>问题有了答案。</strong>这篇论文把一个哲学味道的问题变成了可算的实验。问题出自博文：2011 年 Scott Aaronson 在博客里提出「复杂度先升后降该有定量定律」，数年后才有了这篇认真作答的论文。先读提问、再读回答，见 <a href="i05-complexodynamics.html">i05 复杂动力学第一定律</a>。</p>
+  <p><strong>尺子各有出处。</strong>「压缩长度当复杂度」直接承自 <a href="i02-kolmogorov.html">i02 Kolmogorov 复杂度</a> 的理论传统；「描述长度是好模型的度量」则出自 <a href="i01-mdl.html">i01 最小描述长度</a>。一杯咖啡，把第一板块的三条线索拧成了一股。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>本页术语速查</caption>
+      <thead><tr><th scope="col">术语</th><th scope="col">英文</th><th scope="col">一句话解释</th></tr></thead>
+      <tbody>
+        <tr><td>熵</td><td>entropy</td><td>无序度的量度；封闭系统里只增不减，解释「混匀」，解释不了「有趣」。</td></tr>
+        <tr><td>封闭系统</td><td>closed system</td><td>不与外界交换物质的系统；盖紧盖子的咖啡杯是它的日常替身。</td></tr>
+        <tr><td>元胞自动机</td><td>cellular automaton</td><td>按简单局部规则逐步演化的格子世界，计算机里的「玩具宇宙」。</td></tr>
+        <tr><td>压缩</td><td>compression</td><td>用更短的文件还原同样的信息；本篇拿压缩后长度近似复杂度。</td></tr>
+        <tr><td>复杂度</td><td>complexity</td><td>本篇特指「画面的结构丰富程度」，与「无序度」是两回事。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文（arXiv 页面，可下载 PDF）：<a href="https://arxiv.org/abs/1405.6903" rel="noopener noreferrer">Quantifying the Rise and Fall of Complexity in Closed Systems: The Coffee Automaton · 2014</a></li>
+    <li>代码：本页依据的简报未提供官方代码链接；论文的模拟思想用任何编程语言的几十行代码都能复现。</li>
+    <li>系列续读：思想前传见 <a href="i05-complexodynamics.html">i05 复杂动力学第一定律</a>；上一篇为 <a href="i03-keeping-nn-simple.html">i03 用描述长度精简神经网络</a>。</li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i03-keeping-nn-simple.html" rel="prev">上一篇：i03 用描述长度精简神经网络</a>
+  <a href="i05-complexodynamics.html" rel="next">下一篇：i05 复杂动力学第一定律</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据 Aaronson 等人 2014 年论文《Quantifying the Rise and Fall of Complexity in Closed Systems: The Coffee Automaton》（arXiv:1405.6903）撰写，为面向大众的科普解读；准确表述以原文为准；文中具体数字均为示意，非论文数据；最后核验日期 2026-09-26。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

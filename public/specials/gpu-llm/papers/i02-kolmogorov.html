@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kolmogorov 复杂度与算法随机性｜Ilya 推荐书单解读</title>
+<meta name="description" content="一串符号最短能压到多短？Kolmogorov 复杂度用「生成它的最短程序长度」给出严格定义：π 的前一百万位一张纸条写完，真随机记录只能照抄；而这把终极尺子本身不可计算。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">Kolmogorov 复杂度</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">Kolmogorov 复杂度与算法随机性：「随机」就是压不短</h1>
+  <p class="paper-hero-meta">原文：Kolmogorov Complexity and Algorithmic Randomness · Shen、Uspensky、Vereshchagin · 美国数学学会（AMS）出版 ｜ i 系列 02 / 27 · 板块一：理论地基</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>理论教材</li>
+      <li>AMS 出版</li>
+      <li>i 系列 02 / 27</li>
+    </ul>
+    <table>
+      <caption>名片速览</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Kolmogorov Complexity and Algorithmic Randomness</td></tr>
+        <tr><th scope="row">作者</th><td>Shen、Uspensky、Vereshchagin</td></tr>
+        <tr><th scope="row">形式</th><td>美国数学学会（AMS）出版的数学教材，通篇为严格理论</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://bookstore.ams.org/surv-220/" rel="noopener noreferrer">bookstore.ams.org/surv-220/</a></td></tr>
+        <tr><th scope="row">一句话定位</th><td>给「一个东西最短能压到多短」下严格定义，是 i01 那把 MDL 尺子的理论天花板。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">这是书单里少有的纯数学教材。它的每一个结论都不靠实验，只靠证明——而恰恰是它，给全书单的「压缩」主线打下了最硬的地基。</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>一份以论文为主的书单里突然出现一本教材，值得停下来想一想。它说明在 Ilya 眼里，「压缩」不只是工程技巧或漂亮的比喻，而是一个可以严格定义、严格证明的数学对象；后面各篇用的每一把「描述长度」尺子，源头都在这里。</p>
+  <p>这本书回答的问题极简单：随便给一串符号——一段数字、一张图片、一条录音——它<strong>最短能被压到多短</strong>？答案由 Kolmogorov 复杂度（Kolmogorov complexity）给出。而这个答案最惊人的地方在于：那把「最短」的终极尺子，被证明<strong>永远造不出来</strong>。理论天花板的存在与不可触及，写进了同一本书。</p>
+  <p>读懂它再看 <a href="i01-mdl.html">i01 的 MDL</a>，两者的关系立刻清楚：MDL 是「能落地的近似」，Kolmogorov 复杂度是「不可企及的理想极限」。书单先给能用的，再给极限的，这个顺序本身就是一种治学方法。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p><strong>乐谱与演奏。</strong>乐团排一部交响曲，指挥递过去几十页总谱就够了：纸页虽厚，整部作品却被一份「说明书」完整捕捉，换个乐团照样演。反过来，录一段猫在琴键上乱踩的即兴「曲子」，任何乐谱都帮不上忙——每个音符与其他音符毫无关系，要复现只能逐音照抄。信息的多少，不在于纸的厚薄，而在于<strong>能不能找到一份更短的说明书</strong>。</p>
+  <p><strong>九的海洋与硬币的沼泽。</strong>让两个孩子各交一份一千个字符的作业：一个写的是 9 重复一千次，他只交了一行字——「9 写一千遍」；另一个掷了一千次硬币记正反面，抄到手酸，而且无论怎么缩写都会丢信息，因为那串正反组合里<strong>没有可找的规律</strong>。「连写一千个 9」一句话说清，随机记录只能原样搬运。到这里，「随机」第一次有了形状：它就是描述长度被顶到了下限，压无可压。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>定义：一个对象的最短程序。</strong>一个对象（比如某串 0 与 1）的 Kolmogorov 复杂度，等于「能在计算机上输出它、然后停机」的<strong>最短程序</strong>的长度。注意三个细节。其一，这把尺子量的是对象本身，不迁就任何人的聪明程度——你个人觉得好记没有用，程序说了算。其二，它以某台计算机为基准，换一台机器，数值只差一个固定的小开销，相当于换台计算器要付的「说明书翻译费」，不影响大势。其三，「最短」是硬指标：在所有能生成它的程序里取最短的，没有商量余地。</p>
+  <p><strong>圆周率与硬币：两种命运。</strong>π 的前一百万位小数，复杂度极低：一张纸条写下计算公式，任何人都能照着重算出全部一百万位——描述只需要纸条上的几行字。真随机硬币记录则相反：它的复杂度约等于它自身的长度，因为<strong>不存在比照抄更短的生成办法</strong>。「随机的本质 = 压不短」——这就是算法随机性（algorithmic randomness）的核心直觉：一串 0 和 1 是不是真随机，就看它有没有比自身更短的描述。</p>
+  <p><strong>尺子本身造不出来。</strong>最惊人的结论来了：不存在一个万能程序，能对任意一串符号算出它的 Kolmogorov 复杂度。用大白话走一遍反证：假如这种「最短描述检测器」存在，我们就能让它找出「第一个无法用一百字以内的程序描述的对象」；可这句话本身恰恰就是它的一百字以内的描述——自我矛盾。矛盾从哪来？只能来自那个假设的检测器。所以它不存在：最短的描述可以定义，却不能系统地计算出来。</p>
+  <p><strong>理论如何照亮工程。</strong>既然终极尺子造不出来，工程上怎么办？用压缩器等可操作的近似去逼近——这正是 i01 的 MDL 的处境：它是「不可计算的最短描述」的现实替身。后面的 i03 把这把尺子架到神经网络的权重上，i04 甚至拿压缩后的文件长度去量一杯咖啡的复杂度。整份书单的「压缩主线」，源头就是这本教材里那些看似抽象的定义与定理。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>玩具对比一：那串一千个 9。照抄要写 <strong>1000 个字符</strong>；写成「9×1000」只要 <strong>6 个字符</strong>——把这六个字符当作一个小「程序」，交给任何懂乘法的人都能还原出原串。描述长度从 1000 缩到 6，缩了约 <strong>166 倍</strong>。</p>
+  <p>玩具对比二：一千次硬币记录。想一字不差地还原，目前只能写满 1000 个字符；任何更短的写法——比如「正反正反」式的规律描述——还原出来的结果都对不上原记录。所以前者复杂度按「程序长度」计，很小；后者只能按自身长度计，接近 1000。要提醒的是：我们没法<strong>证明</strong>后者绝对压不短（那需要用到不可计算的复杂度本身），只能说：在你我能想到的所有办法里，都找不到更短的写法。</p>
+  <p>这正是教材与科普的分界线：教材用证明把「找不到更短写法」钉成定理；本页只取直觉。而直觉已经够用——它解释了为什么压缩软件能给文本瘦身（文本有语言规律），却对加密后的数据束手无策（加密后的数据看起来就像随机硬币记录）。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><strong>给 MDL 一个家。</strong>i01 里「总描述长度最短」之所以理直气壮，是因为它背后站着「最短描述」的严格理论；工程做法与理论极限各安其位。想回看那个能落地的版本，读 <a href="i01-mdl.html">i01 最小描述长度</a>。</p>
+  <p><strong>给全书单一把尺。</strong>「拿压缩长度量复杂度」的思路后来被用得淋漓尽致：Hinton 用它管住神经网络的权重（<a href="i03-keeping-nn-simple.html">i03 用描述长度精简神经网络</a>），Aaronson 用它量一杯咖啡先复杂、后简单的弧线（<a href="i04-coffee-automaton.html">i04 咖啡自动机</a>）。一根理论上「造不出来」的尺子，反而成了全书单最常用的工作比喻——这正是基础理论独特的回报方式。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>本页术语速查</caption>
+      <thead><tr><th scope="col">术语</th><th scope="col">英文</th><th scope="col">一句话解释</th></tr></thead>
+      <tbody>
+        <tr><td>Kolmogorov 复杂度</td><td>Kolmogorov complexity</td><td>能输出该对象的最短程序长度；换基准计算机只差固定的小开销。</td></tr>
+        <tr><td>算法随机性</td><td>algorithmic randomness</td><td>「随机 = 没有比自身更短的描述」的严格化。</td></tr>
+        <tr><td>不可计算</td><td>incomputability</td><td>不存在程序能对一切对象算出其最短描述的长度。</td></tr>
+        <tr><td>压缩</td><td>compression</td><td>用更短的表示还原同样的信息；工程上逼近复杂度的手段。</td></tr>
+        <tr><td>停机</td><td>halt</td><td>程序输出完结果后结束运行；「输出后停机」排除了无限打印的作弊。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>出版社页面（AMS Bookstore）：<a href="https://bookstore.ams.org/surv-220/" rel="noopener noreferrer">Kolmogorov Complexity and Algorithmic Randomness · Shen, Uspensky, Vereshchagin</a></li>
+    <li>代码：理论教材，没有官方代码，也不需要。</li>
+    <li>系列续读：上一篇 <a href="i01-mdl.html">i01 最小描述长度</a>；下一篇 <a href="i03-keeping-nn-simple.html">i03 用描述长度精简神经网络</a>。</li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i01-mdl.html" rel="prev">上一篇：i01 最小描述长度</a>
+  <a href="i03-keeping-nn-simple.html" rel="next">下一篇：i03 用描述长度精简神经网络</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据 Shen、Uspensky、Vereshchagin 合著教材《Kolmogorov Complexity and Algorithmic Randomness》（美国数学学会 AMS 出版）撰写，为面向大众的科普解读；准确表述以原书为准；最后核验日期 2026-09-26。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

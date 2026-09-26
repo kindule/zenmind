@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>机器超级智能｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读书单压轴、Shane Legg 2008 年博士论文《机器超级智能》：给「通用智能」一个严格定义——在所有可能任务上的平均表现，越通用的任务权重越合理。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">机器超级智能</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">机器超级智能</h1>
+  <p class="paper-hero-meta">Machine Super Intelligence · Shane Legg · 2008 年博士论文 · Ilya 推荐书单 i27（压轴）</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>通用智能</li>
+      <li>定义与度量</li>
+      <li>书单压轴</li>
+    </ul>
+    <div class="table-scroll">
+    <table>
+      <caption>基本信息一览</caption>
+      <tbody>
+        <tr><th scope="row">中文题名</th><td>机器超级智能</td></tr>
+        <tr><th scope="row">英文题名</th><td>Machine Super Intelligence</td></tr>
+        <tr><th scope="row">作者</th><td>Shane Legg</td></tr>
+        <tr><th scope="row">发表</th><td>2008 年博士论文</td></tr>
+        <tr><th scope="row">一句话定位</th><td>书单压轴——从「怎么训练」跳到「智能到底是什么、怎么衡量」。</td></tr>
+        <tr><th scope="row">一句话总结</th><td>把「通用智能」定义为「在所有可能任务上的平均表现，越通用的任务权重越合理」——不造工具，先造尺子。</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>原文出处见<a href="#links">「原文与代码」</a>。<span class="ev ev-p">原文事实</span></p>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>前面 26 篇都在回答「怎么把某个能力做得更好」：压缩、推理、视觉、语音、规模。压轴这一篇完全不同——它不造任何工具，而是问一个更根本的问题：「智能」到底是什么？你说某个系统聪明，这个「聪明」究竟指什么？</p>
+  <p>Shane Legg 在 2008 年的博士论文里指出一个尴尬的现实：大家天天在说某系统「聪明」，却几乎没有人给过严格定义。没有定义，就没有尺子；没有尺子，我们既无法判断今天的模型离「通用」有多远，也无法判断某次评测的进步究竟是「变聪明了」还是「刷题刷熟了」。</p>
+  <p>把这篇放在书单最后是一次刻意的收束：读完全部「怎么造」，最后回头审视「造出来的东西该如何量」。造尺子的工作看似务虚，实则是一切务实工作的前提。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>学校要评「全能王」，第一种方案是只考数学——那评出来的其实是数学状元。第二种方案考五门固定课——可固定课表本身就偏了科：会背题目的孩子占便宜，换个题型就露馅。真正难的不是「多考几门」，而是「怎么才能考到所有可能的能力」。</p>
+  <p>更麻烦的是权重。奥数和煮饭哪个该占分？认路和下棋哪个更「基本」？平均分要算得服人，先得说清每门课占多大比重——「权重要合理」这五个字，分量比看起来重得多。</p>
+  <p>Legg 面对的正是这个放大了无数倍的难题：把「所有可能的任务」当考场，给每个任务配上合理的权重，再算一个平均分——这才是「通用智能」这把尺子该有的样子。尺子比成绩单更重要：尺子错了，再漂亮的成绩单也只是错误方向的胜利。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>论文的出发点是一个不满：「聪明」「智能」这些词被用得太随便。Legg 的做法是回到最朴素也最彻底的定义：一个系统的通用智能，是它在「所有可能任务」上的平均表现——不是某几门课的高分，而是全科平均。</p>
+  <p>「所有可能任务」显然数不完，于是必须加权：常见、基本的任务权重大些，罕见、特化的任务权重小些，让平均分反映「在多大范围的任务上都能拿分」。通俗转述过来就是那句话：在所有可能任务上的平均表现，越通用的任务权重越合理。公式与推导本页一概略去，留下的是直觉：通用 = 不偏科 = 会举一反三——在没见过的任务类型上依然有像样的表现。</p>
+  <p>用这把尺子回头量，许多「智能」新闻就要重新打分：某系统在固定题库上超过人类，可能只是「单科状元」；平均分要提上来，必须把不偏科的能力铺到任务全域。论文也因此留下一个至今有效的开放问题：我们今天的种种评测，究竟是在量「通用智能」，还是在量「应试能力」？</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>做一个加权平均实验（示意数字）。把「所有可能任务」缩成三门：识字（很基本）、算术、围棋（很特化）。甲系统：识字 95、算术 85、围棋 5——基本科目极强，特化几乎为零；乙系统：三门各 60——门门平平但不偏科。</p>
+  <p>第一轮，普通平均：甲 (95+85+5)÷3 ≈ 61.7，乙 60——甲险胜。第二轮，基本科目加权（识字权重 5、算术 3、围棋 2）：甲 (95×5+85×3+5×2)÷10 = 74，乙 (60×5+60×3+60×2)÷10 = 60——甲大胜。</p>
+  <p class="formula">基本加权：甲 (95×5 + 85×3 + 5×2) ÷ 10 = 74；乙 (60×5 + 60×3 + 60×2) ÷ 10 = 60</p>
+  <p>第三轮换个权重（识字 1、算术 1、围棋 8）：甲 (95+85+40)÷10 = 22，乙 60——乙大胜。同一组分数，换一套权重，冠军换人。这个小实验解释了 Legg 的难题难在哪里：「所有可能任务」数不完只是第一层困难，「权重要合理」没有现成答案是第二层；两层都过关，「平均表现」才配得上「通用智能」这把尺子。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p><span class="ev ev-p">原文影响</span> 这篇论文最持久的影响，是把「通用智能」从修辞变成研究对象：此后关于智能评测、通用模型、乃至机器智能安全的大量讨论，都在「任务分布 + 平均表现」这个框架里展开。它给整个领域立了一杆可以认真争论的标尺。</p>
+  <div class="callout callout-warning">
+    <p>它同时是提醒：i25「缩放定律」展示了规模如何稳定地压低损失，但用 Legg 的尺子一量就要追问——损失低、榜单高，未必等于「通用」在提升。今天的评测，量的是通用智能，还是固定题库上的应试能力？这个问题至今没有公认答案。</p>
+  </div>
+  <p>对本书单而言，它是刻意的收尾：从 i01 的描述长度到 i16 的注意力，再到 i25 的规模定律，30 篇读罢，最后留在手里的是一把尺子，而不只是 30 份工具说明书。</p>
+  <p>系列内相关阅读：<a href="i00-ilya-reading-list.html">i00 系列导语</a>（30 篇选目的总纲）、<a href="i25-scaling-laws.html">i25 缩放定律</a>（规模换性能的定律，与「通用」的尺子对照阅读）、<a href="i26-gpipe.html">i26 GPipe</a>（倒数第二站：规模化训练的工程代表）。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>本页术语速查</caption>
+    <tbody>
+      <tr><th scope="row">通用智能（Universal Intelligence）</th><td>在广泛乃至全部可能任务上的平均表现能力，本篇的核心概念。</td></tr>
+      <tr><th scope="row">超级智能（Super Intelligence）</th><td>全面显著超越人类水平的智能，论文标题所指的远景对象。</td></tr>
+      <tr><th scope="row">任务分布</th><td>把「所有可能任务」连同各自的权重看成一张清单，平均分在它上面计算。</td></tr>
+      <tr><th scope="row">权重</th><td>每个任务在平均分里的占比；「权重要合理」是定义能否服人的关键。</td></tr>
+      <tr><th scope="row">评测基准（Benchmark）</th><td>固定题库式的考试；本篇提醒它与「通用」之间存在距离。</td></tr>
+      <tr><th scope="row">举一反三</th><td>在没见过的任务类型上仍有像样表现，是「通用」的日常说法。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文全文（作者站点公开 PDF）：<a href="https://www.vetta.org/documents/Machine_Super_Intelligence.pdf" rel="noopener noreferrer">vetta.org/documents/Machine_Super_Intelligence.pdf</a></li>
+    <li>本页只收录批次简报给出的外链；本篇为博士论文，无配套代码仓库，本站不臆造地址。</li>
+    <li>系列内相关页：<a href="i26-gpipe.html">i26 GPipe</a> · <a href="i25-scaling-laws.html">i25 缩放定律</a> · <a href="i00-ilya-reading-list.html">返回系列导语</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i26-gpipe.html" rel="prev">上一篇：GPipe</a>
+  <a href="i00-ilya-reading-list.html" rel="next">下一篇：系列导语</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据 Shane Legg 2008 年博士论文《Machine Super Intelligence》（vetta.org 公开 PDF）与批次简报撰写；所有类比、示意数字与延伸解读均为本站原创，不代表原文表述。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

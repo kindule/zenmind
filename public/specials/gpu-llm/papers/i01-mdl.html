@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>最小描述长度（MDL）入门｜Ilya 推荐书单解读</title>
+<meta name="description" content="用两人「发资料」的游戏讲透最小描述长度（MDL）：模型即压缩方法，好模型让「资料加模型」的总描述长度最短；死记硬背反而更长，这正是过拟合的根。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">最小描述长度</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">最小描述长度（MDL）入门：好模型就是好压缩</h1>
+  <p class="paper-hero-meta">原文：A Tutorial Introduction to the Minimum Description Length Principle · Peter Grünwald · 2004 ｜ i 系列 01 / 27 · 板块一：理论地基</p>
+</section>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="fact-card">
+    <ul class="tag-row">
+      <li>理论教程</li>
+      <li>2004 年</li>
+      <li>i 系列 01 / 27</li>
+    </ul>
+    <table>
+      <caption>名片速览</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>A Tutorial Introduction to the Minimum Description Length Principle</td></tr>
+        <tr><th scope="row">作者</th><td>Peter Grünwald</td></tr>
+        <tr><th scope="row">年份与形式</th><td>2004 年发表的教学式综述，不依赖任何实验</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://arxiv.org/abs/math/0406077" rel="noopener noreferrer">arxiv.org/abs/math/0406077</a></td></tr>
+        <tr><th scope="row">一句话定位</th><td>把「怎么科学地判断一个模型好不好」变成一道数数的题：模型加资料的总描述长度越短，模型越好。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">它是整份书单的理论地基。把这样一篇纯理论教程排在最前面，等于先立规矩再盖楼：在讨论任何神经网络之前，先把「好模型」的衡量标准造出来。</p>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>这份书单里既有改变世界的 AlexNet，也有定义时代的 Transformer，但打头阵的却是一篇没有门槛、也不做任何实验的<strong>理论教程</strong>。这个安排本身就是一种表态：先把「什么算好模型」这把尺子造好，后面二十几篇的成就才有统一的量法。</p>
+  <p>MDL（Minimum Description Length，最小描述长度）给出的答案朴素到近乎违反直觉：<strong>预测即压缩，好模型就是好压缩器</strong>。一个模型如果真的抓住了资料里的规律，它就应该能把资料「说得更短」；把「模型本身的开销」和「用模型说资料的开销」加在一起，总长度最短的那个模型获胜。</p>
+  <p>更重要的是，这把尺子能把整份书单串成一条线：后面许多工作——Hinton 给神经网络权重「省字节」（<a href="i03-keeping-nn-simple.html">i03</a>）、Aaronson 拿压缩长度当复杂度的尺子（<a href="i04-coffee-automaton.html">i04</a>）、直到缩放定律里对「模型与数据怎么分预算」的权衡（<a href="i25-scaling-laws.html">i25</a>）——本质上都在<strong>控制描述长度</strong>。读懂这一篇，后面的很多选择会变得显而易见。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p><strong>背课文的同学与理解公式的同学。</strong>老师宣布：明天默写一串数字「2、4、6、8……」一直到第 100 个。甲同学老老实实抄满三页草稿纸；乙同学只写了一行字：「从 2 开始的偶数，一共 100 个」。第二天老师临时加题，要接着往下再写 100 个——甲同学当场卡住，乙同学那行字原封不动还能用。两个人的记录都能还原出数列，但乙的更短，而且面对新情况更结实。短的、结实的那份记录，就是更好的「模型」。</p>
+  <p><strong>快递打包的运费账。</strong>寄一箱书，快递员称重时不只称书，纸箱和缓冲泡沫也一起上秤。箱子太小，书塞不进去（资料描述不完）；箱子太大，空箱子白花运费（模型本身太贵）。精打细算的人都懂：真正要优化的是「货物加包装」的总运费，而不是单独盯着哪一头。MDL 就是把这套生活智慧写成了标准——模型是箱子，箱子本身也要花钱。</p>
+  <p>这两个场景指向同一个反直觉的结论：<strong>最忠实的记录未必最省，最花哨的模型也未必最省</strong>。死记硬背看似「零假设、零成本」，其实把全部开销都压在了「照抄资料」上；一套精巧理论看似无所不能，可「理论本身」的厚度也要计入账单。省钱的答案永远在中间：用一个不太贵、又真能抓住规律的模型，让两笔开销加起来最短。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p><strong>一场「发资料」的两难游戏。</strong>想象甲要把一批资料完整无误地传给乙，规则允许甲分两步走：第一步先寄一本「码书」（codebook，双方约定的编码规则，它扮演的角色就是「模型」）；第二步按码书把资料编码后发出。乙收到后翻着码书原样还原。这场游戏的总成本一目了然：<strong>总长度 = 码书的厚度 + 按码书编码后资料的长度</strong>。MDL 原理只有一句话：在所有可选的码书里，选让总长度最小的那一本。</p>
+  <p><strong>两个极端都不划算。</strong>第一个极端：码书为零，资料照抄——这就是死记硬背，资料动辄成千上万个字符，而且下次资料一变，又得全部重抄。第二个极端：码书写成一部巨著，资料编码短到几乎为零——为了一页资料造一座图书馆，账单反而更吓人。MDL 用同一把尺子量出这两个毛病：前者败在「资料那一半」太长，后者败在「模型那一半」太长。</p>
+  <p><strong>误差也要花字节。</strong>模型对资料做出预测之后，总会剩下一些「没想到」：预测与实际的差距，需要额外的编码才能补齐。模型越准，意外越少，这部分越短；模型越差，为善后支付的「意外账单」越长。于是「总描述长度」这一笔账同时惩罚两种失败：拟合不好的（意外账单长）和模型过于复杂的（模型账单长）。</p>
+  <p><strong>奥卡姆剃刀的数学化。</strong>「如无必要，勿增实体」讲了七百年，一直卡在「必要」两个字全凭感觉。MDL 把它变成了可数的字节数：想增加模型复杂度，可以，但先问问它省下来的编码够不够支付自己的厚度。这也是整份书单反复出现的主旋律——控制描述长度：后面的 i03 把它按到神经网络权重上，i04 拿它去量一杯咖啡，i25 在更大的尺度上权衡模型与数据的预算。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>拿数列「2,4,6,8,10,12,14,16」玩一局发资料游戏。长度单位就用「字符数」，同一把尺子量所有方案。</p>
+  <div class="table-scroll">
+    <table>
+      <caption>两种方案的描述长度对比（8 个数的数列）</caption>
+      <thead><tr><th scope="col">方案</th><th scope="col">模型部分（码书）</th><th scope="col">资料部分</th><th scope="col" class="num">总长度</th></tr></thead>
+      <tbody>
+        <tr><td>照抄（死记硬背）</td><td>0 个字符</td><td>12 个数字 + 7 个逗号 = 19 个字符</td><td class="num">19</td></tr>
+        <tr><td>找规律（建模）</td><td>「从 2 开始的偶数，共 8 个」= 11 个字符</td><td>「照算」= 2 个字符</td><td class="num">13</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>规律派以 13 比 19 获胜，但只省 6 个字符——因为资料太短，码书的固定成本摊不平。现在把数列拉长到 100 个偶数（从 2 到 200）：照抄需要 247 个数字加 99 个逗号，共 <strong>346 个字符</strong>；码书只多写了两个字，变成「从 2 开始的偶数，共 100 个」（13 个字符），加上「照算」总共 <strong>15 个字符</strong>。差距从 6 个字符一下子拉大到 331 个字符。</p>
+  <p>这笔小账说明 MDL 的两条铁律。第一，<strong>模型有固定成本</strong>：资料太短时「找规律」可能不划算——这正是「小数据容易过拟合」的通俗版本。第二，<strong>资料越长，好模型赚得越多</strong>：码书的成本被摊得越来越薄。今天肯花大价钱训练大模型，赌的正是第二条——海量数据足以摊薄一个复杂模型的自重。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>MDL 把「模型好不好」从品味之争变成了可数的字节数，统计学与信息论从此说同一种语言；「简单者优先」这条古老的哲学直觉，第一次有了精确的数学形态。今天教科书里的模型选择准则、机器学习实践中的正则化意识，都能在这篇教程里找到最清晰的入门讲法。</p>
+  <p>在本系列里，它是公认的起点。<strong>想看这把尺子的理论天花板</strong>——「一个对象最短能压到多短」的严格定义与「随机即压不短」的数学化——读 <a href="i02-kolmogorov.html">i02 Kolmogorov 复杂度</a>；<strong>想看它第一次落到神经网络权重上</strong>——1993 年 Hinton 就开始给权重「省字节」——读 <a href="i03-keeping-nn-simple.html">i03 用描述长度精简神经网络</a>。而「模型与数据怎么分预算」的现代版本，可以在 <a href="i25-scaling-laws.html">i25 缩放定律</a> 里听到回声。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>本页术语速查</caption>
+      <thead><tr><th scope="col">术语</th><th scope="col">英文</th><th scope="col">一句话解释</th></tr></thead>
+      <tbody>
+        <tr><td>最小描述长度</td><td>Minimum Description Length（MDL）</td><td>模型加资料的总描述长度越短，模型越好。</td></tr>
+        <tr><td>码书</td><td>codebook</td><td>双方约定的编码规则，在游戏里扮演「模型」。</td></tr>
+        <tr><td>过拟合</td><td>overfitting</td><td>模型死记硬背了训练资料，遇到新资料就失灵；在游戏里表现为「资料那一半」特别长。</td></tr>
+        <tr><td>奥卡姆剃刀</td><td>Occam's razor</td><td>「如无必要，勿增实体」；MDL 把「必要」算成了字节数。</td></tr>
+        <tr><td>泛化</td><td>generalization</td><td>模型在没见过的资料上依然好使的能力。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文（arXiv 页面，可下载 PDF）：<a href="https://arxiv.org/abs/math/0406077" rel="noopener noreferrer">A Tutorial Introduction to the Minimum Description Length Principle · Peter Grünwald · 2004</a></li>
+    <li>代码：本文是理论教程，没有官方代码，也不需要——本页所有例子拿纸笔就能算。</li>
+    <li>系列续读：下一篇 <a href="i02-kolmogorov.html">i02 Kolmogorov 复杂度</a>；回看 <a href="i00-ilya-reading-list.html">i00 系列导语</a>。</li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i00-ilya-reading-list.html" rel="prev">上一篇：i00 系列导语</a>
+  <a href="i02-kolmogorov.html" rel="next">下一篇：i02 Kolmogorov 复杂度</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页依据 Peter Grünwald《A Tutorial Introduction to the Minimum Description Length Principle》（2004，arXiv:math/0406077）撰写，为面向大众的科普解读；准确表述以原文为准；最后核验日期 2026-09-26。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>指针网络（Pointer Networks）｜Ilya 推荐书单解读</title>
+<meta name="description" content="指针网络：输出不是造新词，而是指向输入里的位置；用注意力打分挑位置，应对凸包、三角剖分、旅行商等组合问题。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">i18 指针网络</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">指针网络（Pointer Networks）</h1>
+  <p class="paper-hero-meta">Oriol Vinyals、Yoshua Bengio、Ilya Sutskever · arXiv 2015 · 让输出「指向输入」——答案不是造词，而是挑位置</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i17-annotated-transformer.html" rel="prev">上一篇：i17 Annotated Transformer</a>
+  <a href="i19-order-matters.html" rel="next">下一篇：i19 Order Matters</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i18 论文名片</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Pointer Networks</td></tr>
+        <tr><th scope="row">中文常用名</th><td>指针网络</td></tr>
+        <tr><th scope="row">作者与年份</th><td>Oriol Vinyals、Yoshua Bengio、Ilya Sutskever，arXiv 2015</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://arxiv.org/abs/1506.03125" rel="noopener noreferrer">https://arxiv.org/abs/1506.03125</a></td></tr>
+        <tr><th scope="row">一句话概括</th><td>让输出「指向输入」——答案不是造新词，而是从输入里挑位置；输入点数可变。</td></tr>
+        <tr><th scope="row">系列位置</th><td>i18（第四板块：Transformer 与进阶架构）；作者名单里就有 Ilya 本人</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>这篇论文的作者名单里就有 Ilya 本人。它解决的是一个被「固定词表」卡住的问题：普通序列模型的输出只能从一张预先定好的词表里挑词，可有一大类问题的答案天生不在任何词表里——它们是输入里的某个位置。</p>
+  <p>凸包、三角剖分、旅行商这类组合问题，答案都是从输入里「挑东西」：挑出哪几个点、哪几条边、哪条路线。指针网络把输出从「造词」改成「指位置」，并且输入点数可变，规模变大了机制也不用改。这是注意力思想早期的一次漂亮迁移：同样是打分，它不取信息，只取位置。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>做阅读理解题有两种答法。一种是改写：用自己的话把答案编出来；另一种是举手指出：「答案在第 3 行第 5 个词。」出题人最认第二种——原文就是标准答案，你只要指得准。改写有走样的风险：编着编着就偏了；指认却永远不会走样，答案就是原文本身，指对了就是对了。</p>
+  <p>传统序列模型就像只会改写的考生：它的输出被锁死在一张固定词表上，词表里没有的它说不出来。可凸包问题的答案偏偏是「你输入的那几个点」：输入变，答案跟着变，词表根本没法提前准备。指针网络学会的是第二种答法：不改写、不造新词，每次输出就是一次举手——指向输入里的某个位置。输入给 10 个点，它就从这 10 个点里指；换成 100 个点，照样从这 100 个点里指，举手这个动作本身不用变。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>先把问题摆清楚。凸包问题（Convex Hull）：平面上撒一把点，要输出「围住所有点的边界点」——答案永远是输入点本身，绝不产生新点。三角剖分（Triangulation）：把一片点连成整齐的三角形网，用的也全是原有的点。旅行商问题（TSP，Traveling Salesman Problem）：找一条最短的路线走遍所有城市，输出是「输入城市的一个排列」。这类任务统称组合问题（Combinatorial Problems），共同点是：答案都藏在输入里。固定词表的传统输出方式干不了这个活——词表是死的，输入是活的。</p>
+  <p>指针网络的解法干脆利落：用注意力打分，但不拿分数去混合信息，而是拿分数直接「指向」输入位置。每一步输出前，模型对输入的每个位置打一个分，分最高的位置就是答案——像在输入上方装了一排指针，每次竖起其中一根。</p>
+  <p>最妙的是输入点数可变。因为打分是对「当前输入的每个位置」进行的：10 个点就打 10 个分，100 个点就打 100 个分，分最高的照样被指中，机制一模一样。换句话说，指针网络把「输出的菜单」从死词表换成了活输入——菜单每天换，点菜的动作不变。这一步也预演了后来「对所有位置打分」的通用套路，那个套路在 i16 里被推到了整句语言上。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>设输入 5 个点，模型在某一步对它们分别打分，换算成占比：点 1 占 10%、点 2 占 20%、点 3 占 35%、点 4 占 5%、点 5 占 30%（合计 100%）。最大占比是点 3 的 35%，于是这一步的输出就是「指向点 3」。</p>
+  <p>注意两件事。第一，输出不是任何新造的东西，就是输入里现成的点 3——「指认式输出」永不走样。第二，把输入换成 50 个点，只是打分从 5 份变成 50 份，各份占比合计仍是 100%，挑最大占比的动作完全不变。这就是「可变输入长度」的全部含义：变的是打分的份数，不变的是打分与指认的方法。整套算术只有比大小和算百分比。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>指针网络证明了一件事：注意力不仅能用来「取信息」，还能用来「选位置」。凡是答案藏在输入里的任务——从组合优化到各类「从原文里指答案」的抽取式任务——都多了一条现成的路。它和 i19 是同一团队前后脚的工作，主题连续：都在回答「输入该怎么读、输出该怎么落」。</p>
+  <p>系列内相关阅读：同一团队的后续思考见 <a href="i19-order-matters.html">i19 Order Matters</a>；注意力打分更早的用例见 <a href="i15-nmt-attention.html">i15 注意力机器翻译</a>；把「对所有位置打分」推成通用结构的是 <a href="i16-attention-is-all-you-need.html">i16 Attention Is All You Need</a>。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i18 术语小词典</caption>
+      <thead>
+        <tr><th scope="col">术语</th><th scope="col">白话解释</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">指针网络（Pointer Networks）</th><td>输出不是词表中的词，而是输入中某个位置的网络。</td></tr>
+        <tr><th scope="row">凸包（Convex Hull）</th><td>围住平面上所有点的边界点集合，答案全部来自输入点。</td></tr>
+        <tr><th scope="row">三角剖分（Triangulation）</th><td>把一片点连成整齐三角形网的问题，同样只用输入的点。</td></tr>
+        <tr><th scope="row">旅行商问题（TSP）</th><td>找最短路线走遍所有点，输出是输入点的一个排列。</td></tr>
+        <tr><th scope="row">固定词表（Fixed Vocabulary）</th><td>传统输出方式里预先定死的可选答案集合，装不下「从输入挑」的答案。</td></tr>
+        <tr><th scope="row">组合问题（Combinatorial Problems）</th><td>答案是从输入里挑选、排列的一类问题，如凸包、三角剖分、TSP。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文：Pointer Networks（arXiv 2015）——<a href="https://arxiv.org/abs/1506.03125" rel="noopener noreferrer">https://arxiv.org/abs/1506.03125</a></li>
+    <li>同团队后续：i19 Order Matters——<a href="i19-order-matters.html">i19-order-matters.html</a></li>
+    <li>打分机制的通用化：i16 Attention Is All You Need——<a href="i16-attention-is-all-you-need.html">i16-attention-is-all-you-need.html</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i17-annotated-transformer.html" rel="prev">上一篇：i17 Annotated Transformer</a>
+  <a href="i19-order-matters.html" rel="next">下一篇：i19 Order Matters</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为科普解读页，解读对象是 Pointer Networks（Oriol Vinyals、Yoshua Bengio、Ilya Sutskever，arXiv 2015），原文见 <a href="https://arxiv.org/abs/1506.03125" rel="noopener noreferrer">https://arxiv.org/abs/1506.03125</a>。文中阅读理解等类比与全部算例为帮助理解而设，并非论文原文内容。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

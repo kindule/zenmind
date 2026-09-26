@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>面向量子化学的消息传递神经网络（MPNN）｜Ilya 推荐书单解读</title>
+<meta name="description" content="消息传递神经网络：分子是原子与化学键组成的图，一轮轮传纸条，每个原子就知道自己在分子里的处境；多种图模型在此统一成同一框架。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">i21 消息传递神经网络</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">面向量子化学的消息传递神经网络（MPNN）</h1>
+  <p class="paper-hero-meta">Justin Gilmer 等（Google） · arXiv 2017 · 图神经网络的统一语言：很多模型其实都是「传纸条」</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i20-neural-turing-machines.html" rel="prev">上一篇：i20 神经图灵机</a>
+  <a href="i22-relational-reasoning.html" rel="next">下一篇：i22 关系推理模块</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i21 论文名片</caption>
+      <tbody>
+        <tr><th scope="row">英文题名</th><td>Neural Message Passing for Quantum Chemistry</td></tr>
+        <tr><th scope="row">中文常用名</th><td>面向量子化学的消息传递神经网络，框架简称 MPNN</td></tr>
+        <tr><th scope="row">作者与年份</th><td>Justin Gilmer 等（Google），arXiv 2017</td></tr>
+        <tr><th scope="row">原文链接</th><td><a href="https://arxiv.org/abs/1704.01212" rel="noopener noreferrer">https://arxiv.org/abs/1704.01212</a></td></tr>
+        <tr><th scope="row">一句话概括</th><td>原子传纸条、收纸条、更新状态，几轮之后每个原子就知道自己在分子里的处境；多种图模型其实是同一框架的特例。</td></tr>
+        <tr><th scope="row">系列位置</th><td>i21（第四板块收官）：把书单从「序列与集合」带进「图与关系」的世界</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>书单前几篇处理的输入是「一串词」或「一袋数」，可分子不是串也不是袋，是一张网：原子是点，化学键是边。要预测分子的性质，比如溶解度、能量，模型得先学会读这张网。这篇 Google 的论文把当时五花八门的图模型放到同一把尺子下，发现它们其实是同一件事的不同做法——消息传递。</p>
+  <p>它的价值一半在化学应用，一半在「统一框架」。把散落的模型收拢成一种语言之后，新想法只需要说清楚三件事——纸条怎么写、纸条怎么收、状态怎么更新——就能立刻对上整个家族。这种统一工作在书单里格外珍贵：先让你看清森林，再回头去看每棵树。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>班里要给每个人画一张「小圈子画像」，办法很朴素：每人一开始只知道自己的事。第一轮，每人给直接认识的邻居传一张小纸条；第二轮，把纸条上听到的事再转述给自己的邻居……传了几轮之后，每个人手里都攒下了朋友的朋友的情况——谁和谁走得近、哪个角落热闹，每人都能说上一段。没有班主任发通知，全靠同学之间一张张纸条，全班的画面就自己浮现出来。</p>
+  <p>社区里的口口相传也是同理：一条消息从当事人出发，沿着熟人链条传几轮，整个社区就对这件事形成了集体印象——即使没亲眼见过的邻居，也通过二手、三手消息知道了个大概。消息传递网络让每个原子干的就是这件事：一轮一轮传纸条，直到每个原子都摸清自己在整个分子里的处境。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>先把分子翻译成图（Graph）：原子是节点（Node），化学键是边（Edge），键连着谁，消息就通向谁。MPNN（Message Passing Neural Network，消息传递神经网络）的流程是三步循环。第一步，传消息：每一轮，每个原子向自己的邻居「传纸条」，纸条上写什么由模型学出来。第二步，汇总（Aggregate）：每个原子把收到的纸条合并到一起——邻居多也不怕，收齐了合起来看。第三步，更新：用合并后的信息刷新自己的状态。传、收、更新，一轮算一圈。</p>
+  <p>轮数的意义在于视野。一轮过后，每个原子只知道直接相连的邻居；两轮过后，邻居的邻居的事也传到了自己手里；轮数越多，每个原子的「视野」沿化学键铺开的范围越大。跑足若干轮之后，再做一次整体汇总，把所有原子的状态合并起来，就能预测整个分子的性质，比如溶解度、能量——输入是「原子加化学键」这张网，输出是分子的宏观性质。</p>
+  <p>论文更大的贡献在框架本身：它把当时的多种图模型统一成同一框架的特例。各家模型的差别，无非是纸条的写法、汇总的方式、更新的配方不同，骨架全是「传纸条」。统一之后，比较模型有了共同语言，设计新模型也只需换几个「配方位」——后来的图网络研究大量受益于这种看问题的方式。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>用一个最小的「分子」感受轮数与视野：3 个原子排成一条线，A—B—C（A 与 B 有一条键，B 与 C 有一条键）。第一轮传纸条：B 收到来自 A 和 C 的两张纸条，知道了两边邻居；A 只收到 B 的一张纸条，只知道 B。第二轮：A 把「我这轮听到的事」写成纸条给 B，B 转给 C——于是 C 虽然从没和 A 直接相连，也知道了 A 的存在。两轮之后，线上每个原子都「认识」了全部成员。</p>
+  <p>把这件事数一数：1 轮，视野到达「直接邻居」，A、B、C 各自认识 1 到 2 个对象；2 轮，视野多扩一格，B 认识 2 个，A 和 C 也各认识 2 个。规律很直白：轮数每加 1，视野沿边多走 1 步；一个长链条如果想知道两头的情况，就得传上与距离差不多的轮数。这就是「跑若干轮后，每个原子知道自己在大分子里的处境」的算术版——加法和数数就够了。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>MPNN 把图神经网络（Graph Neural Network，GNN）从一堆各自命名的技巧，整理成一门统一的语言；量子化学成了它最有说服力的应用场景之一——用「原子加键」的读法直接预测分子性质。对书单读者，它补上了「数据不一定是序列，还可以是网」这块拼图，并与 i19、i22 一起构成「结构化输入」的完整光谱：集合、关系、图。</p>
+  <p>系列内相关阅读：继续讨论「对象之间有关系」的输入，见 <a href="i22-relational-reasoning.html">i22 关系推理模块</a>；处理没有顺序的集合输入，见 <a href="i19-order-matters.html">i19 Order Matters</a>；纸条「按相关度取用信息」的味道，在 <a href="i16-attention-is-all-you-need.html">i16 Attention Is All You Need</a> 里有放大版。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <div class="table-scroll">
+    <table>
+      <caption>i21 术语小词典</caption>
+      <thead>
+        <tr><th scope="col">术语</th><th scope="col">白话解释</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">图（Graph）</th><td>由点和点之间的连线组成的数据结构，用来描述「谁和谁相连」。</td></tr>
+        <tr><th scope="row">节点与边（Node &amp; Edge）</th><td>图的基本零件：分子里原子是节点，化学键是边。</td></tr>
+        <tr><th scope="row">消息传递（Message Passing）</th><td>每一轮每个节点向邻居发「纸条」，沿边交换信息。</td></tr>
+        <tr><th scope="row">汇总（Aggregate）</th><td>把收到的多张纸条合并成一份，供更新状态使用。</td></tr>
+        <tr><th scope="row">图神经网络（GNN）</th><td>直接在图上做学习的网络家族，MPNN 是对它们统一后的框架名。</td></tr>
+        <tr><th scope="row">量子化学（Quantum Chemistry）</th><td>从微观层面研究分子的学科；本文用它检验「读图」能力，预测溶解度、能量等性质。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>原文：Neural Message Passing for Quantum Chemistry（arXiv 2017）——<a href="https://arxiv.org/abs/1704.01212" rel="noopener noreferrer">https://arxiv.org/abs/1704.01212</a></li>
+    <li>结构化输入前篇：i19 Order Matters——<a href="i19-order-matters.html">i19-order-matters.html</a></li>
+    <li>结构化输入后篇：i22 关系推理模块——<a href="i22-relational-reasoning.html">i22-relational-reasoning.html</a></li>
+  </ul>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i20-neural-turing-machines.html" rel="prev">上一篇：i20 神经图灵机</a>
+  <a href="i22-relational-reasoning.html" rel="next">下一篇：i22 关系推理模块</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本文为科普解读页，解读对象是 Neural Message Passing for Quantum Chemistry（Justin Gilmer 等，Google，arXiv 2017），原文见 <a href="https://arxiv.org/abs/1704.01212" rel="noopener noreferrer">https://arxiv.org/abs/1704.01212</a>。文中传纸条等类比与全部算例为帮助理解而设，并非论文原文内容。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

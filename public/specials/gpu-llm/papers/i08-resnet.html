@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ResNet：深度残差学习｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读 ResNet（arXiv 2015）：残差连接让网络只学修正量，152 层超深网络训得动，top-5 错误率约 3.57%，2015 年 ImageNet 竞赛冠军。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">ResNet</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">ResNet：深度残差学习</h1>
+  <p class="paper-hero-meta">Deep Residual Learning for Image Recognition｜何恺明、张祥雨、任少卿、孙剑｜arXiv 2015</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i07-cs231n.html" rel="prev">上一篇：CS231n</a>
+  <a href="i09-identity-mappings.html" rel="next">下一篇：恒等映射</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>ResNet 基本信息一览</caption>
+    <tbody>
+      <tr><th scope="row">中文题名</th><td>ResNet：深度残差学习</td></tr>
+      <tr><th scope="row">英文题名</th><td>Deep Residual Learning for Image Recognition</td></tr>
+      <tr><th scope="row">作者</th><td>何恺明、张祥雨、任少卿、孙剑</td></tr>
+      <tr><th scope="row">发表</th><td>arXiv 2015</td></tr>
+      <tr><th scope="row">成绩</th><td>2015 年 ImageNet 竞赛冠军；152 层网络，top-5 错误率约 3.57%</td></tr>
+      <tr><th scope="row">一句话定位</th><td>让「越深越好」真正成立的里程碑</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>直觉上，网络越深越好：层数多，能拼出来的花样就多。可实践偏偏唱反调——把普通网络一味加深，过了某个深度，连训练集上的错误都不降反升。这就是退化问题。注意，它和过拟合不是一回事：过拟合是「训练背得滚瓜烂熟、一上考场就砸锅」，而退化是「连训练这本经都念不好」，卡住的是学习本身。</p>
+  <p>ResNet 的回答干净漂亮：让网络只学增量。每一层的任务不再是「直接算出最终答案」，而是「在上一个答案的基础上做一点修正」。凭这一点改动，152 层的超深网络第一次真正训得动，并拿下 2015 年 ImageNet 竞赛冠军。</p>
+  <p>成绩单同样惊人：top-5 错误率约 3.57%，进入了超过人眼水平的量级——机器在 ImageNet 这种识别任务上追平并超越了人类。深度学习常被质疑「只是炼丹」，这篇论文给出的是能讲清道理的设计，这也是它进入书单的原因。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想象一篇作文要经过 100 位老师接力批改。如果每位老师拿到稿子都整篇重写，改到后面文风越来越乱，很可能还不如初稿；如果规定每位老师只批改错句、其余原样保留，每一轮修改都严格不差于上一轮，那么 100 轮下来只会稳中有进。普通深网络像前一种改法，残差网络像后一种：只学修正，不推倒重来。</p>
+  <p>也可以想成带上原文对照的传话游戏。队列里每人拿到的不是「上一人转述的话」，而是「原文加上前人的批注」；每个人只许添批注，不许重述原文。这样传 100 手，原意也丢不了。shortcut 干的就是「让原文永远在手边」这件事。</p>
+  <p>生活里真正的进步大多如此：不是每次都推倒重来，而是在现有底子上持续打补丁。ResNet 的厉害之处，是把这个朴素到近乎常识的道理，翻译成了网络结构里的一条硬规则。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>核心改动一句话就能说完：输出 = 输入 + 学到的修正。卷积层不再负责给出完整答案，只负责给出「这一步该改多少」。如果某一层实在学不到有用的东西，把修正学成零即可，输出至少等于输入——先保底，再进步。学习任务从「从零造答案」变成「只挑毛病」，难度一下子降了下来。</p>
+  <p>结构上，输入除了走一层层卷积的「主路」，还抄一条近路直接送到出口，两路在出口相加。这条近路叫 shortcut（捷径连接），像高速公路旁边的辅路：主路负责加工、产出修正，辅路保住原始信息，谁也不堵谁。信息走辅路原样直达，判断走主路慢慢磨。</p>
+  <p>为什么这样退化就消失了？对普通结构来说，「什么都不做」其实很难——要靠一摞层去逼出一个「照抄输入」的行为，费劲还不讨好；残差结构里，「照抄」是天生自带的默认选项，网络只在有把握时才偏离它。深度的负担就此变成深度的红利：层越多，可以叠加的修正就越多，152 层就是这样训起来的。</p>
+  <p>还有一点常被忽略：这个改动极其廉价。不需要多少额外参数，不需要特殊硬件，只是给信息多修了一条路。好想法未必复杂，这是 ResNet 留给所有工程领域的启示。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>残差学习本质上是加减法。设当前答案是 60 分，某一层学到的修正是 +25，输出就是 60 + 25 = 85；下一层又修正 −5，得 80。网络再深，成绩始终按「上一版成绩 + 本层修正」滚动，不会因为加深一层就整体崩盘——这就是「保底」两个字的算术含义。</p>
+  <p>再把错误率换算成张数。top-5 错误率 3.57%，即每 10000 张图里约 357 张的正确答案不在模型前五个猜测中；对照书单上一篇 AlexNet 的 15.3%（约 1530 张），三年间少了约 1173 张，错误率降到不足原来的四分之一。当年被问题本身难住的场合，如今大多被答对了。</p>
+  <p>最后感受一下深度。152 层，如果每层是一位接力跑者，普通结构下队伍跑到中途就有人体力不支、全场掉速；残差结构保证每一棒至少能把「原样」稳稳交下去，于是第 152 棒听到的，和第 1 棒听到的仍是同一个声音。深度第一次不再是负担，而是可支配的资源。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>残差连接从「竞赛冠军的诀窍」变成了深度学习的基础组件。今天在视觉、语音、语言各个方向的主流网络里，几乎都能看到这条小近路。它证明了深度的价值，更给出了兑现深度的通用方法——这是它能穿越领域边界的原因。</p>
+  <p>它也留了一个精巧的后续问题：shortcut 这条近路上，到底应该放什么？书单里的续作给出了系统回答——见 <a href="i09-identity-mappings.html">i09 恒等映射</a>：原样传递就是最好的选择，上千层的网络由此成为可能。两篇连读，才能看到「残差」这条线从工程奇迹走向设计原则的全过程。</p>
+  <p>如果你觉得「卷积为什么长这样」还欠一层理解，可以先回到系统教材 <a href="i07-cs231n.html">i07 CS231n</a> 把地基补齐；而卷积工具箱的另一件武器——不加参数也能扩大视野——见 <a href="i10-dilated-convolutions.html">i10 膨胀卷积</a>。深度与视野，正是这一板块的两条主线。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <dl>
+    <dt>残差学习（Residual Learning）</dt><dd>让网络只学「输入到输出的修正量」，输出 = 输入 + 修正。</dd>
+    <dt>捷径连接（Shortcut Connection，也叫 skip connection）</dt><dd>把输入直接抄送到输出端的旁路，像高速公路辅路。</dd>
+    <dt>退化问题（Degradation Problem）</dt><dd>网络加深后连训练错误都升高，与过拟合无关，是学习本身的困难。</dd>
+    <dt>过拟合（Overfitting）</dt><dd>训练集表现好而新数据表现差，「背题背过头」。</dd>
+    <dt>恒等映射（Identity Mapping）</dt><dd>输出等于输入、什么都不改的映射，残差结构的默认保底项。</dd>
+    <dt>top-5 错误率</dt><dd>模型前五个猜测里不含正确答案的图片占比。</dd>
+  </dl>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（arXiv 页面）：<a href="https://arxiv.org/abs/1512.03385" rel="noopener noreferrer">Deep Residual Learning for Image Recognition</a></li>
+  </ul>
+  <div class="callout">
+    <p>提示：读完本篇请接着读续作 <a href="i09-identity-mappings.html">i09 恒等映射</a>，它回答了本篇留下的 shortcut 设计问题。</p>
+  </div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i07-cs231n.html" rel="prev">上一篇：CS231n</a>
+  <a href="i09-identity-mappings.html" rel="next">下一篇：恒等映射</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页为 Ilya 推荐书单系列解读（i08）；事实与数字均取自 arXiv 原文页面（见「原文与代码」一节）及无争议公开常识，未引入书单之外的具体数字；类比与解读为本站原创。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

@@ -28,6 +28,39 @@ const CORE_CATALOG: { slug: string; name: string; theme: string }[] = [
   { slug: '15-galore', name: 'GaLore', theme: '训练、并行与 GPU Kernel' },
   { slug: '16-deepseek-v3', name: 'DeepSeek-V3', theme: '训练、并行与 GPU Kernel' },
 ]
+// Ilya 推荐书单系列（i 系列）：独立于核心 16 篇与奠基论文的延伸内容。
+// 来源：Ilya Sutskever 赠予 John Carmack 的研究书单（公开整理版 27 条，流传说法约 30 条）。
+const ILYA_CATALOG: { slug: string; name: string; theme: string }[] = [
+  { slug: 'i00-ilya-reading-list', name: 'Ilya 书单系列导语', theme: 'Ilya 推荐书单' },
+  { slug: 'i01-mdl', name: '最小描述长度（MDL）', theme: 'Ilya 推荐书单 · 理论地基' },
+  { slug: 'i02-kolmogorov', name: 'Kolmogorov 复杂度与算法随机性', theme: 'Ilya 推荐书单 · 理论地基' },
+  { slug: 'i03-keeping-nn-simple', name: '用描述长度精简神经网络（1993）', theme: 'Ilya 推荐书单 · 理论地基' },
+  { slug: 'i04-coffee-automaton', name: '咖啡自动机：复杂度的起落', theme: 'Ilya 推荐书单 · 理论地基' },
+  { slug: 'i05-complexodynamics', name: '复杂动力学第一定律', theme: 'Ilya 推荐书单 · 理论地基' },
+  { slug: 'i06-alexnet', name: 'AlexNet', theme: 'Ilya 推荐书单 · 卷积网络' },
+  { slug: 'i07-cs231n', name: 'CS231n（CNN 公开课）', theme: 'Ilya 推荐书单 · 卷积网络' },
+  { slug: 'i08-resnet', name: 'ResNet 深度残差学习', theme: 'Ilya 推荐书单 · 卷积网络' },
+  { slug: 'i09-identity-mappings', name: '残差网络的恒等映射', theme: 'Ilya 推荐书单 · 卷积网络' },
+  { slug: 'i10-dilated-convolutions', name: '膨胀卷积', theme: 'Ilya 推荐书单 · 卷积网络' },
+  { slug: 'i11-rnn-effectiveness', name: 'RNN 的惊人有效性', theme: 'Ilya 推荐书单 · 循环网络与注意力' },
+  { slug: 'i12-lstm-networks', name: '理解 LSTM 网络', theme: 'Ilya 推荐书单 · 循环网络与注意力' },
+  { slug: 'i13-rnn-regularization', name: '循环神经网络正则化', theme: 'Ilya 推荐书单 · 循环网络与注意力' },
+  { slug: 'i14-relational-rnn', name: '关系循环网络', theme: 'Ilya 推荐书单 · 循环网络与注意力' },
+  { slug: 'i15-nmt-attention', name: '注意力机器翻译（对齐）', theme: 'Ilya 推荐书单 · 循环网络与注意力' },
+  { slug: 'i16-attention-is-all-you-need', name: 'Attention Is All You Need（教学版）', theme: 'Ilya 推荐书单 · Transformer' },
+  { slug: 'i17-annotated-transformer', name: 'The Annotated Transformer', theme: 'Ilya 推荐书单 · Transformer' },
+  { slug: 'i18-pointer-networks', name: '指针网络', theme: 'Ilya 推荐书单 · 架构探索' },
+  { slug: 'i19-order-matters', name: 'Order Matters（集合的序列到序列）', theme: 'Ilya 推荐书单 · 架构探索' },
+  { slug: 'i20-neural-turing-machines', name: '神经图灵机', theme: 'Ilya 推荐书单 · 架构探索' },
+  { slug: 'i21-mpnn-message-passing', name: '消息传递神经网络', theme: 'Ilya 推荐书单 · 架构探索' },
+  { slug: 'i22-relational-reasoning', name: '关系推理模块', theme: 'Ilya 推荐书单 · 架构探索' },
+  { slug: 'i23-vlae', name: '变分有损自编码器', theme: 'Ilya 推荐书单 · 架构探索' },
+  { slug: 'i24-deep-speech-2', name: 'Deep Speech 2', theme: 'Ilya 推荐书单 · 规模化' },
+  { slug: 'i25-scaling-laws', name: '神经语言模型缩放定律', theme: 'Ilya 推荐书单 · 规模化' },
+  { slug: 'i26-gpipe', name: 'GPipe 流水线并行', theme: 'Ilya 推荐书单 · 规模化' },
+  { slug: 'i27-machine-super-intelligence', name: '机器超级智能（Shane Legg）', theme: 'Ilya 推荐书单 · 智能的定义' },
+]
+
 
 const presentSlugs = new Set(paperFiles.map((f) => f.replace(/\.html$/, '')))
 const corePresent = CORE_CATALOG.filter((p) => presentSlugs.has(p.slug))
@@ -37,14 +70,17 @@ const foundationPresent = paperFiles
   .filter((f) => /^f01-/.test(f))
   .map((f) => f.replace(/\.html$/, ''))
 
+// Ilya 推荐书单系列（i 系列）：出现即单列展示（存无扩展名 slug）。
+const ilyaPresent = ILYA_CATALOG.filter((p) => presentSlugs.has(p.slug))
+
 const REPORT_ROOT = '/specials/gpu-llm/'
 const F01_URL = '/specials/gpu-llm/papers/f01-attention-is-all-you-need.html'
-const SNAPSHOT_DATE = '2026-09-19'
+const SNAPSHOT_DATE = '2026-09-26'
 ---
 
 <Layout
   title="专项论文分析"
-  description="ZenMind 专项扩展：GPU 大模型系统论文中文精读（2024–2025）静态快照，含奠基论文 Attention Is All You Need（F01）。"
+  description="ZenMind 专项扩展：GPU 大模型系统论文中文精读（2024–2025）静态快照，含奠基论文 Attention Is All You Need（F01）与 Ilya 推荐书单系列（27 篇初中数学可懂解读）。"
 >
   <article class="special" lang="zh-CN">
     <header class="special-header">
@@ -127,6 +163,38 @@ const SNAPSHOT_DATE = '2026-09-19'
           </div>
         ) : (
           <p>奠基论文页尚未收录。</p>
+        )
+      }
+    </section>
+
+    <section aria-labelledby="ilya-title" class="special-section foundation">
+      <h2 id="ilya-title">Ilya 推荐书单系列（独立内容，非核心 16 篇）</h2>
+      <p>
+        Ilya Sutskever 赠予 John Carmack 的研究书单（公开整理版 27 条，流传说法约 30 条）。
+        每篇按「初中数学也能懂」的深度解读骨架展开：论文名片、Ilya 为什么选它、从生活说起、
+        核心思想拆解、动手算一算、它改变了什么、术语小词典、原文与代码。
+        本系列不计入核心论文数量、筛选与统计。
+      </p>
+      {
+        ilyaPresent.length > 0 && (
+          <div class="present-block">
+            <h3>已收录的 Ilya 书单页（{ilyaPresent.length} / {ILYA_CATALOG.length}）</h3>
+            <ul class="paper-list">
+              {ilyaPresent.map((p) => (
+                <li>
+                  <a href={`${REPORT_ROOT}papers/${p.slug}.html`}>{p.name}</a>
+                  <span class="paper-theme">（{p.theme}）</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      }
+      {
+        ilyaPresent.length > 0 && (
+          <p>
+            <a class="button-link" href={`${REPORT_ROOT}papers/i00-ilya-reading-list.html`}>从系列导语进入 →</a>
+          </p>
         )
       }
     </section>

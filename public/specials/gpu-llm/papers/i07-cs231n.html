@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS231n：面向视觉识别的卷积神经网络｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读斯坦福 CS231n 公开课：从线性分类器到反向传播、卷积网络与训练技巧，把 CNN 学扎实的最短路径，AlexNet 之后 CNN 技术的系统化。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">CS231n</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">CS231n：面向视觉识别的卷积神经网络</h1>
+  <p class="paper-hero-meta">CS231n: Convolutional Neural Networks for Visual Recognition｜斯坦福公开课（李飞飞、Karpathy 等人先后主讲）</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i06-alexnet.html" rel="prev">上一篇：AlexNet</a>
+  <a href="i08-resnet.html" rel="next">下一篇：ResNet</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>CS231n 课程信息一览</caption>
+    <tbody>
+      <tr><th scope="row">中文名称</th><td>CS231n：面向视觉识别的卷积神经网络</td></tr>
+      <tr><th scope="row">英文名称</th><td>CS231n: Convolutional Neural Networks for Visual Recognition</td></tr>
+      <tr><th scope="row">类型</th><td>斯坦福公开课，书单里唯一的「课程」</td></tr>
+      <tr><th scope="row">主讲</th><td>李飞飞、Karpathy 等人先后主讲</td></tr>
+      <tr><th scope="row">获取方式</th><td>课程公开免费</td></tr>
+      <tr><th scope="row">一句话定位</th><td>Ilya 认为这是把卷积网络（CNN）学扎实的最短路径</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>这份书单里的其他篇目几乎全是论文，唯一一门课程就是它。这个安排本身就在传递一个判断：论文给你最尖端的成果，课程给你最完整的地基。想把卷积网络学扎实，最短路径不是再多读十篇论文，而是把这门课从头到尾认真过一遍——地基打牢了，后来读每一篇论文都会事半功倍。</p>
+  <p>它出现在书单的这个位置也很有讲究。上一篇 AlexNet 一战引爆了深度学习，此后几年新技巧井喷，却散落在各处论文里，东一鳞西一爪。CS231n 做的正是系统化的整理：把散落的真金炼成一本循序渐进的教材，让后来者不必重走弯路。可以说，它是 AlexNet 之后 CNN 技术的「官方教科书」。</p>
+  <p>还有一条很实际：课程公开免费。一门顶尖大学的花了多年打磨的课，任何人都能上网完整听到——这种学习资源的杠杆率，在整个人类教育史上都罕见。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想象你在一面巨大的海报墙上找某种花纹。不用眼睛一次看全墙，而是拿一枚刻着小图案的印章，从左上角开始，从左到右、从上到下，一格一格盖过去：哪一格盖上去图案对得上，就在那里做个记号。把整面墙盖完，花纹出现在哪些位置就一目了然。这基本就是卷积在做的事——拿一个小模板在图上滑动，逐格比对局部花纹，哪里匹配哪里得高分。</p>
+  <p>再看第二个场景。一所学校有 100 个班，如果每个班各自印一套教材，成本高得离谱；全校统一一套教材，每个班都用同一本，又省钱又好管理。卷积网络里也是同样的账：同一个小模板在整张图的每个位置重复使用，这就是参数共享（Parameter Sharing）——要学的东西从「每处一套」变成「全图一套」，省下的开销可以拿去学更多种花纹。</p>
+  <p>这两个直觉合起来，就是课程要教给你的核心画面：卷积网络不是什么神秘的黑箱，而是一群小印章在图上分工合作——有的认线条，有的认纹理，有的认部件，层层汇总，最后报出答案。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>课程的主线是一条四级台阶：线性分类器 → 反向传播 → 卷积网络 → 训练技巧。台阶顺序不能乱，因为每一级都踩在前一级之上。</p>
+  <p>第一级线性分类器（Linear Classifier）：最朴素的打分器。给图片的每个像素配一个「重要度权重」，把所有像素加权求和，得到每个类别的得分，得分最高的就是答案。像给学生算综合测评：各项表现按比重加权，总分定名次。它简单，却让「学习」这件事第一次变得看得见摸得着——所谓学习，就是不断调整权重。</p>
+  <p>第二级反向传播（Backpropagation）：网络答错了，怎么知道该调哪个权重？办法是把「错在哪」逐层反馈回去，让每个参数都收到自己的纠错方向。像考卷发还：每个学生按自己的失分点订正，而不是全班一起盲目重考。有了它，深网络的训练才成为可能。第三级卷积网络（CNN）：也就是前面说的「小印章逐格盖图」。课程会讲清卷积为什么特别适合图像，理由有三：局部相关——图像的语义集中在相邻像素之间，隔了半张图的两个像素基本无关；平移不变——猫挪个位置还是猫，小印章滑到哪里就查到哪里，不挑位置；参数共享——同一套印章全图通用，省参数又防死记。</p>
+  <p>第四级训练技巧：学习率怎么定、怎么防止过拟合、数据怎么准备。这些是决定「学得会」与「学得好」之间差距的工匠手艺。四级台阶走完，AlexNet 之后 CNN 技术的骨架就完整装进了脑子里。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>先算参数共享这笔账。一张 100×100 的图，一共 10000 个位置。如果每个位置都单独学一套 3×3 的小模板，需要学 9 × 10000 = 90000 个数；如果全图共享一套模板，只需要 9 个数——相差整整 10000 倍。省下来的空间，可以换成更多种类的模板、更深的网络。</p>
+  <p>再算计算量这笔账。一套 3×3 模板在一个位置要做 9 次乘法再相加，扫完整张图就是约 90000 次乘法；模板换十套，就是近百万次。这种「同一款运算重复成千上万次」的活，正是 GPU 最擅长打包处理的——这也解释了为什么课程反复强调与硬件的配合。</p>
+  <p>最后算课程编排这笔账：为什么非要从线性分类器学起？因为卷积网络本质上就是「带花纹模板的打分器」一层层堆出来的：卷积层负责找局部花纹，打分汇总的逻辑与线性分类器一脉相承。地基与高楼用的是同一种砖，只是砌法越来越巧——先把最简单的砌法练熟，后面的巧劲才接得住。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>对个人学习者，它把「入门卷积网络」从一份漫长的论文清单变成了一条有护栏的山道：先立地基，再上高峰。无数工程师和研究者是顺着这门课走进深度学习行业的，说它是最短路径并不夸张。</p>
+  <p>对整个领域，它把论文里东散西落的技巧系统化成了可教、可学、可考的体系。知识一旦成体系，扩散速度就完全不同：深度学习从少数实验室的独门绝技，变成了全球课堂里的公共课。它整理的起点，正是 <a href="i06-alexnet.html">i06 AlexNet</a> 引爆的那批技术。</p>
+  <p>沿着书单往下走，学完课程之后自然的下一站，是回答「网络能做多深」的 <a href="i08-resnet.html">i08 ResNet</a>——课程给了你地基，ResNet 会带你见识地基之上能盖多高的楼。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <dl>
+    <dt>卷积核 / 滤波器（Kernel / Filter）</dt><dd>在图上滑动扫描的小模板，也叫「小印章」。</dd>
+    <dt>卷积（Convolution）</dt><dd>小模板逐格滑动、比对局部花纹并给出匹配分的运算。</dd>
+    <dt>反向传播（Backpropagation）</dt><dd>把误差逐层反馈、让每个参数按自己失分点订正的训练方法。</dd>
+    <dt>线性分类器（Linear Classifier）</dt><dd>把各像素加权求和后打分分类的最朴素模型。</dd>
+    <dt>参数共享（Parameter Sharing）</dt><dd>同一套模板在图的每个位置重复使用，省参数又防死记。</dd>
+    <dt>平移不变（Translation Invariance）</dt><dd>物体在图中挪动位置，模板滑过去照样能认出来。</dd>
+  </dl>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>课程官方网站（含课程信息与公开资料入口）：<a href="https://cs231n.stanford.edu/" rel="noopener noreferrer">CS231n: Convolutional Neural Networks for Visual Recognition</a></li>
+  </ul>
+  <div class="callout">
+    <p>提示：书单只给了课程官网这一个地址；按官网的公开入口按部就班学即可，不必另行收集资料。</p>
+  </div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i06-alexnet.html" rel="prev">上一篇：AlexNet</a>
+  <a href="i08-resnet.html" rel="next">下一篇：ResNet</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页为 Ilya 推荐书单系列解读（i07）；课程信息取自 CS231n 官方网站（见「原文与代码」一节）及无争议公开常识；类比与解读为本站原创。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>

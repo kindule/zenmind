@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>膨胀卷积聚合多尺度上下文｜Ilya 推荐书单解读</title>
+<meta name="description" content="解读膨胀卷积（arXiv 2015）：在采样点之间跳格，不加参数就让感受野随层数指数增长，为语义分割聚合多尺度上下文。">
+<link rel="stylesheet" href="../assets/css/site.css">
+<style>
+
+:root{
+  --bg:#ffffff; --fg:rgba(0,0,0,.88); --muted:rgba(0,0,0,.65); --line:#f0f0f0;
+  --primary:#1677ff; --primary-weak:#e6f4ff;
+  --cyan:#237804; --cyan-weak:#f6ffed;
+  --purple:#722ed1; --purple-weak:#f9f0ff;
+  --orange:#d4380d; --orange-weak:#fff2e8;
+  --amber:#874d00; --amber-weak:#fffbe6;
+  --red:#ff4d4f; --red-weak:#fff1f0;
+  --code-bg:#f5f5f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --fg:rgba(255,255,255,.85); --muted:rgba(255,255,255,.65); --line:#262626;
+    --primary:#69b1ff; --primary-weak:#111a2c;
+    --cyan:#73d13d; --cyan-weak:#162312;
+    --purple:#b37feb; --purple-weak:#241a3d;
+    --orange:#ff9c6e; --orange-weak:#3a2113;
+    --amber:#ffc53d; --amber-weak:#2b2111;
+    --red:#ff7875; --red-weak:#2a1215;
+    --code-bg:#1f1f1f;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  font-size:14px; line-height:1.5715;
+}
+main{max-width:76ch; margin:0 auto; padding:0 16px 48px}
+@media (min-width:1200px){ main{max-width:1040px} }
+h1{font-size:30px; line-height:1.35; color:var(--primary); margin:16px 0 4px}
+h2{font-size:20px; color:var(--primary); border-bottom:2px solid var(--line); padding-bottom:4px; margin-top:32px}
+h3{font-size:16px; margin-top:24px}
+a{color:var(--cyan)}
+a:hover{color:var(--orange)}
+:focus-visible{outline:3px solid var(--orange); outline-offset:2px}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK SC",monospace; background:var(--code-bg); padding:0 4px; border-radius:4px; font-size:12px}
+.skip-link{position:absolute; left:-9999px; top:0; background:var(--primary); color:#fff; padding:8px 16px; z-index:10}
+.skip-link:focus{left:8px; top:8px}
+.site-header{display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:baseline; padding:8px 16px; border-bottom:1px solid var(--line)}
+.site-header .site-name{margin:0; font-weight:700; color:var(--primary)}
+.site-header nav a{margin-left:16px}
+.breadcrumb{padding:8px 16px; border-bottom:1px solid var(--line)}
+.breadcrumb ol{list-style:none; display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; font-size:12px}
+.breadcrumb li+li::before{content:"/"; margin-right:4px; color:var(--muted)}
+.fact-card{border:1px solid var(--line); border-radius:6px; background:var(--primary-weak); padding:24px; margin:16px 0}
+.fact-card h3{margin:4px 0 8px}
+.tag-row{list-style:none; display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:4px 0 12px}
+.tag-row li{border:1px solid var(--purple); color:var(--purple); background:var(--purple-weak); border-radius:999px; padding:0 12px; font-size:12px}
+.ev{display:inline-block; border:1px solid var(--muted); border-radius:4px; padding:0 4px; font-size:12px; font-weight:700; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; vertical-align:.1em}
+.ev-p{border-color:var(--primary); color:var(--primary); background:var(--primary-weak)}
+.ev-r{border-color:var(--purple); color:var(--purple); background:var(--purple-weak)}
+.ev-e{border-color:var(--orange); color:var(--orange); background:var(--orange-weak)}
+.ev-i{border-color:var(--amber); color:var(--amber); background:var(--amber-weak)}
+.callout{border:1px solid var(--line); border-left:4px solid var(--cyan); background:var(--cyan-weak); border-radius:6px; padding:12px 16px; margin:16px 0}
+.callout-warning{border-left-color:var(--red); background:var(--red-weak)}
+.callout-inference{border-left-color:var(--amber); background:var(--amber-weak)}
+.table-scroll{overflow-x:auto; margin:16px 0}
+table{border-collapse:collapse; width:100%; font-size:14px}
+caption{caption-side:top; text-align:left; font-weight:700; padding:4px 0; color:var(--primary)}
+th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+thead th{background:var(--code-bg); color:var(--fg)}
+tbody th{background:var(--code-bg)}
+tbody tr:hover td{background:var(--code-bg)}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.tradeoff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; margin:16px 0; padding:0; list-style:none}
+.tradeoff-grid>li{border:1px solid var(--line); border-radius:6px; padding:24px; background:var(--bg)}
+.tradeoff-grid h3{margin:0 0 4px; font-size:14px; color:var(--primary)}
+.fit-list li{margin:8px 0}
+.decision-checklist{padding:0; list-style:none}
+.decision-checklist>li{margin:16px 0}
+.decision-checklist ul{list-style:none; padding-left:4px}
+.decision-checklist ul li{margin:4px 0}
+.decision-checklist input[type=checkbox]{width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:4px}
+label{cursor:pointer}
+.touch-target{min-height:44px}
+.pager{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:20px 0}
+.pager a{display:inline-block; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:6px; background:var(--bg); text-decoration:none}
+.pager a:hover{color:var(--primary); border-color:var(--primary); background:var(--bg)}
+.architecture-diagram{border:1px solid var(--line); border-radius:6px; padding:12px; margin:16px 0; overflow-x:auto}
+.architecture-diagram img{max-width:100%; min-width:640px; height:auto; display:block}
+.architecture-diagram figcaption{font-size:12px; color:var(--muted); margin-top:8px}
+.toc{border:1px solid var(--line); border-radius:6px; padding:8px 16px; margin:16px 0; background:var(--bg)}
+.toc summary{font-weight:700; color:var(--primary); cursor:pointer; min-height:44px; line-height:44px}
+.toc ol{margin:4px 0; padding-left:20px; columns:2; column-gap:28px}
+.toc a{display:block; padding:4px 0 4px 8px; border-left:3px solid transparent; color:var(--fg)}
+.toc a:hover,.toc a:focus-visible{color:var(--primary); border-left-color:var(--primary)}
+@media (max-width:640px){.toc ol{columns:1}}
+.lede{font-size:16px; color:var(--muted)}
+.formula{background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:12px 16px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px}
+.site-footer{border-top:1px solid var(--line); padding:16px 16px 32px; font-size:12px; color:var(--muted)}
+@media print{
+  .skip-link,.site-header nav,.breadcrumb,.toc,.pager{display:none}
+  body{font-size:11pt}
+  .tradeoff-grid>li,.fact-card{break-inside:avoid}
+  a{text-decoration:none; color:inherit}
+}
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳至正文</a>
+<header class="site-header">
+  <p class="site-name">GPU 大模型系统论文解读站</p>
+  <nav aria-label="站点导航">
+    <a href="../index.html">首页</a>
+    <a href="i00-ilya-reading-list.html">Ilya 书单系列</a>
+  </nav>
+</header>
+<main id="main">
+<nav class="breadcrumb" aria-label="面包屑">
+  <ol>
+    <li><a href="../index.html">首页</a></li>
+    <li><a href="i00-ilya-reading-list.html">Ilya 推荐书单系列</a></li>
+    <li aria-current="page">膨胀卷积</li>
+  </ol>
+</nav>
+
+<section id="paper-hero" aria-labelledby="hero-title">
+  <h1 id="hero-title">膨胀卷积聚合多尺度上下文</h1>
+  <p class="paper-hero-meta">Multi-Scale Context Aggregation by Dilated Convolutions｜Fisher Yu、Vladlen Koltun｜arXiv 2015</p>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页首）">
+  <a href="i09-identity-mappings.html" rel="prev">上一篇：恒等映射</a>
+  <a href="i11-rnn-effectiveness.html" rel="next">下一篇：RNN 的惊人有效性</a>
+</nav>
+
+<section id="card" aria-labelledby="card-title">
+  <h2 id="card-title">论文名片</h2>
+  <div class="table-scroll">
+  <table>
+    <caption>膨胀卷积基本信息一览</caption>
+    <tbody>
+      <tr><th scope="row">中文题名</th><td>膨胀卷积聚合多尺度上下文</td></tr>
+      <tr><th scope="row">英文题名</th><td>Multi-Scale Context Aggregation by Dilated Convolutions</td></tr>
+      <tr><th scope="row">作者</th><td>Fisher Yu、Vladlen Koltun</td></tr>
+      <tr><th scope="row">发表</th><td>arXiv 2015</td></tr>
+      <tr><th scope="row">关键性质</th><td>跳格采样使感受野随层数指数增长，参数量不变</td></tr>
+      <tr><th scope="row">一句话定位</th><td>给卷积装上「望远镜」——不加参数，也能看得更远</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-title">
+  <h2 id="why-title">Ilya 为什么选它</h2>
+  <p>普通卷积有个天生的短视：一层只看紧邻格点。想看得远一点，要么多堆层，要么不断把图缩小再看——可图一缩小，细节就糊了。偏偏很多任务要求「既见树木，又见森林」：比如语义分割，要给图里每个像素贴上类别标签，判断脚下这颗像素属于天空、马路还是行人，既要参考身边的纹理，又要参考整张图的布局。</p>
+  <p>2015 年，Fisher Yu 和 Vladlen Koltun 给卷积做了个小手术：在采样点之间「跳格」，而且跳距还能按倍数一路扩大。结果是不加一个参数，视野却随层数指数增长。这项技术叫膨胀卷积（Dilated Convolution，也叫空洞卷积），像给卷积装上了望远镜。</p>
+  <p>把它放进书单也顺理成章：这一板块前两篇解决了「网络深得动」的问题，这篇解决「卷积看得远」的问题。工具箱里既有深度又有视野，卷积网络的能力边界才算摸全。</p>
+</section>
+
+<section id="story" aria-labelledby="story-title">
+  <h2 id="story-title">从生活说起</h2>
+  <p>想象你要检查一块 100×100 的大棋盘，看有没有连成片的花纹。老老实实逐格看，得走上万步；聪明的办法是隔一格看一眼：同样的步数，横竖跨度各翻倍，覆盖范围变成 4 倍。当然，跳格会漏看中间那些格子——那就换别的跳距再扫一遍：跳 1 格扫一遍、跳 2 格扫一遍、跳 4 格扫一遍，几遍咬合起来，又快又无死角。</p>
+  <p>再想一个望远镜的画面。想看清月亮上的环形山，也想过一眼整片星空，靠的不是换镜头，而是换不同倍率的目镜：镜头还是那一颗，视野却随目镜伸缩自如。膨胀卷积换的正是「看多远」，而不是「用什么看」——模板（参数）一个都不用加。</p>
+  <p>这两个画面对应同一件事：观察的范围和观察的成本，未必绑在一起。会安排跳格的人，用同样的步数看到更大的世界；会用望远镜的人，用同一颗镜头看到不同的尺度。</p>
+</section>
+
+<section id="idea" aria-labelledby="idea-title">
+  <h2 id="idea-title">核心思想拆解</h2>
+  <p>先看普通卷积的视野有多大。以 3×3 的小模板为例，一次只看得上身边一小圈，这圈地盘叫感受野（Receptive Field）。对识别「图里有没有猫」来说这够用，因为局部花纹最有信息量；但「这颗像素属于天空还是马路」这类问题，光看局部答不了，必须把远处的信息也请进来。</p>
+  <p>膨胀卷积的改法很轻：模板不变，采样时跳格。跳距为 1 就是普通卷积；跳距为 2，就是每隔一格取一个点；跳距为 4，每隔三格取一个点；跳距按倍数继续扩大，像望远镜一节一节拉出来。单层看，样本变稀了；但多层叠起来，感受野随层数指数增长——视野翻着倍往外扩。</p>
+  <p>最漂亮的一点是参数量不变：不管跳距是 1 还是 8，模板都还是那 9 个数。视野指数级膨胀，参数原地踏步——等于用零成本买到了「看得远」。这是「不加参数也看得更远」这句话的准确含义。</p>
+  <p>典型应用是语义分割：给每个像素贴类别标签的任务，天生要求细节与全局同时在场。膨胀卷积让网络不缩小图片也能看得远：小跳距的层管纹理，大跳距的层管布局，层层聚合成「多尺度上下文」。细节不糊，全局也到——这正是标题里「聚合」二字的分量。</p>
+</section>
+
+<section id="worked" aria-labelledby="worked-title">
+  <h2 id="worked-title">动手算一算</h2>
+  <p>先算视野账。从中心点出发数视野半径：某一层向两边各伸 1 格，半径是 1；下一层跳距翻倍，向两边各伸 2 格，半径 1 + 2 = 3；再下一层各伸 4 格，半径 3 + 4 = 7；再来一层各伸 8 格，半径 7 + 8 = 15。四层下来，视野从 3 格宽变成 31 格宽，而层数只用了 4 层——每层的贡献翻着倍往上涨，这就是「指数增长」的直观模样。</p>
+  <p>再算参数账。跳距 1、2、4、8 的四层，每层模板 9 个数，总共 4 × 9 = 36 个数，与跳距大小毫无关系。要是换成普通逐格卷积想覆盖同样 31 格宽的范围，一层根本不够，得叠很多层或者换大模板。省下的参数，可以拿去学更细的花纹。</p>
+  <p>最后算补漏账。跳距 4 的扫描会漏掉中间的格子，所以跳距 1、2、4、8 的多层必须配合：各管一个尺度，叠在一起才不留侦察盲区。跳格不是偷懒，是分工——每个人都看少一点，合起来才看得全。</p>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">它改变了什么</h2>
+  <p>膨胀卷积很快成为语义分割等需要大视野任务的常用工具。「看得远而不加参数」这条原则，被后来的许多视觉模型继承下去：凡是要在保持细节的同时理解全局的场合，都能看到它的身影。</p>
+  <p>它和本板块前两篇正好互补：<a href="i08-resnet.html">i08 ResNet</a> 解决「深得动」，<a href="i09-identity-mappings.html">i09 恒等映射</a> 讲清「深得动」的原理，本篇解决「看得远」，而卷积为什么长这样的地基在 <a href="i07-cs231n.html">i07 CS231n</a> 里有系统讲解。深度、原理、视野，三条线在这一篇交汇，卷积网络的板块至此收官。</p>
+  <p>书单下一篇将转向循环神经网络：见 <a href="i11-rnn-effectiveness.html">i11 RNN 的惊人有效性</a>。处理图像靠「看」，处理序列靠「记」，工具换了，但「把结构设计讲清楚」的讲究一脉相承。</p>
+</section>
+
+<section id="glossary" aria-labelledby="glossary-title">
+  <h2 id="glossary-title">术语小词典</h2>
+  <dl>
+    <dt>膨胀卷积 / 空洞卷积（Dilated Convolution，也称 Atrous Convolution）</dt><dd>在采样点之间跳格取值的卷积，跳距按倍数扩大。</dd>
+    <dt>感受野（Receptive Field）</dt><dd>网络上某一点能「看见」的原图范围，膨胀卷积让它指数增长。</dd>
+    <dt>语义分割（Semantic Segmentation）</dt><dd>给图中每个像素贴上类别标签的任务。</dd>
+    <dt>多尺度上下文（Multi-Scale Context）</dt><dd>从局部纹理到全局布局的多个观察层次，聚合起来才能又细又全。</dd>
+    <dt>采样跳距（膨胀率）</dt><dd>相邻采样点之间隔开的格数，如 1、2、4、8。</dd>
+  </dl>
+</section>
+
+<section id="links" aria-labelledby="links-title">
+  <h2 id="links-title">原文与代码</h2>
+  <ul class="fit-list">
+    <li>论文原文（arXiv 页面）：<a href="https://arxiv.org/abs/1511.07122" rel="noopener noreferrer">Multi-Scale Context Aggregation by Dilated Convolutions</a></li>
+  </ul>
+  <div class="callout">
+    <p>提示：读完本篇，卷积网络板块（i06 至 i10）收官；下一站进入循环神经网络，见 <a href="i11-rnn-effectiveness.html">i11 RNN 的惊人有效性</a>。</p>
+  </div>
+</section>
+
+<nav class="pager" aria-label="上一篇与下一篇（页尾）">
+  <a href="i09-identity-mappings.html" rel="prev">上一篇：恒等映射</a>
+  <a href="i11-rnn-effectiveness.html" rel="next">下一篇：RNN 的惊人有效性</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+  <p><strong>来源声明：</strong>本页为 Ilya 推荐书单系列解读（i10）；事实与结论均取自 arXiv 原文页面（见「原文与代码」一节）及无争议公开常识，未引入书单之外的具体数字；类比与解读为本站原创。</p>
+  <p><strong>许可提醒：</strong>论文与博文版权归原作者所有；引用请遵循相应许可。</p>
+  <p><strong>本地生成信息：</strong>静态页面，无 JavaScript 依赖，可离线打开；Ilya 推荐书单系列（i 系列），独立于本站 16 篇核心合集，不参与任何跨论文性能比较。</p>
+</footer>
+<script src="../assets/js/site.js" defer></script>
+</body>
+</html>
