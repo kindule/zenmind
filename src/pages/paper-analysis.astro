@@ -67,7 +67,7 @@ const corePresent = CORE_CATALOG.filter((p) => presentSlugs.has(p.slug))
 const coreMissing = CORE_CATALOG.filter((p) => !presentSlugs.has(p.slug))
 // 奠基论文（F01）：独立于核心 16 篇的内容，出现即单列展示（存无扩展名 slug）。
 const foundationPresent = paperFiles
-  .filter((f) => /^(f01|b01)-/.test(f))
+  .filter((f) => /^(f01|b01|b02)-/.test(f))
   .map((f) => f.replace(/\.html$/, ''))
 
 // Ilya 推荐书单系列（i 系列）：出现即单列展示（存无扩展名 slug）。
@@ -177,6 +177,22 @@ const SNAPSHOT_DATE = '2026-09-26'
             </p>
             <p>
               <a class="button-link" href="/specials/gpu-llm/papers/b01-annotated-transformer-zh.html">阅读 B01 加餐导读 →</a>
+            </p>
+          </div>
+        )
+      }
+          {
+        foundationPresent.includes('b02-annotated-transformer-zh') && (
+          <div class="foundation-card">
+            <h3>
+              <a href="/specials/gpu-llm/papers/b02-annotated-transformer-zh.html">B02 · The Annotated Transformer 中文全译（加餐）</a>
+            </h3>
+            <p>
+              原文的中文全译：124 个单元格全译——73 段正文逐字翻译、51 段实现代码逐字节保留（注释已译），
+              原文全部插图收录。原文与译文均以 MIT 许可发布；不计入核心论文数量。
+            </p>
+            <p>
+              <a class="button-link" href="/specials/gpu-llm/papers/b02-annotated-transformer-zh.html">阅读 B02 中文全译 →</a>
             </p>
           </div>
         )
